@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: portal-qr-config
+  namespace: default
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>NAS Escuela - Acceso</title>
+        <style>
+            body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; background-color: #f4f4f9; }
+            h1 { color: #0082c9; }
+            .qr-container { margin: 30px auto; padding: 20px; background: white; display: inline-block; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+            img { max-width: 250px; }
+            p { color: #555; font-size: 1.1em; }
+        </style>
+    </head>
+    <body>
+        <h1>Bienvenido al NAS de la Escuela</h1>
+        <p>Escanea el código QR para acceder a Nextcloud</p>
+        <div class="qr-container">
+            <!-- El QR apunta a localhost:8080 donde estará Nextcloud -->
+            <img src="https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=http://localhost:8080" alt="QR Nextcloud">
+        </div>
+        <p><small>Infraestructura gestionada con GitOps (ArgoCD + K3s)</small></p>
+    </body>
+    </html>
