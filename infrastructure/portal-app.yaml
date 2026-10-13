@@ -6,7 +6,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: file:///home/$USER/nas-gitops
+    repoURL: file:///home/oriel/nas-gitops
     targetRevision: HEAD
     path: apps/portal-qr
   destination:

@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: samba
+  labels:
+    app: samba
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: samba
+  template:
+    metadata:
+      labels:
+        app: samba
+    spec:
+      containers:
+      - name: samba
+        image: dperson/samba:latest
+        securityContext:
+          privileged: true
+        ports:
+        - containerPort: 445
+        - containerPort: 137
+        - containerPort: 138
+        - containerPort: 139
+        env:
+        - name: TZ
+          value: "America/Mexico_City"
+        - name: WORKGROUP
+          value: "ESCUELA"
+        args:
+        - "-s"
+        - "Profesores;/samba/profesores;yes;no;no;all;none;none"
+        - "-s"
+        - "Alumnos;/samba/alumnos;yes;no;no;all;none;none"
+        - "-s"
+        - "Compartido;/samba/compartido;yes;no;no;all;none;none"
+        - "-s"
+        - "Administracion;/samba/administracion;yes;no;no;all;none;none"
+        - "-u"
+        - "juan.perez;Profesor2025!"
+        - "-u"
+        - "maria.gomez;Alumno2025!"
+        - "-u"
+        - "admin.it;Adm1nIt2025"
+        volumeMounts:
+        - name: samba-storage
+          mountPath: /samba
+      volumes:
+      - name: samba-storage
+        persistentVolumeClaim:
+          claimName: samba-pvc

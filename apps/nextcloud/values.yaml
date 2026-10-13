@@ -1,0 +1,14 @@
+nextcloud:
+  host: localhost
+  existingSecret:
+    enabled: false
+  username: admin
+  password: Nextcloud2025!
+persistence:
+  enabled: true
+  existingClaim: nextcloud-pvc
+internalDatabase:
+  enabled: true
+service:
+  type: NodePort
+  nodePort: 30082
