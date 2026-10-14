@@ -15,16 +15,17 @@ La arquitectura reemplaza los servidores de archivos monolíticos tradicionales 
 
 ## Tabla de Contenidos
 
-1. [Arquitectura y Topología del Sistema](#1-arquitectura-y-topología-del-sistema)
-2. [Especificaciones del Stack Tecnológico](#2-especificaciones-del-stack-tecnológico)
-3. [Decisiones de Ingeniería (ADR)](#3-decisiones-de-ingeniería-adr)
-4. [Estructura del Repositorio](#4-estructura-del-repositorio)
-5. [Guía de Aprovisionamiento e Instalación](#5-guía-de-aprovisionamiento-e-instalación)
-6. [Operación, Backups y Recuperación ante Desastres (Runbooks)](#6-operación-backups-y-recuperación-ante-desastres-runbooks)
-7. [Autoría](#7-autoría)
+1. [Arquitectura y Topología del Sistema](#arquitectura)
+2. [Especificaciones del Stack Tecnológico](#stack)
+3. [Decisiones de Ingeniería (ADR)](#adr)
+4. [Estructura del Repositorio](#estructura)
+5. [Guía de Aprovisionamiento e Instalación](#instalacion)
+6. [Operación, Backups y Recuperación ante Desastres (Runbooks)](#runbooks)
+7. [Autoría](#autoria)
 
 ---
 
+<a id="arquitectura"></a>
 ## 1. Arquitectura y Topología del Sistema
 
 El sistema se divide en cuatro planos aislados: **Acceso y Seguridad Perimetral**, **Orquestación de Aplicaciones**, **Observabilidad SRE** y **Persistencia en Disco (OpenZFS)**.
