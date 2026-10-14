@@ -79,4 +79,3 @@ graph TB
     CronZFS -->|Ejecución Programada| ZFSPool
     Prometheus -->|Recolección de Métricas| Workloads & ZFSPool
     Grafana -->|Consulta PromQL| Prometheus
-EOS
