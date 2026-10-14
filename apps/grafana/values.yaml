@@ -1,0 +1,18 @@
+prometheus:
+  prometheusSpec:
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 500Mi
+
+grafana:
+  adminPassword: Grafana2025!
+  service:
+    type: NodePort
+    nodePort: 30090
+  persistence:
+    enabled: true
+    size: 500Mi
