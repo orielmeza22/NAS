@@ -3,12 +3,16 @@ kind: Application
 metadata:
   name: portal-qr
   namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: nas-platform
 spec:
   project: default
   source:
-    repoURL: file:///home/oriel/nas-gitops
+    repoURL: https://github.com/orielmeza22/NAS.git
     targetRevision: HEAD
     path: apps/portal-qr
+    directory:
+      recurse: false
   destination:
     server: https://kubernetes.default.svc
     namespace: default
@@ -16,3 +20,5 @@ spec:
     automated:
       prune: true
       selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

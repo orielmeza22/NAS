@@ -1,0 +1,58 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: zfs-snapshot
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: zfs-snapshot
+    app.kubernetes.io/component: backup
+    app.kubernetes.io/part-of: nas-platform
+spec:
+  schedule: "0 2 * * *"
+  successfulJobsHistoryLimit: 7
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: zfs-snapshot
+        spec:
+          hostPID: true
+          containers:
+          - name: zfs-snapshot
+            image: ubuntu:22.04
+            command: ["/bin/bash", "-c"]
+            args:
+            - |
+              set -euo pipefail
+              apt-get update -qq && apt-get install -y -qq zfsutils-linux > /dev/null 2>&1
+              SNAPSHOT_NAME="tank/nas@k8s-auto-$(date +%Y%m%d-%H%M)"
+              echo "[$(date -Iseconds)] Creating snapshot: $SNAPSHOT_NAME"
+              zfs snapshot "$SNAPSHOT_NAME"
+              echo "[$(date -Iseconds)] Snapshot created successfully."
+              # Cleanup: remove snapshots older than 30 days
+              zfs list -t snapshot -o name -H | grep 'k8s-auto-' | head -n -30 | xargs -r -n1 zfs destroy
+              echo "[$(date -Iseconds)] Cleanup complete."
+            securityContext:
+              privileged: true
+            volumeMounts:
+            - name: dev
+              mountPath: /dev
+            - name: zfs-config
+              mountPath: /etc/zfs
+            resources:
+              requests:
+                cpu: "100m"
+                memory: "128Mi"
+              limits:
+                cpu: "500m"
+                memory: "256Mi"
+          restartPolicy: OnFailure
+          volumes:
+          - name: dev
+            hostPath:
+              path: /dev
+          - name: zfs-config
+            hostPath:
+              path: /etc/zfs

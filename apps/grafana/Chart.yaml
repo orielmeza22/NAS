@@ -1,0 +1,10 @@
+apiVersion: v2
+name: kube-prometheus-stack
+description: Prometheus + Grafana monitoring stack for NAS platform
+type: application
+version: 1.0.0
+appVersion: "65.1.0"
+dependencies:
+  - name: kube-prometheus-stack
+    version: "65.1.0"
+    repository: "https://prometheus-community.github.io/helm-charts"

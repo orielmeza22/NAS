@@ -3,12 +3,17 @@ kind: Application
 metadata:
   name: nextcloud
   namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: nas-platform
 spec:
   project: default
   source:
-    repoURL: file:///home/oriel/nas-gitops
+    repoURL: https://github.com/orielmeza22/NAS.git
     targetRevision: HEAD
     path: apps/nextcloud
+    helm:
+      valueFiles:
+        - values.yaml
   destination:
     server: https://kubernetes.default.svc
     namespace: default
@@ -16,3 +21,5 @@ spec:
     automated:
       prune: true
       selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

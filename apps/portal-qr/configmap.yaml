@@ -3,27 +3,54 @@ kind: ConfigMap
 metadata:
   name: portal-qr-config
   namespace: default
+  labels:
+    app.kubernetes.io/name: portal-qr
+    app.kubernetes.io/part-of: nas-platform
 data:
   index.html: |
     <!DOCTYPE html>
-    <html>
+    <html lang="es">
     <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>NAS Escuela - Acceso</title>
         <style>
-            body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; background-color: #f4f4f9; }
-            h1 { color: #0082c9; }
-            .qr-container { margin: 30px auto; padding: 20px; background: white; display: inline-block; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
-            img { max-width: 250px; }
-            p { color: #555; font-size: 1.1em; }
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                text-align: center;
+                min-height: 100vh;
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+                align-items: center;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: #fff;
+                padding: 20px;
+            }
+            h1 { font-size: 2em; margin-bottom: 0.5em; }
+            .subtitle { font-size: 1.1em; opacity: 0.9; margin-bottom: 2em; }
+            .qr-container {
+                padding: 24px;
+                background: white;
+                border-radius: 16px;
+                box-shadow: 0 20px 40px rgba(0,0,0,0.2);
+                margin-bottom: 2em;
+            }
+            .qr-container img { display: block; width: 250px; height: 250px; }
+            .footer {
+                font-size: 0.85em;
+                opacity: 0.7;
+            }
         </style>
     </head>
     <body>
-        <h1>Bienvenido al NAS de la Escuela</h1>
-        <p>Escanea el código QR para acceder a Nextcloud</p>
+        <h1>&#128218; NAS Escolar</h1>
+        <p class="subtitle">Escanea el código QR para acceder a Nextcloud</p>
         <div class="qr-container">
-            <!-- El QR apunta a localhost:8080 donde estará Nextcloud -->
-            <img src="https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=http://localhost:8080" alt="QR Nextcloud">
+            <!-- QR points to the NAS Nextcloud instance -->
+            <img src="https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=http://nas.escuela.local:30082" alt="QR Nextcloud">
         </div>
-        <p><small>Infraestructura gestionada con GitOps (ArgoCD + K3s)</small></p>
+        <p class="footer">Infraestructura gestionada con GitOps (ArgoCD + K3s)</p>
     </body>
     </html>

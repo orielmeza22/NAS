@@ -1,14 +1,20 @@
+# Nextcloud Helm Chart Values
+# Ref: https://github.com/nextcloud/helm/tree/main/charts/nextcloud
 nextcloud:
-  host: localhost
+  host: nas.escuela.local
   existingSecret:
-    enabled: false
-  username: admin
-  password: Nextcloud2025!
+    enabled: true
+    secretName: nextcloud-admin-credentials
+    usernameKey: username
+    passwordKey: password
+
 persistence:
   enabled: true
   existingClaim: nextcloud-pvc
+
 internalDatabase:
   enabled: true
+
 service:
   type: NodePort
   nodePort: 30082

@@ -3,16 +3,19 @@ kind: Deployment
 metadata:
   name: samba
   labels:
-    app: samba
+    app.kubernetes.io/name: samba
+    app.kubernetes.io/component: file-server
+    app.kubernetes.io/part-of: nas-platform
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: samba
+      app.kubernetes.io/name: samba
   template:
     metadata:
       labels:
-        app: samba
+        app.kubernetes.io/name: samba
+        app.kubernetes.io/component: file-server
     spec:
       containers:
       - name: samba
@@ -21,14 +24,35 @@ spec:
           privileged: true
         ports:
         - containerPort: 445
+          name: smb
         - containerPort: 137
+          name: netbios-ns
+          protocol: UDP
         - containerPort: 138
+          name: netbios-dgm
+          protocol: UDP
         - containerPort: 139
+          name: netbios-ssn
         env:
         - name: TZ
           value: "America/Mexico_City"
         - name: WORKGROUP
           value: "ESCUELA"
+        - name: USER_PROFESORES
+          valueFrom:
+            secretKeyRef:
+              name: samba-credentials
+              key: user-profesores
+        - name: USER_ALUMNOS
+          valueFrom:
+            secretKeyRef:
+              name: samba-credentials
+              key: user-alumnos
+        - name: USER_ADMIN
+          valueFrom:
+            secretKeyRef:
+              name: samba-credentials
+              key: user-admin
         args:
         - "-s"
         - "Profesores;/samba/profesores;yes;no;no;all;none;none"
@@ -39,14 +63,21 @@ spec:
         - "-s"
         - "Administracion;/samba/administracion;yes;no;no;all;none;none"
         - "-u"
-        - "juan.perez;Profesor2025!"
+        - "$(USER_PROFESORES)"
         - "-u"
-        - "maria.gomez;Alumno2025!"
+        - "$(USER_ALUMNOS)"
         - "-u"
-        - "admin.it;Adm1nIt2025"
+        - "$(USER_ADMIN)"
         volumeMounts:
         - name: samba-storage
           mountPath: /samba
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
       volumes:
       - name: samba-storage
         persistentVolumeClaim:
