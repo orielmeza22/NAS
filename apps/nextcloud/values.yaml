@@ -2,11 +2,32 @@
 # Ref: https://github.com/nextcloud/helm/tree/main/charts/nextcloud
 nextcloud:
   host: nas.escuela.local
+  extraEnv:
+    - name: NEXTCLOUD_TRUSTED_DOMAINS
+      value: "nas.escuela.local localhost *.trycloudflare.com *.loca.lt"
   existingSecret:
     enabled: true
     secretName: nextcloud-admin-credentials
     usernameKey: username
     passwordKey: password
+
+livenessProbe:
+  enabled: true
+  initialDelaySeconds: 180
+  periodSeconds: 20
+  failureThreshold: 10
+
+readinessProbe:
+  enabled: true
+  initialDelaySeconds: 120
+  periodSeconds: 15
+  failureThreshold: 6
+
+startupProbe:
+  enabled: true
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  failureThreshold: 60
 
 persistence:
   enabled: true
