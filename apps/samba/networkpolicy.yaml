@@ -1,0 +1,41 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: samba-network-policy
+  namespace: default
+  labels:
+    app.kubernetes.io/name: samba
+    app.kubernetes.io/part-of: nas-platform
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: samba
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow SMB and NetBIOS traffic from authorized networks/clients
+    - from:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 445
+        - protocol: UDP
+          port: 137
+        - protocol: UDP
+          port: 138
+        - protocol: TCP
+          port: 139
+  egress:
+    # Allow DNS resolution
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

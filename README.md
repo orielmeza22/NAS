@@ -103,6 +103,9 @@ flowchart TB
 | **ADR-006** | **Nextcloud como hub de colaboración** | Office Online (Collabora/OnlyOffice), CalDAV, CardDAV, Talk (videoconferencia), sincronización de escritorio/móvil, branding institucional. |
 | **ADR-007** | **Samba para acceso SMB** | Compatibilidad nativa con Windows Explorer. Shares por departamento (Profesores, Alumnos, Administración, Compartido). |
 | **ADR-008** | **Helm charts para apps complejas** | Nextcloud y kube-prometheus-stack se despliegan como Helm charts gestionados por ArgoCD. Apps simples (Samba, Portal QR) usan manifiestos K8s planos. |
+| **ADR-009** | **Patrón App-of-Apps (ArgoCD)** | Despliegue declarativo de toda la plataforma con una única `Root Application`. Evita `kubectl apply` dispersos y garantiza orquestación sincronizada. |
+| **ADR-010** | **Defense-in-Depth con NetworkPolicies** | Microsegmentación Zero-Trust de capa 3/4. Tráfico SMB restringido a puertos específicos y Portal QR con bloqueo estricto de egress. |
+| **ADR-011** | **Gestión de Secretos Segura (GitOps)** | Soporte documentado para Bitnami Sealed Secrets / External Secrets para permitir versionado criptográfico en Git sin riesgo de filtración. |
 
 ---
 
@@ -234,14 +237,28 @@ sudo kubectl -n monitoring create secret generic grafana-admin-credentials \
   --from-literal=admin-password='TU_PASSWORD_SEGURO'
 ```
 
-### Paso 5 — Registrar Apps en ArgoCD
+### Paso 5 — Registrar la Plataforma en ArgoCD (App-of-Apps)
+
+Gracias al patrón **App-of-Apps**, un solo comando despliega todas las aplicaciones hijas (Nextcloud, Samba, Portal QR, Grafana, CronJobs y NetworkPolicies):
 
 ```bash
-# Aplicar las definiciones de ArgoCD
-sudo kubectl apply -f infrastructure/
+# Aplicar la Root Application
+sudo kubectl apply -f infrastructure/root-application.yaml
 
-# Verificar sincronización
+# Verificar que ArgoCD reconcilie todo automáticamente
 sudo kubectl -n argocd get applications
+```
+
+---
+
+## Validación Automatizada (Smoke Tests)
+
+Para verificar la integridad del despliegue en vivo durante auditorías o la presentación de la facultad:
+
+```bash
+# Otorgar permisos y ejecutar suite de validación
+chmod +x tests/smoke-test.sh
+./tests/smoke-test.sh
 ```
 
 ---

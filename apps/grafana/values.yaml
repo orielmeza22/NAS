@@ -21,3 +21,8 @@ grafana:
   persistence:
     enabled: true
     size: 500Mi
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      searchNamespace: ALL

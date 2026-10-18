@@ -1,0 +1,32 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: portal-qr-network-policy
+  namespace: default
+  labels:
+    app.kubernetes.io/name: portal-qr
+    app.kubernetes.io/part-of: nas-platform
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: portal-qr
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow incoming HTTP connections to the QR web portal
+    - ports:
+        - protocol: TCP
+          port: 80
+  egress:
+    # Portal QR is completely static - block all outbound egress (Zero-Trust) except internal DNS
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

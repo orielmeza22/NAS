@@ -1,0 +1,28 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: nas-root-application
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: nas-root
+    app.kubernetes.io/part-of: nas-platform
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/orielmeza22/NAS.git
+    targetRevision: HEAD
+    path: infrastructure
+    directory:
+      recurse: false
+      exclude: 'root-application.yaml'
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
