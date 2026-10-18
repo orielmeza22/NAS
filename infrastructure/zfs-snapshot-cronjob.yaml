@@ -26,13 +26,12 @@ spec:
             args:
             - |
               set -euo pipefail
-              apt-get update -qq && apt-get install -y -qq zfsutils-linux > /dev/null 2>&1
               SNAPSHOT_NAME="tank/nas@k8s-auto-$(date +%Y%m%d-%H%M)"
               echo "[$(date -Iseconds)] Creating snapshot: $SNAPSHOT_NAME"
-              zfs snapshot "$SNAPSHOT_NAME"
+              nsenter --target 1 --mount --uts --ipc --net --pid -- zfs snapshot "$SNAPSHOT_NAME"
               echo "[$(date -Iseconds)] Snapshot created successfully."
               # Cleanup: remove snapshots older than 30 days
-              zfs list -t snapshot -o name -H | grep 'k8s-auto-' | head -n -30 | xargs -r -n1 zfs destroy
+              nsenter --target 1 --mount --uts --ipc --net --pid -- zfs list -t snapshot -o name -H | grep 'k8s-auto-' | head -n -30 | xargs -r -n1 nsenter --target 1 --mount --uts --ipc --net --pid -- zfs destroy
               echo "[$(date -Iseconds)] Cleanup complete."
             securityContext:
               privileged: true

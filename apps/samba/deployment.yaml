@@ -21,7 +21,18 @@ spec:
       - name: samba
         image: dperson/samba:latest
         securityContext:
-          privileged: true
+          privileged: false
+          capabilities:
+            add:
+              - NET_ADMIN
+              - SYS_ADMIN
+              - DAC_OVERRIDE
+              - CHOWN
+              - FOWNER
+              - SETUID
+              - SETGID
+            drop:
+              - ALL
         ports:
         - containerPort: 445
           name: smb
@@ -33,6 +44,17 @@ spec:
           protocol: UDP
         - containerPort: 139
           name: netbios-ssn
+        livenessProbe:
+          tcpSocket:
+            port: 445
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          failureThreshold: 3
+        readinessProbe:
+          tcpSocket:
+            port: 445
+          initialDelaySeconds: 10
+          periodSeconds: 10
         env:
         - name: TZ
           value: "America/Mexico_City"

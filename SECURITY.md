@@ -4,7 +4,7 @@
 
 Si encuentras una vulnerabilidad de seguridad, por favor **no** la reportes como un Issue público.
 
-Envía un correo a: **[security contact - update this]**
+Envía un correo o reporte privado a través de las alertas de seguridad de GitHub en el repositorio o contacta a: **orielmeza@gmail.com** (o vía GitHub Security Advisory).
 
 ## Prácticas de Seguridad
 

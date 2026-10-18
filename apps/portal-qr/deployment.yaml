@@ -27,7 +27,19 @@ spec:
         volumeMounts:
         - name: html-volume
           mountPath: /usr/share/nginx/html
-        resources:
+          readOnly: true
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 10
           requests:
             cpu: "50m"
             memory: "32Mi"
