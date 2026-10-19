@@ -28,29 +28,41 @@ data:
                 color: #fff;
                 padding: 20px;
             }
-            h1 { font-size: 2em; margin-bottom: 0.5em; }
-            .subtitle { font-size: 1.1em; opacity: 0.9; margin-bottom: 2em; }
-            .qr-container {
+            h1 { font-size: 2.2em; margin-bottom: 0.3em; }
+            .subtitle { font-size: 1.1em; opacity: 0.9; margin-bottom: 1.5em; }
+            .qr-card {
                 padding: 24px;
                 background: white;
-                border-radius: 16px;
-                box-shadow: 0 20px 40px rgba(0,0,0,0.2);
-                margin-bottom: 2em;
+                border-radius: 20px;
+                box-shadow: 0 20px 40px rgba(0,0,0,0.25);
+                margin-bottom: 1.5em;
+                color: #333;
+                max-width: 320px;
             }
-            .qr-container img { display: block; width: 250px; height: 250px; }
-            .footer {
-                font-size: 0.85em;
-                opacity: 0.7;
+            .qr-card img { display: block; width: 250px; height: 250px; margin: 0 auto 12px; }
+            .url-link {
+                display: inline-block;
+                word-break: break-all;
+                color: #667eea;
+                font-weight: 600;
+                text-decoration: none;
+                font-size: 0.95em;
+                padding: 6px 12px;
+                background: #f0f4ff;
+                border-radius: 8px;
             }
+            .url-link:hover { text-decoration: underline; }
+            .footer { font-size: 0.85em; opacity: 0.75; margin-top: 1em; }
         </style>
     </head>
     <body>
         <h1>&#128218; NAS Escolar</h1>
-        <p class="subtitle">Escanea el código QR para acceder a Nextcloud</p>
-        <div class="qr-container">
-            <!-- QR points to the NAS Nextcloud instance -->
-            <img src="https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=http://nas.escuela.local:30082" alt="QR Nextcloud">
+        <p class="subtitle">Escanea el código QR con tu celular para acceder a Nextcloud</p>
+        <div class="qr-card">
+            <!-- Points to active Cloudflare Zero-Trust tunnel -->
+            <img src="https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=https://builder-letters-collar-server.trycloudflare.com" alt="QR Nextcloud">
+            <a class="url-link" href="https://builder-letters-collar-server.trycloudflare.com" target="_blank">Abrir Nextcloud</a>
         </div>
-        <p class="footer">Infraestructura gestionada con GitOps (ArgoCD + K3s)</p>
+        <p class="footer">Infraestructura Zero-Trust Cloudflare + K3s + ArgoCD</p>
     </body>
     </html>
