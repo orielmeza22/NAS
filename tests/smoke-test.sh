@@ -83,7 +83,7 @@ fi
 
 # 8. Comprobar CronJob de Snapshots Locales
 info "8. Comprobando existencia del CronJob de snapshots ZFS..."
-if kubectl get cronjob zfs-snapshot -A > /dev/null 2>&1; then
+if kubectl get cronjobs -A | grep -q "zfs-snapshot" > /dev/null 2>&1; then
   pass "CronJob de snapshots nocturnos registrado."
 else
   fail "CronJob zfs-snapshot no encontrado."
