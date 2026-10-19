@@ -1,6 +1,9 @@
 # Nextcloud Helm Chart Values
 # Wrapper chart passing values to the official 'nextcloud' subchart dependency
 nextcloud:
+  image:
+    repository: nextcloud
+    tag: 35.0.1-apache
   nextcloud:
     host: localhost
     defaultConfigs:
