@@ -1,41 +1,29 @@
 # Nextcloud Helm Chart Values
-# Ref: https://github.com/nextcloud/helm/tree/main/charts/nextcloud
+# Wrapper chart passing values to the official 'nextcloud' subchart dependency
 nextcloud:
-  host: nas.escuela.local
-  extraEnv:
-    - name: NEXTCLOUD_TRUSTED_DOMAINS
-      value: "nas.escuela.local localhost *.trycloudflare.com *.loca.lt"
-  existingSecret:
+  nextcloud:
+    host: localhost
+    defaultConfigs:
+      overrides.config.php: true
+    extraEnv:
+      - name: NEXTCLOUD_TRUSTED_DOMAINS
+        value: "localhost 127.0.0.1 10.0.2.15 *.trycloudflare.com *.loca.lt nas.escuela.local 10.42.0.0/16 10.43.0.0/16 *"
+      - name: OVERWRITEPROTOCOL
+        value: "https"
+      - name: OVERWRITECLIURL
+        value: "http://localhost"
+      - name: TRUSTED_PROXIES
+        value: "10.42.0.0/16 10.43.0.0/16 127.0.0.1 10.0.2.15"
+    existingSecret:
+      enabled: false
+  persistence:
     enabled: true
-    secretName: nextcloud-admin-credentials
-    usernameKey: username
-    passwordKey: password
-
-livenessProbe:
-  enabled: true
-  initialDelaySeconds: 180
-  periodSeconds: 20
-  failureThreshold: 10
-
-readinessProbe:
-  enabled: true
-  initialDelaySeconds: 120
-  periodSeconds: 15
-  failureThreshold: 6
-
-startupProbe:
-  enabled: true
-  initialDelaySeconds: 30
-  periodSeconds: 10
-  failureThreshold: 60
-
-persistence:
-  enabled: true
-  existingClaim: nextcloud-pvc
-
-internalDatabase:
-  enabled: true
-
-service:
-  type: NodePort
-  nodePort: 30082
+    existingClaim: nextcloud-pvc
+  internalDatabase:
+    enabled: true
+  livenessProbe:
+    enabled: false
+  readinessProbe:
+    enabled: false
+  startupProbe:
+    enabled: false
