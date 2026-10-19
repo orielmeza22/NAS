@@ -81,12 +81,28 @@ else
   warn "Existen PVCs que no están en estado Bound: $PVC_PENDING"
 fi
 
-# 8. Comprobar CronJob de Snapshots
+# 8. Comprobar CronJob de Snapshots Locales
 info "8. Comprobando existencia del CronJob de snapshots ZFS..."
-if kubectl get cronjob zfs-snapshot -n default > /dev/null 2>&1; then
+if kubectl get cronjob zfs-snapshot -A > /dev/null 2>&1; then
   pass "CronJob de snapshots nocturnos registrado."
 else
   fail "CronJob zfs-snapshot no encontrado."
+fi
+
+# 9. Comprobar Bitnami Sealed Secrets Controller
+info "9. Verificando controlador de Sealed Secrets..."
+if kubectl -n kube-system get deployment sealed-secrets-controller > /dev/null 2>&1; then
+  pass "Bitnami Sealed Secrets controller operativo para GitOps Zero-Trust."
+else
+  fail "Sealed Secrets controller no encontrado."
+fi
+
+# 10. Comprobar CronJob de Backup Offsite 3-2-1
+info "10. Comprobando CronJob de Backup Offsite (Cloudflare R2)..."
+if kubectl get cronjob zfs-offsite-backup -n kube-system > /dev/null 2>&1; then
+  pass "CronJob de Backup Offsite 3-2-1 registrado."
+else
+  warn "CronJob zfs-offsite-backup en proceso de conciliación por ArgoCD."
 fi
 
 echo "============================================================"

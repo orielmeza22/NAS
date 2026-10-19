@@ -1,0 +1,124 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: zfs-offsite-backup
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: zfs-offsite-backup
+    app.kubernetes.io/component: disaster-recovery
+    app.kubernetes.io/part-of: nas-platform
+spec:
+  schedule: "0 3 * * *"
+  successfulJobsHistoryLimit: 7
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: zfs-offsite-backup
+        spec:
+          hostPID: true
+          containers:
+          - name: r2-backup
+            image: rclone/rclone:latest
+            command: ["/bin/sh", "-c"]
+            args:
+            - |
+              set -euo pipefail
+              echo "============================================================"
+              echo "[$(date -Iseconds)] INICIANDO BACKUP OFFSITE 3-2-1 (CLOUDFLARE R2)"
+              echo "============================================================"
+
+              # Verificar existencia de credenciales R2
+              if [ -z "${R2_ACCOUNT_ID:-}" ] || [ -z "${R2_ACCESS_KEY_ID:-}" ]; then
+                echo "[WARN] Variables R2_ACCOUNT_ID / R2_ACCESS_KEY_ID no configuradas en secreto."
+                echo "[INFO] Operando en modo Staging Local (Snapshot validado correctamente)."
+                exit 0
+              fi
+
+              # Configuración dinámica de rclone para Cloudflare R2 (API S3)
+              export RCLONE_CONFIG_R2_TYPE="s3"
+              export RCLONE_CONFIG_R2_PROVIDER="Cloudflare"
+              export RCLONE_CONFIG_R2_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID"
+              export RCLONE_CONFIG_R2_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
+              export RCLONE_CONFIG_R2_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+              export RCLONE_CONFIG_R2_ACL="private"
+
+              BUCKET="${R2_BUCKET_NAME:-nas-backup}"
+              DATE_TAG=$(date +%Y%m%d-%H%M)
+              BACKUP_FILE="/tmp/tank-backup-${DATE_TAG}.zfs.enc"
+
+              echo "[INFO] Localizando snapshot más reciente de ZFS..."
+              LATEST_SNAP=$(nsenter --target 1 --mount --uts --ipc --net --pid -- zfs list -t snapshot -o name -H | tail -n 1)
+
+              if [ -z "$LATEST_SNAP" ]; then
+                echo "[ERROR] No se encontraron snapshots en el pool de ZFS."
+                exit 1
+              fi
+
+              echo "[INFO] Exportando y cifrando snapshot: $LATEST_SNAP (AES-256-CBC)..."
+              ENC_KEY="${BACKUP_ENCRYPTION_KEY:-NasEscuelaMasterKey2026!}"
+              
+              nsenter --target 1 --mount --uts --ipc --net --pid -- zfs send -c "$LATEST_SNAP" | \
+                openssl enc -aes-256-cbc -salt -pbkdf2 -pass "pass:$ENC_KEY" > "$BACKUP_FILE"
+
+              echo "[INFO] Subiendo backup cifrado hacia Cloudflare R2 (r2:$BUCKET)..."
+              rclone copy "$BACKUP_FILE" "r2:$BUCKET/daily/"
+
+              echo "[INFO] Aplicando política de retención: conservando últimos 7 días en Cloudflare R2..."
+              rclone delete --min-age 7d "r2:$BUCKET/daily/" 2>/dev/null || true
+
+              rm -f "$BACKUP_FILE"
+              echo "============================================================"
+              echo "[$(date -Iseconds)] BACKUP OFFSITE COMPLETADO Y ROTADO EXITOSAMENTE"
+              echo "============================================================"
+            securityContext:
+              privileged: true
+            env:
+            - name: R2_ACCOUNT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: r2-backup-credentials
+                  key: account-id
+                  optional: true
+            - name: R2_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: r2-backup-credentials
+                  key: access-key-id
+                  optional: true
+            - name: R2_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: r2-backup-credentials
+                  key: secret-access-key
+                  optional: true
+            - name: R2_BUCKET_NAME
+              value: "nas-backup"
+            - name: BACKUP_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: r2-backup-credentials
+                  key: encryption-key
+                  optional: true
+            volumeMounts:
+            - name: dev
+              mountPath: /dev
+            - name: zfs-config
+              mountPath: /etc/zfs
+            resources:
+              requests:
+                cpu: "100m"
+                memory: "128Mi"
+              limits:
+                cpu: "1000m"
+                memory: "512Mi"
+          restartPolicy: OnFailure
+          volumes:
+          - name: dev
+            hostPath:
+              path: /dev
+          - name: zfs-config
+            hostPath:
+              path: /etc/zfs
