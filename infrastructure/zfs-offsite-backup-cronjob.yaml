@@ -44,6 +44,7 @@ spec:
               export RCLONE_CONFIG_R2_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
               export RCLONE_CONFIG_R2_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
               export RCLONE_CONFIG_R2_ACL="private"
+              export RCLONE_CONFIG_R2_NO_CHECK_BUCKET="true"
 
               BUCKET="${R2_BUCKET_NAME:-nas-backup}"
               DATE_TAG=$(date +%Y%m%d-%H%M)
@@ -60,8 +61,7 @@ spec:
               echo "[INFO] Exportando y cifrando snapshot: $LATEST_SNAP (AES-256-CBC)..."
               ENC_KEY="${BACKUP_ENCRYPTION_KEY:-NasEscuelaMasterKey2026!}"
               
-              nsenter --target 1 --mount --uts --ipc --net --pid -- zfs send -c "$LATEST_SNAP" | \
-                openssl enc -aes-256-cbc -salt -pbkdf2 -pass "pass:$ENC_KEY" > "$BACKUP_FILE"
+              nsenter --target 1 --mount --uts --ipc --net --pid -- sh -c 'zfs send -c "$1" | openssl enc -aes-256-cbc -salt -pbkdf2 -pass "pass:$2"' -- "$LATEST_SNAP" "$ENC_KEY" > "$BACKUP_FILE"
 
               echo "[INFO] Subiendo backup cifrado hacia Cloudflare R2 (r2:$BUCKET)..."
               rclone copy "$BACKUP_FILE" "r2:$BUCKET/daily/"
