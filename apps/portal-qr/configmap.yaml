@@ -60,8 +60,8 @@ data:
         <p class="subtitle">Escanea el código QR con tu celular para acceder a Nextcloud</p>
         <div class="qr-card">
             <!-- Points to active Cloudflare Zero-Trust tunnel -->
-            <img src="https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=https://builder-letters-collar-server.trycloudflare.com" alt="QR Nextcloud">
-            <a class="url-link" href="https://builder-letters-collar-server.trycloudflare.com" target="_blank">Abrir Nextcloud</a>
+            <img src="https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=https://hip-llp-adams-belts.trycloudflare.com" alt="QR Nextcloud">
+            <a class="url-link" href="https://hip-llp-adams-belts.trycloudflare.com" target="_blank">Abrir Nextcloud</a>
         </div>
         <p class="footer">Infraestructura Zero-Trust Cloudflare + K3s + ArgoCD</p>
     </body>
