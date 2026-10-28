@@ -37,7 +37,7 @@ fi
 
 # 3. Comprobar Portal QR
 info "3. Verificando pod del Portal QR..."
-if kubectl get pods -l app=portal-qr --no-headers | grep -q "Running"; then
+if kubectl get pods -l app.kubernetes.io/name=portal-qr --no-headers | grep -q "Running"; then
   pass "Pod Portal QR activo y respondiendo."
 else
   fail "Pod del Portal QR no está en estado Running."
@@ -45,7 +45,7 @@ fi
 
 # 4. Comprobar Samba File Server
 info "4. Verificando pod de Samba File Server..."
-if kubectl get pods -l app=samba --no-headers | grep -q "Running"; then
+if kubectl get pods -l app.kubernetes.io/name=samba --no-headers | grep -q "Running"; then
   pass "Servidor Samba corriendo con capabilities seguras."
 else
   fail "Servidor Samba no está en estado Running."
@@ -83,28 +83,37 @@ fi
 
 # 8. Comprobar CronJob de Snapshots Locales
 info "8. Comprobando existencia del CronJob de snapshots ZFS..."
-if kubectl get cronjobs -A | grep -q "zfs-snapshot" > /dev/null 2>&1; then
+if kubectl get cronjob zfs-snapshot -n kube-system > /dev/null 2>&1; then
   pass "CronJob de snapshots nocturnos registrado."
 else
   fail "CronJob zfs-snapshot no encontrado."
 fi
 
-# 9. Comprobar Bitnami Sealed Secrets Controller
-info "9. Verificando controlador de Sealed Secrets..."
-if kubectl -n kube-system get deployment sealed-secrets-controller > /dev/null 2>&1; then
-  pass "Bitnami Sealed Secrets controller operativo para GitOps Zero-Trust."
+# 9. Comprobar Bitnami Sealed Secrets Controller y Propiedad de Secretos
+info "9. Verificando controlador de Sealed Secrets y propiedad Zero-Trust..."
+if kubectl -n kube-system get deployment sealed-secrets-controller > /dev/null 2>&1 && \
+   kubectl get secret samba-credentials -n default -o jsonpath='{.metadata.ownerReferences[0].kind}' | grep -q "SealedSecret"; then
+  pass "Bitnami Sealed Secrets controller activo y administrando secretos sin colisión."
 else
-  fail "Sealed Secrets controller no encontrado."
+  fail "Sealed Secrets controller ausente o secreto samba-credentials no administrado por SealedSecret."
 fi
 
 # 10. Comprobar CronJob de Backup Offsite 3-2-1
 info "10. Comprobando CronJob de Backup Offsite (Cloudflare R2)..."
 if kubectl get cronjob zfs-offsite-backup -n kube-system > /dev/null 2>&1; then
-  pass "CronJob de Backup Offsite 3-2-1 registrado."
+  pass "CronJob de Backup Offsite 3-2-1 por streaming directo registrado."
 else
-  warn "CronJob zfs-offsite-backup en proceso de conciliación por ArgoCD."
+  fail "CronJob zfs-offsite-backup no encontrado."
+fi
+
+# 11. Comprobar CronJob de ZFS Scrub Mensual
+info "11. Comprobando CronJob de verificación de integridad ZFS Scrub..."
+if kubectl get cronjob zfs-scrub -n kube-system > /dev/null 2>&1; then
+  pass "CronJob mensual de ZFS Scrub registrado."
+else
+  fail "CronJob zfs-scrub no encontrado."
 fi
 
 echo "============================================================"
-echo -e "${COLOR_GREEN} ✅ TODOS LOS SMOKE TESTS COMPLETADOS EXITOSAMENTE.${COLOR_RESET}"
+echo -e "${COLOR_GREEN} ✅ TODOS LOS SMOKE TESTS (11/11) COMPLETADOS EXITOSAMENTE.${COLOR_RESET}"
 echo "============================================================"

@@ -8,9 +8,19 @@ nextcloud:
     host: localhost
     defaultConfigs:
       overrides.config.php: true
+    configs:
+      trusted-domains.config.php: |-
+        <?php
+        $CONFIG = array (
+          'trusted_domains' => array (
+            0 => 'localhost',
+            1 => '127.0.0.1',
+            2 => '10.0.2.15',
+            3 => 'nas.escuela.local',
+            4 => '*.trycloudflare.com',
+          ),
+        );
     extraEnv:
-      - name: NEXTCLOUD_TRUSTED_DOMAINS
-        value: "localhost 127.0.0.1 10.0.2.15 *.trycloudflare.com *.loca.lt nas.escuela.local 10.42.0.0/16 10.43.0.0/16 *"
       - name: OVERWRITEPROTOCOL
         value: "https"
       - name: OVERWRITECLIURL
@@ -18,15 +28,30 @@ nextcloud:
       - name: TRUSTED_PROXIES
         value: "10.42.0.0/16 10.43.0.0/16 127.0.0.1 10.0.2.15"
     existingSecret:
-      enabled: false
+      enabled: true
+      secretName: nextcloud-admin-credentials
+      usernameKey: username
+      passwordKey: password
   persistence:
     enabled: true
     existingClaim: nextcloud-pvc
   internalDatabase:
     enabled: true
   livenessProbe:
-    enabled: false
+    enabled: true
+    initialDelaySeconds: 30
+    periodSeconds: 15
+    timeoutSeconds: 5
+    failureThreshold: 5
   readinessProbe:
-    enabled: false
+    enabled: true
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
   startupProbe:
-    enabled: false
+    enabled: true
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 30

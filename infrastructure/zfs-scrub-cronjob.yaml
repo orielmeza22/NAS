@@ -1,0 +1,55 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: zfs-scrub
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: zfs-scrub
+    app.kubernetes.io/component: storage-integrity
+    app.kubernetes.io/part-of: nas-platform
+spec:
+  # Día 1 de cada mes a las 04:00 AM (verificación mensual de bit-rot en RAID-Z1)
+  schedule: "0 4 1 * *"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: zfs-scrub
+        spec:
+          hostPID: true
+          containers:
+          - name: zfs-scrub
+            image: ubuntu:22.04
+            command: ["/bin/bash", "-c"]
+            args:
+            - |
+              set -euo pipefail
+              echo "[$(date -Iseconds)] Iniciando verificación mensual de integridad (zpool scrub tank)..."
+              nsenter --target 1 --mount --uts --ipc --net --pid -- zpool scrub tank
+              nsenter --target 1 --mount --uts --ipc --net --pid -- zpool status tank
+              echo "[$(date -Iseconds)] Scrub de ZFS iniciado exitosamente."
+            securityContext:
+              privileged: true
+            volumeMounts:
+            - name: dev
+              mountPath: /dev
+            - name: zfs-config
+              mountPath: /etc/zfs
+            resources:
+              requests:
+                cpu: "50m"
+                memory: "64Mi"
+              limits:
+                cpu: "250m"
+                memory: "128Mi"
+          restartPolicy: OnFailure
+          volumes:
+          - name: dev
+            hostPath:
+              path: /dev
+          - name: zfs-config
+            hostPath:
+              path: /etc/zfs

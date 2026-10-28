@@ -30,8 +30,8 @@ spec:
               echo "[$(date -Iseconds)] Creating snapshot: $SNAPSHOT_NAME"
               nsenter --target 1 --mount --uts --ipc --net --pid -- zfs snapshot "$SNAPSHOT_NAME"
               echo "[$(date -Iseconds)] Snapshot created successfully."
-              # Cleanup: remove snapshots older than 30 days
-              nsenter --target 1 --mount --uts --ipc --net --pid -- zfs list -t snapshot -o name -H | grep 'k8s-auto-' | head -n -30 | xargs -r -n1 nsenter --target 1 --mount --uts --ipc --net --pid -- zfs destroy
+              # Cleanup: remove snapshots older than the 30 most recent without failing on <30
+               (nsenter --target 1 --mount --uts --ipc --net --pid -- zfs list -t snapshot -o name -H | grep 'k8s-auto-' || true) | head -n -30 | xargs -r -n1 nsenter --target 1 --mount --uts --ipc --net --pid -- zfs destroy
               echo "[$(date -Iseconds)] Cleanup complete."
             securityContext:
               privileged: true

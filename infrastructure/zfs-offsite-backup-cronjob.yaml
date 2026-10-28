@@ -21,7 +21,7 @@ spec:
           hostPID: true
           containers:
           - name: r2-backup
-            image: rclone/rclone:latest
+            image: rclone/rclone@sha256:2687085f718d3c628f7fdfb77c52a1d344332aed543110bb88088f2c70d43eb5
             command: ["/bin/sh", "-c"]
             args:
             - |
@@ -30,11 +30,10 @@ spec:
               echo "[$(date -Iseconds)] INICIANDO BACKUP OFFSITE 3-2-1 (CLOUDFLARE R2)"
               echo "============================================================"
 
-              # Verificar existencia de credenciales R2
-              if [ -z "${R2_ACCOUNT_ID:-}" ] || [ -z "${R2_ACCESS_KEY_ID:-}" ]; then
-                echo "[WARN] Variables R2_ACCOUNT_ID / R2_ACCESS_KEY_ID no configuradas en secreto."
-                echo "[INFO] Operando en modo Staging Local (Snapshot validado correctamente)."
-                exit 0
+              # Verificar existencia de credenciales R2 y clave de cifrado
+              if [ -z "${R2_ACCOUNT_ID:-}" ] || [ -z "${R2_ACCESS_KEY_ID:-}" ] || [ -z "${BACKUP_ENCRYPTION_KEY:-}" ]; then
+                echo "[ERROR] Credenciales R2 o BACKUP_ENCRYPTION_KEY ausentes en el SealedSecret."
+                exit 1
               fi
 
               # Configuración dinámica de rclone para Cloudflare R2 (API S3)
@@ -48,7 +47,7 @@ spec:
 
               BUCKET="${R2_BUCKET_NAME:-nas-backup}"
               DATE_TAG=$(date +%Y%m%d-%H%M)
-              BACKUP_FILE="/tmp/tank-backup-${DATE_TAG}.zfs.enc"
+              REMOTE_OBJECT="r2:${BUCKET}/daily/tank-backup-${DATE_TAG}.zfs.enc"
 
               echo "[INFO] Localizando snapshot más reciente de ZFS..."
               LATEST_SNAP=$(nsenter --target 1 --mount --uts --ipc --net --pid -- zfs list -t snapshot -o name -H | tail -n 1)
@@ -58,18 +57,15 @@ spec:
                 exit 1
               fi
 
-              echo "[INFO] Exportando y cifrando snapshot: $LATEST_SNAP (AES-256-CBC)..."
-              ENC_KEY="${BACKUP_ENCRYPTION_KEY:-NasEscuelaMasterKey2026!}"
-              
-              nsenter --target 1 --mount --uts --ipc --net --pid -- sh -c 'zfs send -c "$1" | openssl enc -aes-256-cbc -salt -pbkdf2 -pass "pass:$2"' -- "$LATEST_SNAP" "$ENC_KEY" > "$BACKUP_FILE"
-
-              echo "[INFO] Subiendo backup cifrado hacia Cloudflare R2 (r2:$BUCKET)..."
-              rclone copy "$BACKUP_FILE" "r2:$BUCKET/daily/"
+              echo "[INFO] Streaming y cifrando snapshot al vuelo: $LATEST_SNAP (AES-256-CBC -> R2)..."
+              nsenter --target 1 --mount --uts --ipc --net --pid -- sh -c \
+                'zfs send -c "$1" | openssl enc -aes-256-cbc -salt -pbkdf2 -pass "pass:$2"' \
+                -- "$LATEST_SNAP" "$BACKUP_ENCRYPTION_KEY" | \
+                rclone rcat "$REMOTE_OBJECT"
 
               echo "[INFO] Aplicando política de retención: conservando últimos 7 días en Cloudflare R2..."
               rclone delete --min-age 7d "r2:$BUCKET/daily/" 2>/dev/null || true
 
-              rm -f "$BACKUP_FILE"
               echo "============================================================"
               echo "[$(date -Iseconds)] BACKUP OFFSITE COMPLETADO Y ROTADO EXITOSAMENTE"
               echo "============================================================"
