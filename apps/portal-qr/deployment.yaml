@@ -26,7 +26,11 @@ spec:
           name: http
         volumeMounts:
         - name: html-volume
-          mountPath: /usr/share/nginx/html
+          mountPath: /usr/share/nginx/html/index.html
+          subPath: index.html
+          readOnly: true
+        - name: tunnel-volume
+          mountPath: /usr/share/nginx/html/tunnel
           readOnly: true
         livenessProbe:
           httpGet:
@@ -51,3 +55,7 @@ spec:
       - name: html-volume
         configMap:
           name: portal-qr-config
+      - name: tunnel-volume
+        hostPath:
+          path: /tmp/nas-tunnel
+          type: DirectoryOrCreate

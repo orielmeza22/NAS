@@ -37,7 +37,7 @@ data:
                 box-shadow: 0 20px 40px rgba(0,0,0,0.25);
                 margin-bottom: 1.5em;
                 color: #333;
-                max-width: 320px;
+                max-width: 340px;
             }
             .qr-card img { display: block; width: 250px; height: 250px; margin: 0 auto 12px; }
             .url-link {
@@ -46,8 +46,8 @@ data:
                 color: #667eea;
                 font-weight: 600;
                 text-decoration: none;
-                font-size: 0.95em;
-                padding: 6px 12px;
+                font-size: 0.9em;
+                padding: 8px 12px;
                 background: #f0f4ff;
                 border-radius: 8px;
             }
@@ -59,10 +59,30 @@ data:
         <h1>&#128218; NAS Escolar</h1>
         <p class="subtitle">Escanea el código QR con tu celular para acceder a Nextcloud</p>
         <div class="qr-card">
-            <!-- Points to active Cloudflare Zero-Trust tunnel -->
-            <img src="https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=https://hip-llp-adams-belts.trycloudflare.com" alt="QR Nextcloud">
-            <a class="url-link" href="https://hip-llp-adams-belts.trycloudflare.com" target="_blank">Abrir Nextcloud</a>
+            <img id="qr-img" src="" alt="Cargando QR Nextcloud...">
+            <a id="qr-link" class="url-link" href="#" target="_blank">Detectando túnel activo...</a>
         </div>
         <p class="footer">Infraestructura Zero-Trust Cloudflare + K3s + ArgoCD</p>
+        <script>
+            async function loadTunnelUrl() {
+                try {
+                    const res = await fetch('/tunnel/url.txt?t=' + Date.now(), { cache: 'no-store' });
+                    if (res.ok) {
+                        const url = (await res.text()).trim();
+                        if (url.startsWith('http')) {
+                            document.getElementById('qr-img').src =
+                                'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=' + encodeURIComponent(url);
+                            const link = document.getElementById('qr-link');
+                            link.href = url;
+                            link.textContent = url;
+                        }
+                    }
+                } catch (e) {
+                    console.error('Error leyendo URL del túnel:', e);
+                }
+            }
+            loadTunnelUrl();
+            setInterval(loadTunnelUrl, 15000);
+        </script>
     </body>
     </html>
