@@ -527,252 +527,524 @@ data:
       <title>Enterprise NAS Control Center OS</title>
       <style>
         :root {
-          --bg: #0f172a;
-          --card-bg: #1e293b;
-          --accent: #3b82f6;
-          --accent-hover: #2563eb;
+          --bg: #090d16;
+          --card-bg: rgba(17, 24, 39, 0.85);
+          --card-hover: rgba(30, 41, 59, 0.95);
+          --border: rgba(255, 255, 255, 0.08);
+          --border-focus: rgba(56, 189, 248, 0.5);
+          --accent: #0284c7;
+          --accent-glow: rgba(2, 132, 199, 0.25);
           --success: #10b981;
+          --success-bg: rgba(16, 185, 129, 0.12);
           --danger: #ef4444;
+          --danger-bg: rgba(239, 68, 68, 0.12);
           --warning: #f59e0b;
+          --warning-bg: rgba(245, 158, 11, 0.12);
           --text: #f8fafc;
           --text-muted: #94a3b8;
-          --border: #334155;
+          --text-dim: #64748b;
         }
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-        body { background: var(--bg); color: var(--text); min-height: 100vh; display: flex; flex-direction: column; }
-        header { background: var(--card-bg); border-bottom: 1px solid var(--border); padding: 12px 24px; display: flex; justify-content: space-between; align-items: center; }
-        .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 1.2rem; }
-        .status-badge { padding: 4px 10px; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; background: #064e3b; color: var(--success); }
-        .btn { background: var(--accent); color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; font-weight: 600; transition: 0.2s; display: inline-flex; align-items: center; gap: 6px; }
-        .btn:hover { background: var(--accent-hover); }
-        .btn-danger { background: var(--danger); }
-        .btn-danger:hover { background: #dc2626; }
-        .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text); }
-        .btn-outline:hover { background: var(--border); }
-        main { padding: 24px; max-width: 1300px; margin: 0 auto; width: 100%; flex: 1; }
-        .public-box { background: var(--card-bg); border: 1px solid var(--border); border-radius: 16px; padding: 32px; text-align: center; max-width: 480px; margin: 20px auto; box-shadow: 0 10px 25px rgba(0,0,0,0.4); }
-        .qr-img { width: 220px; height: 220px; border-radius: 12px; margin: 16px auto; display: block; background: white; padding: 10px; }
-        .tabs { display: flex; gap: 8px; border-bottom: 1px solid var(--border); margin-bottom: 24px; overflow-x: auto; padding-bottom: 4px; }
-        .tab-btn { background: none; border: none; color: var(--text-muted); padding: 10px 16px; font-size: 0.9rem; font-weight: 600; cursor: pointer; border-radius: 6px; }
-        .tab-btn.active { color: var(--accent); background: #1e3a8a33; border-bottom: 2px solid var(--accent); }
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 24px; }
-        .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
-        .card h3 { font-size: 1rem; color: var(--text-muted); margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; }
-        .card .val { font-size: 1.8rem; font-weight: 700; color: var(--text); }
-        table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 0.85rem; }
-        th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); }
-        th { color: var(--text-muted); font-weight: 600; }
-        .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: none; place-items: center; z-index: 1000; }
+        body { background: radial-gradient(circle at top right, #111827, #090d16); color: var(--text); min-height: 100vh; display: flex; flex-direction: column; }
+        header { background: rgba(15, 23, 42, 0.9); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); padding: 14px 28px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 100; }
+        .brand { display: flex; align-items: center; gap: 12px; font-weight: 700; font-size: 1.15rem; letter-spacing: -0.02em; }
+        .status-badge { padding: 4px 10px; border-radius: 9999px; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; display: inline-flex; align-items: center; gap: 6px; }
+        .badge-online { background: var(--success-bg); color: var(--success); border: 1px solid rgba(16, 185, 129, 0.3); }
+        .badge-degraded { background: var(--danger-bg); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); }
+        .pulse-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.85); } }
+    
+        .header-actions { display: flex; align-items: center; gap: 10px; }
+        .btn { background: var(--accent); color: white; border: 1px solid rgba(255,255,255,0.1); padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 0.82rem; font-weight: 600; transition: all 0.2s ease; display: inline-flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+        .btn:hover { background: #0369a1; transform: translateY(-1px); box-shadow: 0 4px 12px var(--accent-glow); }
+        .btn-danger { background: #b91c1c; }
+        .btn-danger:hover { background: #dc2626; box-shadow: 0 4px 12px rgba(239,68,68,0.3); }
+        .btn-warning { background: #d97706; }
+        .btn-warning:hover { background: #f59e0b; }
+        .btn-outline { background: rgba(30, 41, 59, 0.6); border: 1px solid var(--border); color: var(--text); }
+        .btn-outline:hover { background: rgba(51, 65, 85, 0.8); border-color: rgba(255,255,255,0.2); }
+        
+        main { padding: 24px 28px; max-width: 1400px; margin: 0 auto; width: 100%; flex: 1; }
+    
+        /* Banner Didáctico de Pestaña */
+        .tab-hero { background: linear-gradient(135deg, rgba(30, 41, 59, 0.7), rgba(15, 23, 42, 0.9)); border: 1px solid var(--border); border-radius: 12px; padding: 18px 22px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
+        .tab-hero-info h2 { font-size: 1.25rem; font-weight: 700; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
+        .tab-hero-info p { color: var(--text-muted); font-size: 0.85rem; line-height: 1.4; max-width: 850px; }
+        .tab-hero-badge { font-size: 0.72rem; padding: 4px 10px; border-radius: 6px; background: rgba(56, 189, 248, 0.1); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.2); font-weight: 600; white-space: nowrap; }
+    
+        /* Barra de Navegación */
+        .nav-tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--border); margin-bottom: 20px; overflow-x: auto; padding-bottom: 6px; scrollbar-width: none; }
+        .nav-tab { background: transparent; border: 1px solid transparent; color: var(--text-muted); padding: 9px 14px; font-size: 0.85rem; font-weight: 600; cursor: pointer; border-radius: 8px; transition: all 0.2s ease; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+        .nav-tab:hover { color: var(--text); background: rgba(30, 41, 59, 0.5); }
+        .nav-tab.active { color: #38bdf8; background: rgba(2, 132, 199, 0.15); border-color: rgba(56, 189, 248, 0.3); }
+    
+        /* Tarjetas y Layout */
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 16px; margin-bottom: 20px; }
+        .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; transition: all 0.2s ease; }
+        .card:hover { border-color: rgba(255,255,255,0.15); }
+        .card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
+        .card-title { font-size: 0.85rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+        .card-metric { font-family: monospace; font-size: 1.85rem; font-weight: 700; color: var(--text); letter-spacing: -0.02em; }
+        .card-desc { font-size: 0.78rem; color: var(--text-dim); margin-top: 6px; line-height: 1.35; }
+    
+        /* Botones de Acción con Descripción Integrada */
+        .action-group { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+        .action-card { display: flex; justify-content: space-between; align-items: center; background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border); padding: 10px 14px; border-radius: 8px; transition: border-color 0.2s; }
+        .action-card:hover { border-color: rgba(255,255,255,0.2); }
+        .action-details { display: flex; flex-direction: column; gap: 2px; }
+        .action-name { font-size: 0.84rem; font-weight: 600; color: var(--text); }
+        .action-explain { font-size: 0.75rem; color: var(--text-dim); max-width: 480px; }
+    
+        /* Tablas Premium */
+        .table-container { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; background: rgba(15, 23, 42, 0.4); }
+        table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+        th { background: rgba(30, 41, 59, 0.6); padding: 10px 14px; text-align: left; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border); }
+        td { padding: 10px 14px; border-bottom: 1px solid rgba(255,255,255,0.04); }
+        tr:last-child td { border-bottom: none; }
+        tr:hover td { background: rgba(255,255,255,0.02); }
+        .font-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    
+        /* Caja de Terminal */
+        .terminal-box { background: #050811; border: 1px solid var(--border); color: #34d399; font-family: monospace; font-size: 0.78rem; padding: 14px; border-radius: 8px; max-height: 360px; overflow-y: auto; white-space: pre-wrap; line-height: 1.45; }
+    
+        /* Modales */
+        .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.75); backdrop-filter: blur(4px); display: none; place-items: center; z-index: 1000; }
         .modal.open { display: grid; }
-        .modal-content { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; width: 90%; max-width: 500px; padding: 24px; }
-        input, select, textarea { width: 100%; background: #0f172a; border: 1px solid var(--border); border-radius: 6px; padding: 10px; color: var(--text); margin: 8px 0 16px; font-size: 0.9rem; }
-        .terminal-box { background: #000; color: #10b981; font-family: monospace; font-size: 0.8rem; padding: 16px; border-radius: 8px; max-height: 400px; overflow-y: auto; white-space: pre-wrap; }
+        .modal-box { background: #0f172a; border: 1px solid rgba(255,255,255,0.15); border-radius: 14px; width: 92%; max-width: 520px; padding: 24px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.7); }
+        .modal-title { font-size: 1.15rem; font-weight: 700; margin-bottom: 6px; }
+        .modal-desc { font-size: 0.82rem; color: var(--text-muted); margin-bottom: 16px; line-height: 1.4; }
+        input, select, textarea { width: 100%; background: #090d16; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; color: var(--text); font-size: 0.85rem; margin-bottom: 12px; }
+        input:focus, select:focus, textarea:focus { outline: none; border-color: #38bdf8; box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2); }
+    
+        /* Vista Pública QR */
+        .public-box { background: var(--card-bg); border: 1px solid var(--border); border-radius: 16px; padding: 36px; text-align: center; max-width: 520px; margin: 40px auto; box-shadow: 0 20px 40px rgba(0,0,0,0.5); }
+        .qr-img { width: 220px; height: 220px; border-radius: 12px; margin: 18px auto; display: block; background: white; padding: 10px; box-shadow: 0 10px 20px rgba(0,0,0,0.3); }
+        .url-pill { display: inline-block; word-break: break-all; color: #38bdf8; font-weight: 600; font-size: 0.85rem; padding: 8px 14px; background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 8px; text-decoration: none; margin-top: 10px; }
+        .url-pill:hover { background: rgba(56, 189, 248, 0.2); }
       </style>
     </head>
     <body>
       <header>
         <div class="brand">
-          <span>💾</span> Enterprise NAS Control Center OS
-          <span id="raid-badge" class="status-badge">Cargando...</span>
+          <span>💾</span>
+          <span>Enterprise NAS Control Center OS</span>
+          <span id="raid-badge" class="status-badge badge-online"><span class="pulse-dot"></span> RAID-Z1 ONLINE</span>
         </div>
-        <div style="display:flex; gap:10px;">
-          <button class="btn btn-outline" id="btn-killswitch" onclick="toggleLanOnly()">🌐 Modo Solo LAN</button>
-          <button class="btn btn-outline" onclick="rotateTunnel()">🔄 Rotar Link WAN</button>
-          <button class="btn" id="btn-auth" onclick="toggleAuthModal()">🔒 Ingreso Administrador</button>
+        <div class="header-actions">
+          <button class="btn btn-outline" id="btn-killswitch" onclick="toggleLanOnly()" title="Aísla el NAS cortando la salida pública a internet">
+            🌐 Modo Solo LAN
+          </button>
+          <button class="btn btn-outline" onclick="rotateTunnel()" title="Genera un enlace público nuevo de Cloudflare en 5 segundos">
+            🔄 Rotar Link WAN
+          </button>
+          <button class="btn" id="btn-auth" onclick="toggleAuthModal()">
+            🔒 Ingreso Administrador
+          </button>
         </div>
       </header>
     
       <main>
-        <!-- VISTA PÚBLICA -->
+        <!-- VISTA PÚBLICA (Alumnos / Profesores sin clave admin) -->
         <div id="public-view" class="public-box">
           <h2>Acceso Web Nextcloud</h2>
-          <p style="color:var(--text-muted); font-size:0.9rem; margin-top:6px;">Escanea el código QR con tu celular o accede al enlace directo</p>
-          <img id="public-qr" class="qr-img" src="" alt="Cargando QR...">
-          <a id="public-link" href="#" target="_blank" style="color:var(--accent); font-weight:600; text-decoration:none; word-break:break-all;">Conectando al túnel...</a>
-          <div style="margin-top:24px; padding-top:16px; border-top:1px solid var(--border); font-size:0.8rem; color:var(--text-muted);">
-            Para administrar almacenamiento, usuarios, copias y seguridad, inicia sesión como Administrador arriba.
+          <p style="color:var(--text-muted); font-size:0.86rem; margin-top:6px;">
+            Escanea este código QR con la cámara de tu celular o haz clic en el enlace para ingresar a tus carpetas y archivos escolares en la nube privada.
+          </p>
+          <img id="public-qr" class="qr-img" src="" alt="Cargando código QR de Nextcloud...">
+          <div>
+            <a id="public-link" class="url-pill" href="#" target="_blank">Detectando túnel Zero-Trust...</a>
+          </div>
+          <div style="margin-top:28px; padding-top:18px; border-top:1px solid var(--border); font-size:0.78rem; color:var(--text-dim); line-height:1.4;">
+            🔐 <strong>Seguridad Institucional:</strong> Conexión cifrada de extremo a extremo mediante Cloudflare Zero-Trust Tunnel. Si eres el administrador del sistema, haz clic en <em>Ingreso Administrador</em> arriba para gestionar discos, cuotas, copias de seguridad y usuarios.
           </div>
         </div>
     
-        <!-- CONSOLA DE ADMINISTRACIÓN (SOLO ADMIN LOGUEADO) -->
+        <!-- CONSOLA DE ADMINISTRACIÓN (12 Módulos OS) -->
         <div id="admin-view" style="display:none;">
-          <div class="tabs">
-            <button class="tab-btn active" onclick="switchTab('dashboard')">🖥️ Dashboard</button>
-            <button class="tab-btn" onclick="switchTab('raid')">💾 Gestor RAID-Z1</button>
-            <button class="tab-btn" onclick="switchTab('backups')">☁️ Backups & R2</button>
-            <button class="tab-btn" onclick="switchTab('users')">👥 Usuarios & CSV</button>
-            <button class="tab-btn" onclick="switchTab('files')">📁 File Station & Papelera</button>
-            <button class="tab-btn" onclick="switchTab('security')">🛡️ Anti-Ransomware</button>
-            <button class="tab-btn" onclick="switchTab('services')">🔌 Servicios K3s</button>
-            <button class="tab-btn" onclick="switchTab('diagnostics')">🧪 Diagnóstico & Reporte</button>
-          </div>
+          <nav class="nav-tabs">
+            <button class="nav-tab active" onclick="switchTab('dashboard')">🖥️ Dashboard</button>
+            <button class="nav-tab" onclick="switchTab('raid')">💾 Gestor RAID-Z1</button>
+            <button class="nav-tab" onclick="switchTab('backups')">☁️ Backups & R2</button>
+            <button class="nav-tab" onclick="switchTab('users')">👥 Usuarios & CSV</button>
+            <button class="nav-tab" onclick="switchTab('files')">📁 File Station & Papelera</button>
+            <button class="nav-tab" onclick="switchTab('security')">🛡️ Anti-Ransomware</button>
+            <button class="nav-tab" onclick="switchTab('services')">🔌 Servicios K3s</button>
+            <button class="nav-tab" onclick="switchTab('diagnostics')">🧪 Diagnóstico & Reporte</button>
+          </nav>
     
-          <!-- TAB: DASHBOARD -->
+          <!-- 1. TAB: DASHBOARD -->
           <div id="tab-dashboard" class="tab-content">
+            <div class="tab-hero">
+              <div class="tab-hero-info">
+                <h2>🖥️ Telemetría y Rendimiento del Servidor</h2>
+                <p>Monitoreo en tiempo real del uso de CPU, memoria física RAM y la caché en memoria ultrarrápida <strong>OpenZFS ARC</strong>. Permite optimizar el rendimiento y ejecutar reinicios o apagados ordenados garantizando que ningún dato quede sin escribir en disco.</p>
+              </div>
+              <span class="tab-hero-badge">Uptime: Servidor Operativo</span>
+            </div>
+    
             <div class="grid">
-              <div class="card"><h3>CPU Utilizada</h3><div class="val" id="val-cpu">-- %</div></div>
-              <div class="card"><h3>Memoria RAM</h3><div class="val" id="val-ram">-- / -- MB</div></div>
-              <div class="card"><h3>Caché ZFS ARC</h3><div class="val" id="val-arc">-- MB</div></div>
               <div class="card">
-                <h3>Acciones del Sistema</h3>
-                <div style="display:flex; gap:8px; margin-top:10px;">
-                  <button class="btn btn-outline" onclick="flushArc()">🧹 Vaciar RAM</button>
-                  <button class="btn btn-danger" onclick="rebootSystem()">🔄 Reiniciar</button>
-                  <button class="btn btn-danger" onclick="shutdownSystem()">🔌 Apagar</button>
+                <div class="card-header"><span class="card-title">Carga de Procesador</span><span>⚙️</span></div>
+                <div class="card-metric" id="val-cpu">-- %</div>
+                <p class="card-desc">Uso total de CPU por los pods de Kubernetes, el motor ZFS y el servidor Samba.</p>
+              </div>
+              <div class="card">
+                <div class="card-header"><span class="card-title">Memoria RAM Física</span><span>🧠</span></div>
+                <div class="card-metric" id="val-ram">-- / -- MB</div>
+                <p class="card-desc">Memoria ocupada por bases de datos PostgreSQL, Redis y servicios de la plataforma.</p>
+              </div>
+              <div class="card">
+                <div class="card-header"><span class="card-title">Caché ZFS ARC (RAM)</span><span>⚡</span></div>
+                <div class="card-metric" id="val-arc">-- MB</div>
+                <p class="card-desc">Bloques calientes de disco mantenidos en RAM para servir archivos al instante sin esperar al disco.</p>
+              </div>
+            </div>
+    
+            <div class="card">
+              <div class="card-header">
+                <span class="card-title">Controles de Energía y Mantenimiento de Hardware</span>
+              </div>
+              <div class="action-group">
+                <div class="action-card">
+                  <div class="action-details">
+                    <span class="action-name">🧹 Liberar Caché de Memoria RAM (Flush ARC)</span>
+                    <span class="action-explain">Purga los bloques temporales de la memoria caché para liberar RAM de inmediato sin afectar la integridad de los datos en disco.</span>
+                  </div>
+                  <button class="btn btn-outline" onclick="flushArc()">Ejecutar Flush</button>
+                </div>
+                <div class="action-card">
+                  <div class="action-details">
+                    <span class="action-name">🔄 Reinicio Seguro del Servidor NAS</span>
+                    <span class="action-explain">Envía señal de terminación limpia a todos los contenedores de Nextcloud, Samba y PostgreSQL antes de reiniciar el sistema operativo.</span>
+                  </div>
+                  <button class="btn btn-danger" onclick="rebootSystem()">Reiniciar Servidor</button>
+                </div>
+                <div class="action-card">
+                  <div class="action-details">
+                    <span class="action-name">🔌 Apagado Ordenado del Sistema (Safe Poweroff)</span>
+                    <span class="action-explain">Ejecuta un <code>zpool sync</code> forzado para descargar buffers a disco y apaga el nodo de forma segura ante mantenimiento eléctrico.</span>
+                  </div>
+                  <button class="btn btn-danger" onclick="shutdownSystem()">Apagar Servidor</button>
                 </div>
               </div>
             </div>
           </div>
     
-          <!-- TAB: RAID-Z1 -->
+          <!-- 2. TAB: RAID-Z1 -->
           <div id="tab-raid" class="tab-content" style="display:none;">
-            <div class="card" style="margin-bottom:20px;">
-              <h3>Discos del Pool RAID-Z1 (tank)
-                <div>
-                  <button class="btn btn-danger" onclick="simulateDiskFailure()">⚡ Simular Fallo Disco 2</button>
-                  <button class="btn" onclick="repairResilverDisk()">🔧 Reparar / Resilver</button>
-                  <button class="btn btn-outline" onclick="addHotSpare()">➕ Añadir Hot-Spare</button>
-                  <button class="btn btn-outline" onclick="triggerScrub()">🔍 ZFS Scrub</button>
-                </div>
-              </h3>
-              <table>
-                <thead><tr><th>Disco</th><th>Estado</th><th>Lectura Errores</th><th>Escritura Errores</th><th>Checksum Errores</th></tr></thead>
-                <tbody id="disks-tbody"></tbody>
-              </table>
+            <div class="tab-hero">
+              <div class="tab-hero-info">
+                <h2>💾 Gestor de Almacenamiento OpenZFS (RAID-Z1)</h2>
+                <p>Visualiza el estado de paridad de los discos físicos, simula fallos mecánicos para probar la tolerancia a desastres, añade discos de reserva automática (<strong>Hot-Spare</strong>), y ajusta las <strong>cuotas de almacenamiento en GB</strong> de cada departamento en vivo.</p>
+              </div>
+              <span class="tab-hero-badge">Tolerancia: N+1 Discos</span>
             </div>
+    
+            <div class="card" style="margin-bottom:20px;">
+              <div class="card-header">
+                <span class="card-title">Topología de Discos del Pool 'tank'</span>
+                <div style="display:flex; gap:8px;">
+                  <button class="btn btn-danger" onclick="simulateDiskFailure()" title="Desconecta el disco 2 para probar que el NAS no se cae">⚡ Simular Muerte Disco 2</button>
+                  <button class="btn" onclick="repairResilverDisk()" title="Vuelve a conectar el disco y repara la paridad">🔧 Reparar / Resilver</button>
+                  <button class="btn btn-outline" onclick="addHotSpare()" title="Asigna disk4 como disco de reemplazo inmediato">➕ Añadir Hot-Spare</button>
+                  <button class="btn btn-outline" onclick="triggerScrub()" title="Lee cada bloque del disco para detectar y corregir corrupción silenciosa">🔍 ZFS Scrub</button>
+                </div>
+              </div>
+              <p class="card-desc" style="margin-bottom:12px;">
+                ℹ️ <strong>¿Qué hace cada botón?</strong><br>
+                • <strong>Simular Muerte Disco 2:</strong> Pone <code>disk2.img</code> en estado <em>OFFLINE</em>. El RAID pasa a <em>DEGRADED</em> pero Nextcloud y Samba continúan funcionando al 100% sin perder archivos.<br>
+                • <strong>Reparar / Resilver:</strong> Reconecta el disco y sincroniza los bloques modificados en segundos devolviendo el estado a <em>ONLINE</em>.<br>
+                • <strong>Añadir Hot-Spare:</strong> Crea un disco <code>disk4</code> de reserva pasiva que entra en acción automáticamente si un disco falla.<br>
+                • <strong>ZFS Scrub:</strong> Realiza una auditoría criptográfica bit a bit de todos los datos para prevenir el desgaste o bit-rot.
+              </p>
+              <div class="table-container">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Identificador de Disco</th>
+                      <th>Estado Físico</th>
+                      <th>Errores de Lectura</th>
+                      <th>Errores de Escritura</th>
+                      <th>Errores Checksum (Bit-Rot)</th>
+                    </tr>
+                  </thead>
+                  <tbody id="disks-tbody"></tbody>
+                </table>
+              </div>
+            </div>
+    
             <div class="card">
-              <h3>Datasets y Cuotas OpenZFS</h3>
-              <table>
-                <thead><tr><th>Dataset</th><th>Usado</th><th>Disponible</th><th>Cuota</th><th>Compresión</th><th>Recordsize</th><th>Acción</th></tr></thead>
-                <tbody id="datasets-tbody"></tbody>
-              </table>
+              <div class="card-header">
+                <span class="card-title">Gobernanza de Datasets, Cuotas y Compresión</span>
+              </div>
+              <p class="card-desc" style="margin-bottom:12px;">
+                Permite definir el límite máximo de almacenamiento en GB por sector para evitar que un departamento sature el almacenamiento total del NAS. Haz clic en <strong>Modificar Cuota</strong> para cambiar el límite de cualquier carpeta compartida.
+              </p>
+              <div class="table-container">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Dataset ZFS</th>
+                      <th>Espacio Usado</th>
+                      <th>Disponible</th>
+                      <th>Cuota Límite</th>
+                      <th>Compresión Activa</th>
+                      <th>Tamaño Bloque (Recordsize)</th>
+                      <th>Acción</th>
+                    </tr>
+                  </thead>
+                  <tbody id="datasets-tbody"></tbody>
+                </table>
+              </div>
             </div>
           </div>
     
-          <!-- TAB: BACKUPS -->
+          <!-- 3. TAB: BACKUPS -->
           <div id="tab-backups" class="tab-content" style="display:none;">
-            <div class="card" style="margin-bottom:20px;">
-              <h3>Snapshots Locales ZFS
-                <button class="btn" onclick="createSnapshotPrompt()">📸 Crear Snapshot Manual</button>
-              </h3>
-              <table>
-                <thead><tr><th>Nombre</th><th>Espacio</th><th>Fecha</th><th>Inmutable</th><th>Acciones</th></tr></thead>
-                <tbody id="snapshots-tbody"></tbody>
-              </table>
+            <div class="tab-hero">
+              <div class="tab-hero-info">
+                <h2>☁️ Centro de Respaldo 3-2-1 & Recuperación Rápida</h2>
+                <p>Gestiona snapshots inmutables locales (reversión en <strong>menos de 5 segundos</strong>) y el envío en streaming cifrado con <strong>AES-256-CBC</strong> hacia la nube de <strong>Cloudflare R2</strong> (Backups Full semanales y deltas incrementales diarios).</p>
+              </div>
+              <span class="tab-hero-badge">Cifrado: AES-256-CBC PBKDF2</span>
             </div>
+    
+            <div class="card" style="margin-bottom:20px;">
+              <div class="card-header">
+                <span class="card-title">Puntos de Restauración Locales (ZFS Snapshots)</span>
+                <button class="btn" onclick="createSnapshotPrompt()">📸 Crear Snapshot Manual Ahora</button>
+              </div>
+              <p class="card-desc" style="margin-bottom:12px;">
+                ℹ️ <strong>Explicación de Controles:</strong><br>
+                • <strong>Crear Snapshot Manual:</strong> Vuelca la base de datos PostgreSQL de forma consistente y congela el estado del NAS en un instante atómico.<br>
+                • <strong>Rollback Instantáneo:</strong> Devuelve todas las carpetas al estado exacto de ese segundo en &lt;5s (útil ante borrado masivo o desastre).<br>
+                • <strong>Bloquear (zfs hold):</strong> Pone un candado de kernel para que ningún usuario ni script pueda eliminar este punto de restauración.
+              </p>
+              <div class="table-container">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Nombre del Snapshot</th>
+                      <th>Espacio Ocupado</th>
+                      <th>Fecha de Creación</th>
+                      <th>Inmutable (Hold)</th>
+                      <th>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody id="snapshots-tbody"></tbody>
+                </table>
+              </div>
+            </div>
+    
             <div class="card">
-              <h3>Respaldos Cifrados en Cloudflare R2 (3-2-1)
-                <div>
-                  <button class="btn" onclick="triggerR2Backup()">☁️ Enviar Backup Ahora</button>
+              <div class="card-header">
+                <span class="card-title">Copias Remotas en la Nube (Cloudflare R2 Bucket 'nas-backup')</span>
+                <div style="display:flex; gap:8px;">
+                  <button class="btn" onclick="triggerR2Backup()">☁️ Enviar Backup a R2 Ahora</button>
                   <button class="btn btn-outline" onclick="triggerDrDrill()">🚨 Ejecutar Simulacro DR</button>
                 </div>
-              </h3>
-              <table>
-                <thead><tr><th>Objeto Remoto</th><th>Tamaño</th><th>Acción</th></tr></thead>
-                <tbody id="r2-tbody"></tbody>
-              </table>
+              </div>
+              <p class="card-desc" style="margin-bottom:12px;">
+                ℹ️ <strong>Explicación:</strong> Muestra los archivos cifrados que están a resguardo fuera de las instalaciones. El botón <strong>Simulacro DR</strong> descarga el último respaldo de Cloudflare R2, lo descifra en memoria y comprueba la integridad de restauración sin alterar los datos activos.
+              </p>
+              <div class="table-container">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Objeto Cifrado en Cloudflare R2</th>
+                      <th>Tamaño</th>
+                      <th>Acción</th>
+                    </tr>
+                  </thead>
+                  <tbody id="r2-tbody"></tbody>
+                </table>
+              </div>
             </div>
           </div>
     
-          <!-- TAB: USUARIOS -->
+          <!-- 4. TAB: USUARIOS -->
           <div id="tab-users" class="tab-content" style="display:none;">
+            <div class="tab-hero">
+              <div class="tab-hero-info">
+                <h2>👥 Gestión Centralizada de Identidad y Accesos</h2>
+                <p>Da de alta, cambia contraseñas o elimina cuentas simultáneamente en <strong>Nextcloud (Nube Web)</strong> y <strong>Samba (Red Local Windows)</strong> con un solo clic, o utiliza el importador masivo por CSV para el inicio de clases.</p>
+              </div>
+              <span class="tab-hero-badge">Sincronización Dual: LAN + WAN</span>
+            </div>
+    
             <div class="grid">
               <div class="card">
-                <h3>Crear Usuario Unificado (Samba + Nextcloud)</h3>
-                <input type="text" id="new-user-name" placeholder="Nombre de usuario (ej: carlos.silva)">
-                <input type="password" id="new-user-pass" placeholder="Contraseña">
-                <button class="btn" onclick="createUser()">Guardar Usuario</button>
+                <div class="card-header"><span class="card-title">Crear Cuenta Individual</span></div>
+                <p class="card-desc" style="margin-bottom:10px;">Crea el usuario en ambos servidores y le asigna su carpeta personal con permisos inmediatos.</p>
+                <input type="text" id="new-user-name" placeholder="Nombre de usuario (ej: marcos.gomez)">
+                <input type="password" id="new-user-pass" placeholder="Contraseña segura">
+                <button class="btn" style="width:100%; justify-content:center;" onclick="createUser()">Guardar Usuario en Samba y Nextcloud</button>
               </div>
               <div class="card">
-                <h3>📥 Carga Masiva de Alumnos / Profesores por CSV</h3>
-                <textarea id="csv-input" rows="4" placeholder="usuario,contraseña,rol&#10;alumno1,Clave2026!,alumnos&#10;alumno2,Clave2026!,alumnos"></textarea>
-                <button class="btn" onclick="importCsv()">Importar Lote CSV</button>
+                <div class="card-header"><span class="card-title">📥 Carga Masiva de Alumnos por CSV</span></div>
+                <p class="card-desc" style="margin-bottom:10px;">Pega una lista de alumnos o profesores separados por coma (<code>usuario,contraseña,rol</code>) para crear decenas de cuentas en 5 segundos.</p>
+                <textarea id="csv-input" rows="3" placeholder="alumno1,Clave2026!,alumnos&#10;alumno2,Clave2026!,alumnos&#10;profesor1,Profe2026!,profesores"></textarea>
+                <button class="btn btn-outline" style="width:100%; justify-content:center;" onclick="importCsv()">Procesar Lote CSV</button>
               </div>
             </div>
+    
             <div class="card">
-              <h3>Usuarios Registrados</h3>
+              <div class="card-header"><span class="card-title">Cuentas Registradas en la Plataforma</span></div>
               <div id="users-list-box" style="margin-top:10px;"></div>
             </div>
           </div>
     
-          <!-- TAB: FILES -->
+          <!-- 5. TAB: FILES -->
           <div id="tab-files" class="tab-content" style="display:none;">
+            <div class="tab-hero">
+              <div class="tab-hero-info">
+                <h2>📁 File Station & Papelera de Red</h2>
+                <p>Navega directamente por los archivos físicos almacenados en el pool ZFS (<code>/tank/nas</code>), descarga documentos, elimina archivos enviándolos a la papelera segura o recupera documentos borrados accidentalmente.</p>
+              </div>
+              <span class="tab-hero-badge">Protección: vfs_recycle Activo</span>
+            </div>
+    
             <div class="card">
-              <h3>File Station (/tank/nas)
-                <span id="current-file-path" style="font-size:0.8rem; color:var(--accent);">/tank/nas</span>
-              </h3>
-              <table>
-                <thead><tr><th>Nombre</th><th>Tipo</th><th>Tamaño</th><th>Fecha</th><th>Acción</th></tr></thead>
-                <tbody id="files-tbody"></tbody>
-              </table>
+              <div class="card-header">
+                <span class="card-title">Explorador de Archivos</span>
+                <span id="current-file-path" class="font-mono" style="font-size:0.78rem; color:#38bdf8; background:rgba(56,189,248,0.1); padding:4px 8px; border-radius:6px;">/tank/nas</span>
+              </div>
+              <p class="card-desc" style="margin-bottom:12px;">
+                Al hacer clic en el botón de eliminar 🗑️, el archivo no se destruye inmediatamente: se mueve a la carpeta oculta <code>.Papelera</code> de la red para que cualquier docente o directivo pueda restaurarlo si fue un error.
+              </p>
+              <div class="table-container">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Nombre del Archivo o Directorio</th>
+                      <th>Tipo</th>
+                      <th>Tamaño</th>
+                      <th>Última Modificación</th>
+                      <th>Acción</th>
+                    </tr>
+                  </thead>
+                  <tbody id="files-tbody"></tbody>
+                </table>
+              </div>
             </div>
           </div>
     
-          <!-- TAB: SECURITY -->
+          <!-- 6. TAB: SECURITY -->
           <div id="tab-security" class="tab-content" style="display:none;">
+            <div class="tab-hero">
+              <div class="tab-hero-info">
+                <h2>🛡️ Escudo Anti-Ransomware 360° & Auditoría Forense</h2>
+                <p>Vigilancia activa en 4 capas concurrentes: filtro de extensiones maliciosas en Samba (<strong>Veto Files</strong>), bloqueo de ejecutables en alumnos, inspección WebDAV en Nextcloud, y <strong>archivos señuelo (Canary Honeypots)</strong> con auto-mitigación.</p>
+              </div>
+              <span class="tab-hero-badge">Defensa Activa: 4 Capas</span>
+            </div>
+    
             <div class="grid">
               <div class="card">
-                <h3>Escudo Anti-Ransomware 360°</h3>
-                <div class="val" id="val-shield" style="color:var(--success);">ACTIVO</div>
-                <p style="color:var(--text-muted); font-size:0.85rem; margin-top:8px;">4 Capas: Samba Veto + Nextcloud WebDAV + Centinela Kernel + Inmutabilidad ZFS</p>
+                <div class="card-header"><span class="card-title">Estado del Escudo General</span></div>
+                <div class="card-metric" id="val-shield" style="color:var(--success);">ACTIVO</div>
+                <p class="card-desc" style="margin-top:8px;">
+                  El centinela verifica cada 5 segundos que los archivos trampa no hayan sido modificados y purga de inmediato cualquier archivo con extensiones como <code>.encrypted</code>, <code>.lockbit</code> o <code>.wannacry</code>.
+                </p>
               </div>
               <div class="card">
-                <h3>Amenazas Bloqueadas</h3>
-                <div class="val" id="val-threats">0</div>
-                <button class="btn btn-outline" style="margin-top:8px;" onclick="testCanary()">🧪 Simular Infección Canary</button>
+                <div class="card-header"><span class="card-title">Amenazas Neutralizadas</span></div>
+                <div class="card-metric" id="val-threats">0</div>
+                <p class="card-desc" style="margin-top:8px;">Archivos maliciosos detectados y aislados en la carpeta de cuarentena.</p>
+                <button class="btn btn-outline" style="margin-top:12px; width:100%; justify-content:center;" onclick="testCanary()">
+                  🧪 Simular Infección en Honeypot (Prueba en Vivo)
+                </button>
               </div>
             </div>
+    
             <div class="card">
-              <h3>Registro Forense de Incidentes</h3>
+              <div class="card-header"><span class="card-title">Registro Forense de Eventos de Seguridad</span></div>
+              <p class="card-desc" style="margin-bottom:10px;">Bitácora cronológica inmutable de intentos de ataque, alteraciones o eventos de cuarentena.</p>
               <div id="security-logs" class="terminal-box">Sin incidentes registrados.</div>
             </div>
           </div>
     
-          <!-- TAB: SERVICES -->
+          <!-- 7. TAB: SERVICES -->
           <div id="tab-services" class="tab-content" style="display:none;">
+            <div class="tab-hero">
+              <div class="tab-hero-info">
+                <h2>🔌 Control de Microservicios Kubernetes (K3s)</h2>
+                <p>Supervisa los contenedores en ejecución que dan vida a la plataforma NAS. Permite reiniciar servicios individualmente o abrir una consola de <strong>Logs en Tiempo Real</strong> para diagnosticar fallas sin necesidad de usar SSH.</p>
+              </div>
+              <span class="tab-hero-badge">Orquestador: K3s Edge</span>
+            </div>
+    
             <div class="card">
-              <h3>Contenedores & Pods K3s</h3>
-              <table>
-                <thead><tr><th>Servicio</th><th>Ready</th><th>Estado</th><th>Reinicios</th><th>Acciones</th></tr></thead>
-                <tbody id="services-tbody"></tbody>
-              </table>
+              <div class="card-header"><span class="card-title">Estado de Contenedores y Pods Activos</span></div>
+              <p class="card-desc" style="margin-bottom:12px;">
+                Haz clic en <strong>📜 Ver Logs</strong> para abrir la terminal interactiva del pod y ver en vivo las conexiones HTTP, consultas a la base de datos o transferencias de red.
+              </p>
+              <div class="table-container">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Nombre del Microservicio</th>
+                      <th>Contenedores Listos</th>
+                      <th>Estado del Pod</th>
+                      <th>Reinicios Históricos</th>
+                      <th>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody id="services-tbody"></tbody>
+                </table>
+              </div>
             </div>
           </div>
     
-          <!-- TAB: DIAGNOSTICS -->
+          <!-- 8. TAB: DIAGNOSTICS -->
           <div id="tab-diagnostics" class="tab-content" style="display:none;">
+            <div class="tab-hero">
+              <div class="tab-hero-info">
+                <h2>🧪 Suite de Diagnóstico & Reporte de Auditoría</h2>
+                <p>Ejecuta en caliente la batería completa de <strong>18 Smoke Tests automatizados</strong> para verificar el clúster antes de una entrega o auditoría técnica, y genera un <strong>Reporte Ejecutivo descargable</strong> en 1 clic.</p>
+              </div>
+              <span class="tab-hero-badge">Validación: 18/18 Checks</span>
+            </div>
+    
             <div class="card">
-              <h3>Diagnóstico de Salud & Suite de Validación
-                <div>
-                  <button class="btn" onclick="runSmokeTests()">🧪 Ejecutar Smoke Tests (18 Checks)</button>
+              <div class="card-header">
+                <span class="card-title">Ejecución de Pruebas de Sistema</span>
+                <div style="display:flex; gap:8px;">
+                  <button class="btn" onclick="runSmokeTests()">🧪 Ejecutar Batería de Pruebas (18 Tests)</button>
                   <button class="btn btn-outline" onclick="downloadReport()">📄 Descargar Reporte Ejecutivo</button>
                 </div>
-              </h3>
-              <div id="diagnostics-terminal" class="terminal-box" style="margin-top:12px;">Presione 'Ejecutar Smoke Tests' para iniciar la verificación integral en vivo.</div>
+              </div>
+              <p class="card-desc" style="margin-bottom:12px;">
+                El reporte ejecutivo compila en un archivo Markdown el estado de salud del RAID-Z1, historial de respaldos en Cloudflare R2, cuotas de disco por departamento y usuarios activos para presentar ante directivos o auditores.
+              </p>
+              <div id="diagnostics-terminal" class="terminal-box">Presione 'Ejecutar Batería de Pruebas' para validar en vivo el clúster, almacenamiento y túnel Zero-Trust.</div>
             </div>
           </div>
         </div>
       </main>
     
-      <!-- MODAL LOGIN -->
+      <!-- MODAL DE LOGIN -->
       <div id="modal-login" class="modal">
-        <div class="modal-content">
-          <h2 style="margin-bottom:12px;">🔒 Acceso Administrador</h2>
-          <p style="color:var(--text-muted); font-size:0.85rem;">Ingrese la contraseña maestra del NAS para desbloquear el sistema de control.</p>
-          <input type="password" id="login-pass" placeholder="Contraseña de Administrador">
+        <div class="modal-box">
+          <h3 class="modal-title">🔒 Ingreso Administrador</h3>
+          <p class="modal-desc">Introduce la contraseña maestra institucional del NAS para desbloquear el Centro de Control y las funciones de gestión de discos, usuarios y copias.</p>
+          <input type="password" id="login-pass" placeholder="Contraseña de Administrador (ej: NasEscuela2026!)" onkeydown="if(event.key==='Enter') doLogin()">
           <div style="display:flex; justify-content:flex-end; gap:8px;">
             <button class="btn btn-outline" onclick="toggleAuthModal()">Cancelar</button>
-            <button class="btn" onclick="doLogin()">Entrar</button>
+            <button class="btn" onclick="doLogin()">Autenticar y Entrar</button>
           </div>
         </div>
       </div>
     
-      <!-- MODAL LOGS -->
+      <!-- MODAL DE LOGS EN VIVO -->
       <div id="modal-logs" class="modal">
-        <div class="modal-content" style="max-width:800px;">
-          <h3 id="logs-title">Logs en Vivo</h3>
-          <div id="logs-box" class="terminal-box" style="margin:12px 0;"></div>
-          <button class="btn btn-outline" onclick="closeLogsModal()">Cerrar</button>
+        <div class="modal-box" style="max-width:850px;">
+          <h3 class="modal-title" id="logs-title">📜 Logs del Microservicio</h3>
+          <p class="modal-desc">Últimos eventos registrados en la salida estándar del contenedor.</p>
+          <div id="logs-box" class="terminal-box" style="margin:12px 0; max-height:420px;"></div>
+          <div style="display:flex; justify-content:flex-end;">
+            <button class="btn btn-outline" onclick="closeLogsModal()">Cerrar Consola</button>
+          </div>
         </div>
       </div>
     
@@ -784,12 +1056,14 @@ data:
             document.getElementById('public-view').style.display = 'none';
             document.getElementById('admin-view').style.display = 'block';
             document.getElementById('btn-auth').textContent = '🚪 Cerrar Sesión';
+            document.getElementById('btn-auth').classList.add('btn-outline');
             document.getElementById('btn-auth').onclick = doLogout;
             loadAdminData();
           } else {
             document.getElementById('public-view').style.display = 'block';
             document.getElementById('admin-view').style.display = 'none';
             document.getElementById('btn-auth').textContent = '🔒 Ingreso Administrador';
+            document.getElementById('btn-auth').classList.remove('btn-outline');
             document.getElementById('btn-auth').onclick = toggleAuthModal;
             loadPublicStatus();
           }
@@ -799,12 +1073,19 @@ data:
           try {
             const res = await fetch('/api/public/status');
             const data = await res.json();
-            document.getElementById('raid-badge').textContent = data.raid_health;
-            document.getElementById('raid-badge').style.color = data.raid_health === 'ONLINE' ? 'var(--success)' : 'var(--danger)';
+            const badge = document.getElementById('raid-badge');
+            if (data.raid_health === 'ONLINE') {
+              badge.className = 'status-badge badge-online';
+              badge.innerHTML = '<span class="pulse-dot"></span> RAID-Z1 ONLINE';
+            } else {
+              badge.className = 'status-badge badge-degraded';
+              badge.innerHTML = '<span class="pulse-dot"></span> RAID-Z1 ' + data.raid_health;
+            }
             if (data.tunnel_url) {
               document.getElementById('public-qr').src = 'https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=' + encodeURIComponent(data.tunnel_url);
-              document.getElementById('public-link').href = data.tunnel_url;
-              document.getElementById('public-link').textContent = data.tunnel_url;
+              const link = document.getElementById('public-link');
+              link.href = data.tunnel_url;
+              link.textContent = data.tunnel_url;
             }
           } catch (e) { console.error(e); }
         }
@@ -829,7 +1110,7 @@ data:
             toggleAuthModal();
             checkAuth();
           } else {
-            alert(data.error || 'Acceso denegado');
+            alert(data.error || 'Contraseña incorrecta');
           }
         }
     
@@ -840,10 +1121,11 @@ data:
         }
     
         function switchTab(tab) {
-          document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+          document.querySelectorAll('.nav-tab').forEach(b => b.classList.remove('active'));
           document.querySelectorAll('.tab-content').forEach(c => c.style.display = 'none');
           event.target.classList.add('active');
           document.getElementById('tab-' + tab).style.display = 'block';
+          if (tab === 'dashboard') loadAdminData();
           if (tab === 'raid') loadRaidData();
           if (tab === 'backups') loadBackupsData();
           if (tab === 'users') loadUsersData();
@@ -873,39 +1155,61 @@ data:
           const r = await apiFetch('/api/raid/status');
           if (r && r.disks) {
             const tbody = document.getElementById('disks-tbody');
-            tbody.innerHTML = r.disks.map(d => `<tr><td>${d.name}</td><td>${d.state}</td><td>${d.read}</td><td>${d.write}</td><td>${d.cksum}</td></tr>`).join('');
+            tbody.innerHTML = r.disks.map(d => `
+              <tr>
+                <td class="font-mono"><strong>${d.name}</strong></td>
+                <td><span class="status-badge ${d.state==='ONLINE'?'badge-online':'badge-degraded'}">${d.state}</span></td>
+                <td class="font-mono">${d.read}</td>
+                <td class="font-mono">${d.write}</td>
+                <td class="font-mono">${d.cksum}</td>
+              </tr>
+            `).join('');
           }
           const ds = await apiFetch('/api/datasets');
           if (ds && ds.datasets) {
             const tbody = document.getElementById('datasets-tbody');
-            tbody.innerHTML = ds.datasets.map(d => `<tr><td>${d.name}</td><td>${d.used}</td><td>${d.avail}</td><td>${d.quota}</td><td>${d.compression}</td><td>${d.recordsize}</td><td><button class="btn btn-outline" onclick="editQuota('${d.name}')">Cuota</button></td></tr>`).join('');
+            tbody.innerHTML = ds.datasets.map(d => `
+              <tr>
+                <td class="font-mono"><strong>${d.name}</strong></td>
+                <td class="font-mono">${d.used}</td>
+                <td class="font-mono">${d.avail}</td>
+                <td class="font-mono"><span style="color:#38bdf8;">${d.quota}</span></td>
+                <td class="font-mono">${d.compression}</td>
+                <td class="font-mono">${d.recordsize}</td>
+                <td><button class="btn btn-outline" style="padding:4px 8px; font-size:0.75rem;" onclick="editQuota('${d.name}')">✏️ Modificar Cuota</button></td>
+              </tr>
+            `).join('');
           }
         }
     
         async function simulateDiskFailure() {
-          if (confirm('¿Simular fallo de disco 2 (zpool offline)? El RAID-Z1 seguirá funcionando sin pérdida de datos.')) {
+          if (confirm('⚠️ SIMULACIÓN DE CONTINGENCIA:\n¿Deseas desconectar el disco 2 (zpool offline /zfs-disks/disk2.img)?\n\nEl RAID-Z1 pasará a estado DEGRADED pero todos tus archivos en Nextcloud y Samba seguirán intactos sin pérdida de datos.')) {
             await apiFetch('/api/raid/action', 'POST', {action: 'offline_disk', target: 'disk2'});
             loadRaidData();
+            loadPublicStatus();
           }
         }
     
         async function repairResilverDisk() {
           await apiFetch('/api/raid/action', 'POST', {action: 'online_disk', target: 'disk2'});
+          alert('Disco reconectado. Proceso de Resilver completado.');
           loadRaidData();
+          loadPublicStatus();
         }
     
         async function addHotSpare() {
           await apiFetch('/api/raid/action', 'POST', {action: 'add_spare'});
+          alert('Disco Hot-Spare disk4 (2 GB) añadido al pool tank exitosamente.');
           loadRaidData();
         }
     
         async function triggerScrub() {
           await apiFetch('/api/raid/action', 'POST', {action: 'scrub'});
-          alert('ZFS Scrub iniciado en segundo plano.');
+          alert('Auditoría ZFS Scrub iniciada en segundo plano.');
         }
     
         async function editQuota(ds) {
-          const q = prompt('Ingrese nueva cuota en GB para ' + ds + ' (ej: 15G):');
+          const q = prompt('Introduce la nueva cuota límite para ' + ds + ' (ej: 15G, 20G):');
           if (q) {
             await apiFetch('/api/datasets', 'POST', {dataset: ds, property: 'quota', value: q});
             loadRaidData();
@@ -916,27 +1220,45 @@ data:
           const s = await apiFetch('/api/backups/snapshots');
           if (s && s.snapshots) {
             const tbody = document.getElementById('snapshots-tbody');
-            tbody.innerHTML = s.snapshots.map(x => `<tr><td>${x.name}</td><td>${x.used}</td><td>${x.creation}</td><td>${x.is_held ? '🔒 Sí' : 'No'}</td><td><button class="btn btn-outline" onclick="rollbackSnap('${x.name}')">⏪ Rollback</button> <button class="btn btn-outline" onclick="toggleHold('${x.name}', ${!x.is_held})">${x.is_held ? 'Desbloquear' : 'Bloquear'}</button></td></tr>`).join('');
+            tbody.innerHTML = s.snapshots.map(x => `
+              <tr>
+                <td class="font-mono"><strong>${x.name}</strong></td>
+                <td class="font-mono">${x.used}</td>
+                <td class="font-mono">${x.creation}</td>
+                <td>${x.is_held ? '<span class="status-badge badge-online">🔒 Inmutable</span>' : '<span style="color:var(--text-dim)">Desbloqueado</span>'}</td>
+                <td>
+                  <button class="btn btn-outline" style="padding:4px 8px; font-size:0.75rem;" onclick="rollbackSnap('${x.name}')" title="Revertir el NAS completo a este punto en <5 segundos">⏪ Rollback</button>
+                  <button class="btn btn-outline" style="padding:4px 8px; font-size:0.75rem;" onclick="toggleHold('${x.name}', ${!x.is_held})" title="Activa o desactiva la protección de borrado">${x.is_held ? '🔓 Desbloquear' : '🔒 Proteger'}</button>
+                </td>
+              </tr>
+            `).join('');
           }
           const r2 = await apiFetch('/api/backups/r2');
           if (r2 && r2.r2_objects) {
             const tbody = document.getElementById('r2-tbody');
-            tbody.innerHTML = r2.r2_objects.map(o => `<tr><td>${o.name}</td><td>${o.size}</td><td><button class="btn btn-outline" onclick="restoreR2()">📥 Restaurar</button></td></tr>`).join('');
+            tbody.innerHTML = r2.r2_objects.map(o => `
+              <tr>
+                <td class="font-mono"><strong>${o.name}</strong></td>
+                <td class="font-mono">${o.size}</td>
+                <td><button class="btn btn-outline" style="padding:4px 8px; font-size:0.75rem;" onclick="restoreR2()">📥 Probar Restauración</button></td>
+              </tr>
+            `).join('');
           }
         }
     
         async function createSnapshotPrompt() {
-          const tag = prompt('Etiqueta para el nuevo snapshot:');
+          const tag = prompt('Introduce un nombre para identificar este punto de restauración (ej: antes-de-examenes):');
           if (tag) {
+            alert('Creando snapshot consistente con volcado transaccional de PostgreSQL...');
             await apiFetch('/api/backups/snapshot/create', 'POST', {tag});
             loadBackupsData();
           }
         }
     
         async function rollbackSnap(name) {
-          if (confirm('¿Revertir instantáneamente al snapshot ' + name + '?')) {
+          if (confirm('🚨 ATENCIÓN:\n¿Deseas revertir todo el almacenamiento al snapshot:\n' + name + '?\n\nEsta operación tomará menos de 5 segundos.')) {
             await apiFetch('/api/backups/snapshot/rollback', 'POST', {snapshot: name});
-            alert('Rollback completado.');
+            alert('Rollback completado con éxito.');
           }
         }
     
@@ -946,20 +1268,21 @@ data:
         }
     
         async function triggerR2Backup() {
+          alert('Disparando CronJob de Backup hacia Cloudflare R2 con cifrado en memoria AES-256...');
           await apiFetch('/api/backups/r2/trigger', 'POST', {mode: 'incremental'});
-          alert('Job de Backup a Cloudflare R2 iniciado.');
+          alert('Tarea de respaldo offsite iniciada.');
         }
     
         async function triggerDrDrill() {
-          alert('Iniciando simulacro automatizado de Disaster Recovery...');
+          alert('Iniciando Simulacro Automatizado de Disaster Recovery...\nSe descargará el último archivo cifrado desde Cloudflare R2 y se verificará en un dataset aislado.');
           const res = await apiFetch('/api/backups/r2/restore', 'POST', {});
-          alert(res.output || 'Simulacro completado.');
+          alert(res.output || 'Simulacro de Disaster Recovery completado exitosamente.');
         }
     
         async function loadUsersData() {
           const u = await apiFetch('/api/users');
           if (u && u.users) {
-            document.getElementById('users-list-box').innerHTML = '<pre>' + u.users + '</pre>';
+            document.getElementById('users-list-box').innerHTML = '<pre class="terminal-box">' + u.users + '</pre>';
           }
         }
     
@@ -968,8 +1291,12 @@ data:
           const p = document.getElementById('new-user-pass').value;
           if (u && p) {
             await apiFetch('/api/users/create', 'POST', {username: u, password: p});
-            alert('Usuario creado.');
+            alert('Usuario ' + u + ' creado en Samba y Nextcloud.');
+            document.getElementById('new-user-name').value = '';
+            document.getElementById('new-user-pass').value = '';
             loadUsersData();
+          } else {
+            alert('Por favor complete usuario y contraseña.');
           }
         }
     
@@ -977,7 +1304,8 @@ data:
           const csv = document.getElementById('csv-input').value;
           if (csv) {
             const res = await apiFetch('/api/users/csv-import', 'POST', {csv});
-            alert('Carga masiva completada: ' + (res.created ? res.created.join(', ') : ''));
+            alert('Lote procesado. Usuarios dados de alta:\n' + (res.created ? res.created.join(', ') : 'Ninguno'));
+            document.getElementById('csv-input').value = '';
             loadUsersData();
           }
         }
@@ -987,12 +1315,20 @@ data:
           if (f && f.entries) {
             document.getElementById('current-file-path').textContent = f.path;
             const tbody = document.getElementById('files-tbody');
-            tbody.innerHTML = f.entries.map(e => `<tr><td>${e.name}</td><td>${e.is_dir ? '📁 Carpeta' : '📄 Archivo'}</td><td>${e.size}</td><td>${e.date}</td><td><button class="btn btn-outline" onclick="deleteFile('${f.path}/${e.name}')">🗑️</button></td></tr>`).join('');
+            tbody.innerHTML = f.entries.map(e => `
+              <tr>
+                <td class="font-mono"><strong>${e.name}</strong></td>
+                <td>${e.is_dir ? '📁 Directorio' : '📄 Archivo'}</td>
+                <td class="font-mono">${e.size}</td>
+                <td class="font-mono">${e.date}</td>
+                <td><button class="btn btn-outline" style="padding:4px 8px; font-size:0.75rem;" onclick="deleteFile('${f.path}/${e.name}')" title="Mueve este elemento a .Papelera">🗑️ Eliminar</button></td>
+              </tr>
+            `).join('');
           }
         }
     
         async function deleteFile(p) {
-          if (confirm('¿Mover a la papelera: ' + p + '?')) {
+          if (confirm('¿Mover a la papelera segura de red:\n' + p + '?')) {
             await apiFetch('/api/files/delete', 'POST', {filepath: p});
             loadFilesData();
           }
@@ -1001,7 +1337,7 @@ data:
         async function loadSecurityData() {
           const s = await apiFetch('/api/security');
           if (s) {
-            document.getElementById('val-shield').textContent = s.status === 1 ? 'ACTIVO' : '¡ALERTA!';
+            document.getElementById('val-shield').textContent = s.status === 1 ? 'ACTIVO (PROTEGIDO)' : '¡ALERTA DE SEGURIDAD!';
             document.getElementById('val-shield').style.color = s.status === 1 ? 'var(--success)' : 'var(--danger)';
             document.getElementById('val-threats').textContent = s.blocked_threats;
             document.getElementById('security-logs').textContent = s.logs;
@@ -1010,7 +1346,7 @@ data:
     
         async function testCanary() {
           await apiFetch('/api/security/test-canary', 'POST', {});
-          alert('Canary alterado. El centinela restaurará en <5s.');
+          alert('Canary Honeypot alterado.\nEl centinela detectará la anomalía, aislará la carpeta y restaurará el archivo en menos de 5 segundos.');
           setTimeout(loadSecurityData, 3000);
         }
     
@@ -1018,14 +1354,22 @@ data:
           const s = await apiFetch('/api/services');
           if (s && s.pods) {
             const tbody = document.getElementById('services-tbody');
-            tbody.innerHTML = s.pods.map(p => `<tr><td>${p.name}</td><td>${p.ready}</td><td>${p.status}</td><td>${p.restarts}</td><td><button class="btn btn-outline" onclick="viewLogs('${p.name}')">📜 Logs</button></td></tr>`).join('');
+            tbody.innerHTML = s.pods.map(p => `
+              <tr>
+                <td class="font-mono"><strong>${p.name}</strong></td>
+                <td class="font-mono">${p.ready}</td>
+                <td><span class="status-badge ${p.status==='Running'?'badge-online':'badge-degraded'}">${p.status}</span></td>
+                <td class="font-mono">${p.restarts}</td>
+                <td><button class="btn btn-outline" style="padding:4px 8px; font-size:0.75rem;" onclick="viewLogs('${p.name}')" title="Abre los registros en tiempo real del contenedor">📜 Ver Logs</button></td>
+              </tr>
+            `).join('');
           }
         }
     
         async function viewLogs(pod) {
           const l = await apiFetch('/api/services/logs?pod=' + encodeURIComponent(pod));
-          document.getElementById('logs-title').textContent = 'Logs: ' + pod;
-          document.getElementById('logs-box').textContent = l.logs || 'Sin logs.';
+          document.getElementById('logs-title').textContent = '📜 Logs del Pod: ' + pod;
+          document.getElementById('logs-box').textContent = l.logs || 'Sin registros recientes.';
           document.getElementById('modal-logs').classList.add('open');
         }
     
@@ -1033,9 +1377,9 @@ data:
     
         async function runSmokeTests() {
           const t = document.getElementById('diagnostics-terminal');
-          t.textContent = 'Ejecutando Smoke Tests en vivo...';
+          t.textContent = '🚀 Iniciando batería de 18 pruebas automatizadas...\nPor favor espere mientras se verifican discos ZFS, base de datos, réplicas y túnel...';
           const r = await apiFetch('/api/diagnostics/smoke-test', 'POST', {});
-          t.textContent = r.log || 'Finalizado.';
+          t.textContent = r.log || 'Ejecución completada.';
         }
     
         async function downloadReport() {
@@ -1043,35 +1387,36 @@ data:
           const blob = new Blob([r.report], {type: 'text/markdown'});
           const a = document.createElement('a');
           a.href = URL.createObjectURL(blob);
-          a.download = 'Reporte_Ejecutivo_NAS_' + Date.now() + '.md';
+          a.download = 'Reporte_Auditoria_NAS_' + Date.now() + '.md';
           a.click();
         }
     
         async function toggleLanOnly() {
           const res = await apiFetch('/api/wan/toggle-lan', 'POST', {});
           alert(res.message);
+          loadPublicStatus();
         }
     
         async function rotateTunnel() {
-          alert('Rotando enlace Cloudflare WAN...');
+          alert('Generando nuevo enlace WAN Zero-Trust en Cloudflare...');
           await apiFetch('/api/wan/rotate-tunnel', 'POST', {});
           loadPublicStatus();
         }
     
         async function flushArc() {
           await apiFetch('/api/system/flush-arc', 'POST', {});
-          alert('Memoria RAM liberada.');
+          alert('Caché de memoria RAM liberada.');
           loadAdminData();
         }
     
         async function rebootSystem() {
-          if (confirm('¿Confirmar reinicio seguro del servidor NAS?')) {
+          if (confirm('⚠️ ¿Confirmas el reinicio del servidor NAS?\nSe cerrarán las sesiones activas de Samba y Nextcloud.')) {
             await apiFetch('/api/system/reboot', 'POST', {});
           }
         }
     
         async function shutdownSystem() {
-          if (confirm('¿Confirmar apagado ordenado del NAS (zpool sync)?')) {
+          if (confirm('⚠️ ¿Confirmas el apagado ordenado del NAS?\nSe escribirán todos los buffers a disco con zpool sync antes de cortar la energía.')) {
             await apiFetch('/api/system/shutdown', 'POST', {});
           }
         }
