@@ -420,6 +420,7 @@ data:
                     u, p = parts[0], parts[1]
                     cmd = f'kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c "OC_PASS=\\"{p}\\" php /var/www/html/occ user:add --password-from-env \\"{u}\\"" 2>&1'
                     run_host_cmd(cmd)
+                    run_host_cmd(f'kubectl exec deployment/samba -- sh -c "useradd -M -s /usr/sbin/nologin \\"{u}\\" 2>/dev/null || true; (echo \\"{p}\\"; echo \\"{p}\\") | smbpasswd -s -a \\"{u}\\"" 2>/dev/null || true')
                     created.append(u)
             self.send_json({"success": True, "created": created})
     
