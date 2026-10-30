@@ -10,6 +10,10 @@ import time
 import subprocess
 import urllib.parse
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
+
+class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+    daemon_threads = True
 
 PORT = 80
 ADMIN_PASS_FALLBACK = "NasEscuela2026!"
@@ -742,6 +746,6 @@ goto MENU
         self.wfile.write(payload)
 
 if __name__ == "__main__":
-    server = HTTPServer(("0.0.0.0", PORT), NasApiHandler)
+    server = ThreadedHTTPServer(("0.0.0.0", PORT), NasApiHandler)
     print(f"Enterprise NAS Control Center OS listening on port {PORT}...")
     server.serve_forever()

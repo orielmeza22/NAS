@@ -1119,9 +1119,16 @@
     }
 
     async function requestServicesMetrics() {
+      const tbody = document.getElementById('services-table-body');
+      if (tbody && tbody.children.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:16px; color:var(--text-muted);">Consultando estado de microservicios K3s...</td></tr>';
+      }
       const s = await callApi('/api/services');
       if (s && s.pods) {
-        const tbody = document.getElementById('services-table-body');
+        if (s.pods.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:16px; color:var(--text-muted);">No se detectaron pods en el clúster.</td></tr>';
+          return;
+        }
         tbody.innerHTML = s.pods.map(p => `
           <tr>
             <td class="font-mono">${p.name}</td>
@@ -1131,6 +1138,8 @@
             <td><button class="btn btn-sm" onclick="dispatchViewLogs('${p.name}')">Logs</button></td>
           </tr>
         `).join('');
+      } else if (tbody) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:16px; color:var(--status-err);">Error al comunicarse con la API de K3s.</td></tr>';
       }
     }
 
