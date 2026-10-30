@@ -365,7 +365,20 @@
 
         <div class="panel">
           <div class="panel-title">Cuentas Registradas en el Sistema</div>
-          <div id="identity-users-box" class="console-view">Cargando directorio de usuarios...</div>
+          <table class="table" style="margin-top:8px;">
+            <thead>
+              <tr>
+                <th>Identificador</th>
+                <th>Nombre para Mostrar</th>
+                <th>Rol / Ámbito</th>
+                <th>Estado</th>
+                <th style="text-align:right;">Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="identity-users-table">
+              <tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:16px;">Cargando directorio de cuentas...</td></tr>
+            </tbody>
+          </table>
         </div>
       </div>
 
@@ -787,28 +800,100 @@
 
     async function requestIdentityMetrics() {
       const u = await callApi('/api/users');
+      const tbody = document.getElementById('identity-users-table');
+      if (!tbody) return;
       if (u && u.users) {
-        document.getElementById('identity-users-box').textContent = u.users;
+        let usersMap = {};
+        try {
+          usersMap = typeof u.users === 'string' ? JSON.parse(u.users) : u.users;
+        } catch(e) {
+          usersMap = {};
+        }
+        const entries = Object.entries(usersMap);
+        if (entries.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:16px;">No se registraron cuentas de usuario adicionales.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = entries.map(([uid, displayName]) => {
+          const isRoot = (uid === 'admin');
+          let roleTag = 'Estudiante';
+          if (isRoot || uid.includes('admin')) roleTag = 'Administrador de Almacenamiento';
+          else if (uid.includes('profe') || uid.includes('docente')) roleTag = 'Docente / Investigador';
+          else if (uid.includes('it') || uid.includes('infra')) roleTag = 'Operador IT';
+
+          const actions = isRoot 
+            ? '<span style="color:var(--text-disabled); font-size:11px; font-family:var(--font-mono);">Cuenta protegida (Root)</span>'
+            : `<div style="display:flex; justify-content:flex-end; gap:6px;">
+                <button class="btn btn-sm" onclick="dispatchResetUserPassword('${uid}')" title="Restablecer clave en Nextcloud y Samba">Restablecer clave</button>
+                <button class="btn btn-sm btn-danger" onclick="dispatchDeleteUser('${uid}')" title="Eliminar usuario de Nextcloud y Samba">Eliminar cuenta</button>
+               </div>`;
+
+          return `<tr>
+            <td style="font-family:var(--font-mono); font-weight:600;">${uid}</td>
+            <td>${displayName || uid}</td>
+            <td><span class="badge" style="font-size:10px;">${roleTag}</span></td>
+            <td><span class="badge ok">ACTIVO</span></td>
+            <td style="text-align:right;">${actions}</td>
+          </tr>`;
+        }).join('');
+      } else {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--status-err); padding:16px;">Error al consultar el directorio de usuarios.</td></tr>';
       }
     }
 
     async function dispatchCreateUser() {
-      const u = document.getElementById('input-username').value;
-      const p = document.getElementById('input-password').value;
-      if (u && p) {
-        await callApi('/api/users/create', 'POST', { username: u, password: p });
+      const u = document.getElementById('input-username').value.trim();
+      const p = document.getElementById('input-password').value.trim();
+      if (!u || !p) {
+        alert('Debe especificar nombre de usuario y contraseña.');
+        return;
+      }
+      const res = await callApi('/api/users/create', 'POST', { username: u, password: p });
+      if (res && res.success) {
         document.getElementById('input-username').value = '';
         document.getElementById('input-password').value = '';
         requestIdentityMetrics();
+      } else {
+        alert('Error al registrar usuario: ' + (res ? res.output : 'Error desconocido'));
+      }
+    }
+
+    async function dispatchDeleteUser(username) {
+      if (confirm(`¿Confirma la eliminación permanente del usuario '${username}' del sistema (Nextcloud y Samba)?`)) {
+        const res = await callApi('/api/users/delete', 'POST', { username });
+        if (res && res.success) {
+          requestIdentityMetrics();
+        } else {
+          alert('Error al eliminar usuario: ' + (res ? res.output : 'Error desconocido'));
+        }
+      }
+    }
+
+    async function dispatchResetUserPassword(username) {
+      const p = prompt(`Ingrese la nueva contraseña para el usuario '${username}':`);
+      if (p && p.trim()) {
+        const res = await callApi('/api/users/password', 'POST', { username, password: p.trim() });
+        if (res && res.success) {
+          alert(`Contraseña actualizada correctamente para '${username}'.`);
+        } else {
+          alert('Error al actualizar contraseña: ' + (res ? res.output : 'Error desconocido'));
+        }
       }
     }
 
     async function dispatchImportCsv() {
-      const csv = document.getElementById('input-csv').value;
-      if (csv) {
-        const res = await callApi('/api/users/csv-import', 'POST', { csv });
+      const csv = document.getElementById('input-csv').value.trim();
+      if (!csv) {
+        alert('Ingrese al menos una línea con formato usuario,contraseña,rol.');
+        return;
+      }
+      const res = await callApi('/api/users/csv-import', 'POST', { csv });
+      if (res && res.success) {
         document.getElementById('input-csv').value = '';
+        alert(`Lote procesado. Cuentas aprovisionadas: ${(res.created || []).join(', ')}`);
         requestIdentityMetrics();
+      } else {
+        alert('Error al importar CSV: ' + (res ? res.output : 'Error desconocido'));
       }
     }
 

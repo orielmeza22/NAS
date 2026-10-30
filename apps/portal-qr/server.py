@@ -190,14 +190,17 @@ class NasApiHandler(BaseHTTPRequestHandler):
             self.send_json({"error": "Endpoint no encontrado"}, 404)
 
     def serve_frontend(self):
-        fpath = "/usr/share/nginx/html/index.html"
-        if os.path.exists(fpath):
-            with open(fpath, "rb") as f:
-                content = f.read()
-        else:
-            content = b"<h1>NAS Control Center OS</h1>"
+        content = b"<h1>Consola de Administracion - Enterprise Storage Appliance</h1>"
+        for fpath in ["/app-config/index.html", "/usr/share/nginx/html/index.html"]:
+            if os.path.exists(fpath):
+                with open(fpath, "rb") as f:
+                    content = f.read()
+                break
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
         self.send_header("Content-Length", str(len(content)))
         self.end_headers()
         self.wfile.write(content)
@@ -367,24 +370,35 @@ class NasApiHandler(BaseHTTPRequestHandler):
         self.send_json({"users": out.strip()})
 
     def handle_user_create(self, body):
-        user = body.get("username")
-        pwd = body.get("password")
-        role = body.get("role", "profesores")
+        user = body.get("username", "").strip()
+        pwd = body.get("password", "").strip()
+        if not user or not pwd:
+            self.send_json({"success": False, "output": "Usuario o contrasena vacios."}, 400)
+            return
         cmd = f'kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c "OC_PASS=\\"{pwd}\\" php /var/www/html/occ user:add --password-from-env \\"{user}\\"" 2>&1'
         ok, out, err = run_host_cmd(cmd)
+        run_host_cmd(f'kubectl exec deployment/samba -- sh -c "useradd -M -s /usr/sbin/nologin \\"{user}\\" 2>/dev/null || true; (echo \\"{pwd}\\"; echo \\"{pwd}\\") | smbpasswd -s -a \\"{user}\\"" 2>/dev/null || true')
         self.send_json({"success": ok, "output": out or err})
 
     def handle_user_delete(self, body):
-        user = body.get("username")
+        user = body.get("username", "").strip()
+        if not user or user == "admin":
+            self.send_json({"success": False, "output": "Operacion denegada para la cuenta de administrador root."}, 400)
+            return
         cmd = f'kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c "php /var/www/html/occ user:delete \\"{user}\\"" 2>&1'
         ok, out, err = run_host_cmd(cmd)
+        run_host_cmd(f'kubectl exec deployment/samba -- smbpasswd -x \\"{user}\\" 2>/dev/null || true')
         self.send_json({"success": ok, "output": out or err})
 
     def handle_user_password(self, body):
-        user = body.get("username")
-        pwd = body.get("password")
+        user = body.get("username", "").strip()
+        pwd = body.get("password", "").strip()
+        if not user or not pwd:
+            self.send_json({"success": False, "output": "Parametros insuficientes."}, 400)
+            return
         cmd = f'kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c "OC_PASS=\\"{pwd}\\" php /var/www/html/occ user:resetpassword --password-from-env \\"{user}\\"" 2>&1'
         ok, out, err = run_host_cmd(cmd)
+        run_host_cmd(f'kubectl exec deployment/samba -- sh -c "(echo \\"{pwd}\\"; echo \\"{pwd}\\") | smbpasswd -s \\"{user}\\"" 2>/dev/null || true')
         self.send_json({"success": ok, "output": out or err})
 
     def handle_user_csv(self, body):
