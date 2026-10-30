@@ -135,7 +135,7 @@ fi
 # 14. Comprobar Exportador Prometheus de Salud ZFS y Reglas de Alerta
 info "14. Verificando ZFS Prometheus Exporter y reglas de alerta proactivas..."
 if kubectl -n kube-system get pods -l app.kubernetes.io/name=zfs-exporter --no-headers | grep -q "Running" && \
-   kubectl -n monitoring get configmap prometheus-zfs-alerts > /dev/null 2>&1; then
+   kubectl -n default get configmap prometheus-zfs-alerts > /dev/null 2>&1; then
   pass "ZFS Exporter activo y reglas de alerta (ZFSPoolDegraded, BitRot, R2Stale) cargadas."
 else
   fail "ZFS Exporter o ConfigMap prometheus-zfs-alerts ausente."

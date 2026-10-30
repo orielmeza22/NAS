@@ -3,7 +3,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: grafana-nas-dashboard
-  namespace: monitoring
+  namespace: default
   labels:
     grafana_dashboard: "1"
     app.kubernetes.io/name: grafana
