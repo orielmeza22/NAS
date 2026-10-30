@@ -22,184 +22,208 @@ data:
         {
           "collapsed": false,
           "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
-          "id": 1,
-          "title": "NAS Platform - Estado y Rendimiento del Sistema",
+          "id": 100,
+          "title": "NOC Fila 1: SLA Ejecutivo & Salud Global del Sistema",
           "type": "row"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "fieldConfig": {
             "defaults": {
-              "color": { "mode": "palette-classic" },
-              "custom": { "fillOpacity": 80, "lineWidth": 1 },
-              "unit": "percentunit"
+              "mappings": [
+                { "options": { "0": { "color": "red", "text": "DEGRADED" }, "1": { "color": "green", "text": "ONLINE (RAID-Z1)" } }, "type": "value" }
+              ]
             }
           },
-          "gridPos": { "h": 7, "w": 8, "x": 0, "y": 1 },
-          "id": 2,
-          "options": { "reduceOptions": { "calcs": ["lastNotNull"], "values": false } },
-          "title": "CPU Usage (Nodo K3s)",
-          "type": "gauge",
-          "targets": [
-            {
-              "expr": "1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m]))",
-              "legendFormat": "CPU Utilizada"
-            }
-          ]
-        },
-        {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "fieldConfig": {
-            "defaults": {
-              "color": { "mode": "palette-classic" },
-              "custom": { "fillOpacity": 80, "lineWidth": 1 },
-              "unit": "bytes"
-            }
-          },
-          "gridPos": { "h": 7, "w": 8, "x": 8, "y": 1 },
-          "id": 3,
-          "title": "Uso de Memoria RAM",
-          "type": "gauge",
-          "targets": [
-            {
-              "expr": "node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes",
-              "legendFormat": "Memoria en Uso"
-            }
-          ]
-        },
-        {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "fieldConfig": {
-            "defaults": {
-              "color": { "mode": "thresholds" },
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  { "color": "green", "value": null },
-                  { "color": "red", "value": 1 }
-                ]
-              }
-            }
-          },
-          "gridPos": { "h": 7, "w": 8, "x": 16, "y": 1 },
-          "id": 4,
-          "title": "Pods en Estado Running (Salud)",
+          "gridPos": { "h": 5, "w": 4, "x": 0, "y": 1 },
+          "id": 1,
+          "title": "Salud RAID-Z1 (tank)",
           "type": "stat",
-          "targets": [
-            {
-              "expr": "count(kube_pod_status_phase{phase=\"Running\"})",
-              "legendFormat": "Pods Activos"
-            }
-          ]
-        },
-        {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "fieldConfig": {
-            "defaults": {
-              "color": { "mode": "palette-classic" },
-              "custom": { "axisCenteredZero": false, "drawStyle": "line", "lineInterpolation": "smooth" },
-              "unit": "Bps"
-            }
-          },
-          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
-          "id": 5,
-          "title": "Tasa de I/O en Almacenamiento (ZFS Pool I/O Bandwidth)",
-          "type": "timeseries",
-          "targets": [
-            {
-              "expr": "rate(node_disk_read_bytes_total[2m])",
-              "legendFormat": "Lectura {{device}}"
-            },
-            {
-              "expr": "rate(node_disk_written_bytes_total[2m])",
-              "legendFormat": "Escritura {{device}}"
-            }
-          ]
+          "targets": [{ "expr": "zfs_pool_health{pool=\"tank\"}", "legendFormat": "Estado" }]
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "fieldConfig": {
             "defaults": {
               "mappings": [
-                {
-                  "options": {
-                    "0": { "color": "red", "index": 1, "text": "DEGRADED / FAULTED" },
-                    "1": { "color": "green", "index": 0, "text": "ONLINE (RAID-Z1 OK)" }
-                  },
-                  "type": "value"
-                }
-              ],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  { "color": "red", "value": null },
-                  { "color": "green", "value": 1 }
-                ]
-              }
+                { "options": { "0": { "color": "red", "text": "OFFLINE" }, "1": { "color": "green", "text": "CONECTADO WAN" } }, "type": "value" }
+              ]
             }
           },
-          "gridPos": { "h": 6, "w": 8, "x": 0, "y": 16 },
+          "gridPos": { "h": 5, "w": 4, "x": 4, "y": 1 },
+          "id": 2,
+          "title": "Túnel Zero-Trust",
+          "type": "stat",
+          "targets": [{ "expr": "cloudflare_tunnel_up", "legendFormat": "Túnel" }]
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "mappings": [
+                { "options": { "0": { "color": "red", "text": "¡ALERTA!" }, "1": { "color": "green", "text": "ESCUDO ACTIVO" } }, "type": "value" }
+              ]
+            }
+          },
+          "gridPos": { "h": 5, "w": 4, "x": 8, "y": 1 },
+          "id": 3,
+          "title": "Anti-Ransomware 360°",
+          "type": "stat",
+          "targets": [{ "expr": "nas_ransomware_shield_status", "legendFormat": "Escudo" }]
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } } },
+          "gridPos": { "h": 5, "w": 4, "x": 12, "y": 1 },
+          "id": 4,
+          "title": "Pods K3s Activos",
+          "type": "stat",
+          "targets": [{ "expr": "count(kube_pod_status_phase{phase=\"Running\"})", "legendFormat": "Pods" }]
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" } } },
+          "gridPos": { "h": 5, "w": 4, "x": 16, "y": 1 },
+          "id": 5,
+          "title": "Sesiones SMB Activas",
+          "type": "stat",
+          "targets": [{ "expr": "samba_active_sessions_total", "legendFormat": "Sesiones" }]
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "unit": "percentunit", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 0.85 }] } } },
+          "gridPos": { "h": 5, "w": 4, "x": 20, "y": 1 },
           "id": 6,
-          "title": "Estado de Salud Pool OpenZFS (tank)",
-          "type": "stat",
-          "targets": [
-            {
-              "expr": "zfs_pool_health{pool=\"tank\"}",
-              "legendFormat": "Pool {{pool}}"
-            }
-          ]
+          "title": "CPU Nodo K3s",
+          "type": "gauge",
+          "targets": [{ "expr": "1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m]))", "legendFormat": "CPU" }]
+        },
+        {
+          "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 },
+          "id": 200,
+          "title": "NOC Fila 2: Almacenamiento OpenZFS & Rendimiento ARC Cache",
+          "type": "row"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "fieldConfig": {
-            "defaults": {
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  { "color": "green", "value": null },
-                  { "color": "red", "value": 1 }
-                ]
-              }
-            }
-          },
-          "gridPos": { "h": 6, "w": 8, "x": 8, "y": 16 },
+          "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "unit": "percent", "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 85 }] } } },
+          "gridPos": { "h": 6, "w": 6, "x": 0, "y": 7 },
           "id": 7,
-          "title": "Errores de Checksum ZFS (Bit-Rot Detectado)",
+          "title": "ARC Cache Hit Ratio (%)",
+          "type": "gauge",
+          "targets": [{ "expr": "zfs_arc_hit_ratio_percent{pool=\"tank\"}", "legendFormat": "ARC Hit %" }]
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "bytes" } },
+          "gridPos": { "h": 6, "w": 10, "x": 6, "y": 7 },
+          "id": 8,
+          "title": "Uso Real por Dataset vs Cuota Departamental",
+          "type": "bargauge",
+          "targets": [{ "expr": "zfs_dataset_used_bytes", "legendFormat": "{{dataset}}" }]
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] } } },
+          "gridPos": { "h": 6, "w": 4, "x": 16, "y": 7 },
+          "id": 9,
+          "title": "Errores Checksum (Bit-Rot)",
           "type": "stat",
+          "targets": [{ "expr": "zfs_pool_checksum_errors_total{pool=\"tank\"}", "legendFormat": "CKSUM" }]
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" } } },
+          "gridPos": { "h": 6, "w": 4, "x": 20, "y": 7 },
+          "id": 10,
+          "title": "Snapshots Inmutables",
+          "type": "stat",
+          "targets": [{ "expr": "zfs_snapshots_total{pool=\"tank\"}", "legendFormat": "Snapshots" }]
+        },
+        {
+          "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 },
+          "id": 300,
+          "title": "NOC Fila 3: Base de Datos Transaccional & Seguridad Forense",
+          "type": "row"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] } } },
+          "gridPos": { "h": 6, "w": 6, "x": 0, "y": 14 },
+          "id": 11,
+          "title": "Amenazas Ransomware Bloqueadas",
+          "type": "stat",
+          "targets": [{ "expr": "nas_ransomware_threats_blocked_total", "legendFormat": "Bloqueadas" }]
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "unit": "s" } },
+          "gridPos": { "h": 6, "w": 6, "x": 6, "y": 14 },
+          "id": 12,
+          "title": "Antigüedad Último Backup R2",
+          "type": "stat",
+          "targets": [{ "expr": "time() - zfs_last_offsite_backup_timestamp_seconds{pool=\"tank\"}", "legendFormat": "Segundos desde Backup" }]
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "unit": "Bps" } },
+          "gridPos": { "h": 6, "w": 12, "x": 12, "y": 14 },
+          "id": 13,
+          "title": "Ancho de Banda I/O ZFS Storage",
+          "type": "timeseries",
           "targets": [
-            {
-              "expr": "zfs_pool_checksum_errors_total{pool=\"tank\"}",
-              "legendFormat": "Errores CKSUM"
-            }
+            { "expr": "rate(node_disk_read_bytes_total[2m])", "legendFormat": "Lectura" },
+            { "expr": "rate(node_disk_written_bytes_total[2m])", "legendFormat": "Escritura" }
+          ]
+        },
+        {
+          "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 20 },
+          "id": 400,
+          "title": "NOC Fila 4: Métricas de Servidor, Memoria & Red",
+          "type": "row"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "bytes" } },
+          "gridPos": { "h": 6, "w": 8, "x": 0, "y": 21 },
+          "id": 14,
+          "title": "Uso de Memoria RAM",
+          "type": "gauge",
+          "targets": [{ "expr": "node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes", "legendFormat": "RAM en Uso" }]
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "Bps" } },
+          "gridPos": { "h": 6, "w": 8, "x": 8, "y": 21 },
+          "id": 15,
+          "title": "Tráfico de Red (LAN / WAN)",
+          "type": "timeseries",
+          "targets": [
+            { "expr": "rate(node_network_receive_bytes_total{device!=\"lo\"}[2m])", "legendFormat": "Bajada {{device}}" },
+            { "expr": "rate(node_network_transmit_bytes_total{device!=\"lo\"}[2m])", "legendFormat": "Subida {{device}}" }
           ]
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "fieldConfig": {
-            "defaults": {
-              "unit": "bytes"
-            }
-          },
-          "gridPos": { "h": 6, "w": 8, "x": 16, "y": 16 },
-          "id": 8,
-          "title": "Uso por Dataset y Cuotas Departamentales",
-          "type": "bargauge",
-          "targets": [
-            {
-              "expr": "zfs_dataset_used_bytes",
-              "legendFormat": "{{dataset}}"
-            }
-          ]
+          "fieldConfig": { "defaults": { "unit": "bytes" } },
+          "gridPos": { "h": 6, "w": 8, "x": 16, "y": 21 },
+          "id": 16,
+          "title": "Tamaño de Memoria ARC ZFS",
+          "type": "stat",
+          "targets": [{ "expr": "zfs_arc_size_bytes{pool=\"tank\"}", "legendFormat": "ARC RAM" }]
         }
       ],
       "refresh": "10s",
       "schemaVersion": 38,
       "style": "dark",
-      "tags": ["nas", "k3s", "storage", "zfs"],
+      "tags": ["nas", "k3s", "storage", "zfs", "noc", "enterprise"],
       "time": { "from": "now-30m", "to": "now" },
       "timepicker": { "refresh_intervals": ["5s", "10s", "30s", "1m"] },
       "timezone": "browser",
-      "title": "Enterprise NAS Overview",
+      "title": "Enterprise NAS Overview (NOC 16 Paneles)",
       "uid": "nas-platform-overview",
-      "version": 2
+      "version": 3
     }

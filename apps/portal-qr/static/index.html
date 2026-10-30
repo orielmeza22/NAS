@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Enterprise NAS Control Center OS</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card-bg: #1e293b;
+      --accent: #3b82f6;
+      --accent-hover: #2563eb;
+      --success: #10b981;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --border: #334155;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background: var(--bg); color: var(--text); min-height: 100vh; display: flex; flex-direction: column; }
+    header { background: var(--card-bg); border-bottom: 1px solid var(--border); padding: 12px 24px; display: flex; justify-content: space-between; align-items: center; }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 1.2rem; }
+    .status-badge { padding: 4px 10px; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; background: #064e3b; color: var(--success); }
+    .btn { background: var(--accent); color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; font-weight: 600; transition: 0.2s; display: inline-flex; align-items: center; gap: 6px; }
+    .btn:hover { background: var(--accent-hover); }
+    .btn-danger { background: var(--danger); }
+    .btn-danger:hover { background: #dc2626; }
+    .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text); }
+    .btn-outline:hover { background: var(--border); }
+    main { padding: 24px; max-width: 1300px; margin: 0 auto; width: 100%; flex: 1; }
+    .public-box { background: var(--card-bg); border: 1px solid var(--border); border-radius: 16px; padding: 32px; text-align: center; max-width: 480px; margin: 20px auto; box-shadow: 0 10px 25px rgba(0,0,0,0.4); }
+    .qr-img { width: 220px; height: 220px; border-radius: 12px; margin: 16px auto; display: block; background: white; padding: 10px; }
+    .tabs { display: flex; gap: 8px; border-bottom: 1px solid var(--border); margin-bottom: 24px; overflow-x: auto; padding-bottom: 4px; }
+    .tab-btn { background: none; border: none; color: var(--text-muted); padding: 10px 16px; font-size: 0.9rem; font-weight: 600; cursor: pointer; border-radius: 6px; }
+    .tab-btn.active { color: var(--accent); background: #1e3a8a33; border-bottom: 2px solid var(--accent); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 24px; }
+    .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+    .card h3 { font-size: 1rem; color: var(--text-muted); margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; }
+    .card .val { font-size: 1.8rem; font-weight: 700; color: var(--text); }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 0.85rem; }
+    th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+    th { color: var(--text-muted); font-weight: 600; }
+    .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: none; place-items: center; z-index: 1000; }
+    .modal.open { display: grid; }
+    .modal-content { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; width: 90%; max-width: 500px; padding: 24px; }
+    input, select, textarea { width: 100%; background: #0f172a; border: 1px solid var(--border); border-radius: 6px; padding: 10px; color: var(--text); margin: 8px 0 16px; font-size: 0.9rem; }
+    .terminal-box { background: #000; color: #10b981; font-family: monospace; font-size: 0.8rem; padding: 16px; border-radius: 8px; max-height: 400px; overflow-y: auto; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span>💾</span> Enterprise NAS Control Center OS
+      <span id="raid-badge" class="status-badge">Cargando...</span>
+    </div>
+    <div style="display:flex; gap:10px;">
+      <button class="btn btn-outline" id="btn-killswitch" onclick="toggleLanOnly()">🌐 Modo Solo LAN</button>
+      <button class="btn btn-outline" onclick="rotateTunnel()">🔄 Rotar Link WAN</button>
+      <button class="btn" id="btn-auth" onclick="toggleAuthModal()">🔒 Ingreso Administrador</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- VISTA PÚBLICA -->
+    <div id="public-view" class="public-box">
+      <h2>Acceso Web Nextcloud</h2>
+      <p style="color:var(--text-muted); font-size:0.9rem; margin-top:6px;">Escanea el código QR con tu celular o accede al enlace directo</p>
+      <img id="public-qr" class="qr-img" src="" alt="Cargando QR...">
+      <a id="public-link" href="#" target="_blank" style="color:var(--accent); font-weight:600; text-decoration:none; word-break:break-all;">Conectando al túnel...</a>
+      <div style="margin-top:24px; padding-top:16px; border-top:1px solid var(--border); font-size:0.8rem; color:var(--text-muted);">
+        Para administrar almacenamiento, usuarios, copias y seguridad, inicia sesión como Administrador arriba.
+      </div>
+    </div>
+
+    <!-- CONSOLA DE ADMINISTRACIÓN (SOLO ADMIN LOGUEADO) -->
+    <div id="admin-view" style="display:none;">
+      <div class="tabs">
+        <button class="tab-btn active" onclick="switchTab('dashboard')">🖥️ Dashboard</button>
+        <button class="tab-btn" onclick="switchTab('raid')">💾 Gestor RAID-Z1</button>
+        <button class="tab-btn" onclick="switchTab('backups')">☁️ Backups & R2</button>
+        <button class="tab-btn" onclick="switchTab('users')">👥 Usuarios & CSV</button>
+        <button class="tab-btn" onclick="switchTab('files')">📁 File Station & Papelera</button>
+        <button class="tab-btn" onclick="switchTab('security')">🛡️ Anti-Ransomware</button>
+        <button class="tab-btn" onclick="switchTab('services')">🔌 Servicios K3s</button>
+        <button class="tab-btn" onclick="switchTab('diagnostics')">🧪 Diagnóstico & Reporte</button>
+      </div>
+
+      <!-- TAB: DASHBOARD -->
+      <div id="tab-dashboard" class="tab-content">
+        <div class="grid">
+          <div class="card"><h3>CPU Utilizada</h3><div class="val" id="val-cpu">-- %</div></div>
+          <div class="card"><h3>Memoria RAM</h3><div class="val" id="val-ram">-- / -- MB</div></div>
+          <div class="card"><h3>Caché ZFS ARC</h3><div class="val" id="val-arc">-- MB</div></div>
+          <div class="card">
+            <h3>Acciones del Sistema</h3>
+            <div style="display:flex; gap:8px; margin-top:10px;">
+              <button class="btn btn-outline" onclick="flushArc()">🧹 Vaciar RAM</button>
+              <button class="btn btn-danger" onclick="rebootSystem()">🔄 Reiniciar</button>
+              <button class="btn btn-danger" onclick="shutdownSystem()">🔌 Apagar</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB: RAID-Z1 -->
+      <div id="tab-raid" class="tab-content" style="display:none;">
+        <div class="card" style="margin-bottom:20px;">
+          <h3>Discos del Pool RAID-Z1 (tank)
+            <div>
+              <button class="btn btn-danger" onclick="simulateDiskFailure()">⚡ Simular Fallo Disco 2</button>
+              <button class="btn" onclick="repairResilverDisk()">🔧 Reparar / Resilver</button>
+              <button class="btn btn-outline" onclick="addHotSpare()">➕ Añadir Hot-Spare</button>
+              <button class="btn btn-outline" onclick="triggerScrub()">🔍 ZFS Scrub</button>
+            </div>
+          </h3>
+          <table>
+            <thead><tr><th>Disco</th><th>Estado</th><th>Lectura Errores</th><th>Escritura Errores</th><th>Checksum Errores</th></tr></thead>
+            <tbody id="disks-tbody"></tbody>
+          </table>
+        </div>
+        <div class="card">
+          <h3>Datasets y Cuotas OpenZFS</h3>
+          <table>
+            <thead><tr><th>Dataset</th><th>Usado</th><th>Disponible</th><th>Cuota</th><th>Compresión</th><th>Recordsize</th><th>Acción</th></tr></thead>
+            <tbody id="datasets-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- TAB: BACKUPS -->
+      <div id="tab-backups" class="tab-content" style="display:none;">
+        <div class="card" style="margin-bottom:20px;">
+          <h3>Snapshots Locales ZFS
+            <button class="btn" onclick="createSnapshotPrompt()">📸 Crear Snapshot Manual</button>
+          </h3>
+          <table>
+            <thead><tr><th>Nombre</th><th>Espacio</th><th>Fecha</th><th>Inmutable</th><th>Acciones</th></tr></thead>
+            <tbody id="snapshots-tbody"></tbody>
+          </table>
+        </div>
+        <div class="card">
+          <h3>Respaldos Cifrados en Cloudflare R2 (3-2-1)
+            <div>
+              <button class="btn" onclick="triggerR2Backup()">☁️ Enviar Backup Ahora</button>
+              <button class="btn btn-outline" onclick="triggerDrDrill()">🚨 Ejecutar Simulacro DR</button>
+            </div>
+          </h3>
+          <table>
+            <thead><tr><th>Objeto Remoto</th><th>Tamaño</th><th>Acción</th></tr></thead>
+            <tbody id="r2-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- TAB: USUARIOS -->
+      <div id="tab-users" class="tab-content" style="display:none;">
+        <div class="grid">
+          <div class="card">
+            <h3>Crear Usuario Unificado (Samba + Nextcloud)</h3>
+            <input type="text" id="new-user-name" placeholder="Nombre de usuario (ej: carlos.silva)">
+            <input type="password" id="new-user-pass" placeholder="Contraseña">
+            <button class="btn" onclick="createUser()">Guardar Usuario</button>
+          </div>
+          <div class="card">
+            <h3>📥 Carga Masiva de Alumnos / Profesores por CSV</h3>
+            <textarea id="csv-input" rows="4" placeholder="usuario,contraseña,rol&#10;alumno1,Clave2026!,alumnos&#10;alumno2,Clave2026!,alumnos"></textarea>
+            <button class="btn" onclick="importCsv()">Importar Lote CSV</button>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Usuarios Registrados</h3>
+          <div id="users-list-box" style="margin-top:10px;"></div>
+        </div>
+      </div>
+
+      <!-- TAB: FILES -->
+      <div id="tab-files" class="tab-content" style="display:none;">
+        <div class="card">
+          <h3>File Station (/tank/nas)
+            <span id="current-file-path" style="font-size:0.8rem; color:var(--accent);">/tank/nas</span>
+          </h3>
+          <table>
+            <thead><tr><th>Nombre</th><th>Tipo</th><th>Tamaño</th><th>Fecha</th><th>Acción</th></tr></thead>
+            <tbody id="files-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- TAB: SECURITY -->
+      <div id="tab-security" class="tab-content" style="display:none;">
+        <div class="grid">
+          <div class="card">
+            <h3>Escudo Anti-Ransomware 360°</h3>
+            <div class="val" id="val-shield" style="color:var(--success);">ACTIVO</div>
+            <p style="color:var(--text-muted); font-size:0.85rem; margin-top:8px;">4 Capas: Samba Veto + Nextcloud WebDAV + Centinela Kernel + Inmutabilidad ZFS</p>
+          </div>
+          <div class="card">
+            <h3>Amenazas Bloqueadas</h3>
+            <div class="val" id="val-threats">0</div>
+            <button class="btn btn-outline" style="margin-top:8px;" onclick="testCanary()">🧪 Simular Infección Canary</button>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Registro Forense de Incidentes</h3>
+          <div id="security-logs" class="terminal-box">Sin incidentes registrados.</div>
+        </div>
+      </div>
+
+      <!-- TAB: SERVICES -->
+      <div id="tab-services" class="tab-content" style="display:none;">
+        <div class="card">
+          <h3>Contenedores & Pods K3s</h3>
+          <table>
+            <thead><tr><th>Servicio</th><th>Ready</th><th>Estado</th><th>Reinicios</th><th>Acciones</th></tr></thead>
+            <tbody id="services-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- TAB: DIAGNOSTICS -->
+      <div id="tab-diagnostics" class="tab-content" style="display:none;">
+        <div class="card">
+          <h3>Diagnóstico de Salud & Suite de Validación
+            <div>
+              <button class="btn" onclick="runSmokeTests()">🧪 Ejecutar Smoke Tests (18 Checks)</button>
+              <button class="btn btn-outline" onclick="downloadReport()">📄 Descargar Reporte Ejecutivo</button>
+            </div>
+          </h3>
+          <div id="diagnostics-terminal" class="terminal-box" style="margin-top:12px;">Presione 'Ejecutar Smoke Tests' para iniciar la verificación integral en vivo.</div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- MODAL LOGIN -->
+  <div id="modal-login" class="modal">
+    <div class="modal-content">
+      <h2 style="margin-bottom:12px;">🔒 Acceso Administrador</h2>
+      <p style="color:var(--text-muted); font-size:0.85rem;">Ingrese la contraseña maestra del NAS para desbloquear el sistema de control.</p>
+      <input type="password" id="login-pass" placeholder="Contraseña de Administrador">
+      <div style="display:flex; justify-content:flex-end; gap:8px;">
+        <button class="btn btn-outline" onclick="toggleAuthModal()">Cancelar</button>
+        <button class="btn" onclick="doLogin()">Entrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL LOGS -->
+  <div id="modal-logs" class="modal">
+    <div class="modal-content" style="max-width:800px;">
+      <h3 id="logs-title">Logs en Vivo</h3>
+      <div id="logs-box" class="terminal-box" style="margin:12px 0;"></div>
+      <button class="btn btn-outline" onclick="closeLogsModal()">Cerrar</button>
+    </div>
+  </div>
+
+  <script>
+    let authToken = localStorage.getItem('nas_auth_token') || '';
+
+    function checkAuth() {
+      if (authToken) {
+        document.getElementById('public-view').style.display = 'none';
+        document.getElementById('admin-view').style.display = 'block';
+        document.getElementById('btn-auth').textContent = '🚪 Cerrar Sesión';
+        document.getElementById('btn-auth').onclick = doLogout;
+        loadAdminData();
+      } else {
+        document.getElementById('public-view').style.display = 'block';
+        document.getElementById('admin-view').style.display = 'none';
+        document.getElementById('btn-auth').textContent = '🔒 Ingreso Administrador';
+        document.getElementById('btn-auth').onclick = toggleAuthModal;
+        loadPublicStatus();
+      }
+    }
+
+    async function loadPublicStatus() {
+      try {
+        const res = await fetch('/api/public/status');
+        const data = await res.json();
+        document.getElementById('raid-badge').textContent = data.raid_health;
+        document.getElementById('raid-badge').style.color = data.raid_health === 'ONLINE' ? 'var(--success)' : 'var(--danger)';
+        if (data.tunnel_url) {
+          document.getElementById('public-qr').src = 'https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=' + encodeURIComponent(data.tunnel_url);
+          document.getElementById('public-link').href = data.tunnel_url;
+          document.getElementById('public-link').textContent = data.tunnel_url;
+        }
+      } catch (e) { console.error(e); }
+    }
+
+    function toggleAuthModal() {
+      const m = document.getElementById('modal-login');
+      m.classList.toggle('open');
+      if (m.classList.contains('open')) document.getElementById('login-pass').focus();
+    }
+
+    async function doLogin() {
+      const pass = document.getElementById('login-pass').value;
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({password: pass})
+      });
+      const data = await res.json();
+      if (data.success) {
+        authToken = data.token;
+        localStorage.setItem('nas_auth_token', authToken);
+        toggleAuthModal();
+        checkAuth();
+      } else {
+        alert(data.error || 'Acceso denegado');
+      }
+    }
+
+    function doLogout() {
+      authToken = '';
+      localStorage.removeItem('nas_auth_token');
+      checkAuth();
+    }
+
+    function switchTab(tab) {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.style.display = 'none');
+      event.target.classList.add('active');
+      document.getElementById('tab-' + tab).style.display = 'block';
+      if (tab === 'raid') loadRaidData();
+      if (tab === 'backups') loadBackupsData();
+      if (tab === 'users') loadUsersData();
+      if (tab === 'files') loadFilesData();
+      if (tab === 'security') loadSecurityData();
+      if (tab === 'services') loadServicesData();
+    }
+
+    async function apiFetch(url, method = 'GET', body = null) {
+      const opts = { method, headers: {'Authorization': 'Bearer ' + authToken, 'Content-Type': 'application/json'} };
+      if (body) opts.body = JSON.stringify(body);
+      const res = await fetch(url, opts);
+      if (res.status === 401) { doLogout(); return null; }
+      return res.json();
+    }
+
+    async function loadAdminData() {
+      const sys = await apiFetch('/api/system/status');
+      if (sys) {
+        document.getElementById('val-cpu').textContent = sys.cpu_usage_percent + ' %';
+        document.getElementById('val-ram').textContent = sys.used_ram_mb + ' / ' + sys.total_ram_mb + ' MB';
+        document.getElementById('val-arc').textContent = sys.zfs_arc_mb + ' MB';
+      }
+    }
+
+    async function loadRaidData() {
+      const r = await apiFetch('/api/raid/status');
+      if (r && r.disks) {
+        const tbody = document.getElementById('disks-tbody');
+        tbody.innerHTML = r.disks.map(d => `<tr><td>${d.name}</td><td>${d.state}</td><td>${d.read}</td><td>${d.write}</td><td>${d.cksum}</td></tr>`).join('');
+      }
+      const ds = await apiFetch('/api/datasets');
+      if (ds && ds.datasets) {
+        const tbody = document.getElementById('datasets-tbody');
+        tbody.innerHTML = ds.datasets.map(d => `<tr><td>${d.name}</td><td>${d.used}</td><td>${d.avail}</td><td>${d.quota}</td><td>${d.compression}</td><td>${d.recordsize}</td><td><button class="btn btn-outline" onclick="editQuota('${d.name}')">Cuota</button></td></tr>`).join('');
+      }
+    }
+
+    async function simulateDiskFailure() {
+      if (confirm('¿Simular fallo de disco 2 (zpool offline)? El RAID-Z1 seguirá funcionando sin pérdida de datos.')) {
+        await apiFetch('/api/raid/action', 'POST', {action: 'offline_disk', target: 'disk2'});
+        loadRaidData();
+      }
+    }
+
+    async function repairResilverDisk() {
+      await apiFetch('/api/raid/action', 'POST', {action: 'online_disk', target: 'disk2'});
+      loadRaidData();
+    }
+
+    async function addHotSpare() {
+      await apiFetch('/api/raid/action', 'POST', {action: 'add_spare'});
+      loadRaidData();
+    }
+
+    async function triggerScrub() {
+      await apiFetch('/api/raid/action', 'POST', {action: 'scrub'});
+      alert('ZFS Scrub iniciado en segundo plano.');
+    }
+
+    async function editQuota(ds) {
+      const q = prompt('Ingrese nueva cuota en GB para ' + ds + ' (ej: 15G):');
+      if (q) {
+        await apiFetch('/api/datasets', 'POST', {dataset: ds, property: 'quota', value: q});
+        loadRaidData();
+      }
+    }
+
+    async function loadBackupsData() {
+      const s = await apiFetch('/api/backups/snapshots');
+      if (s && s.snapshots) {
+        const tbody = document.getElementById('snapshots-tbody');
+        tbody.innerHTML = s.snapshots.map(x => `<tr><td>${x.name}</td><td>${x.used}</td><td>${x.creation}</td><td>${x.is_held ? '🔒 Sí' : 'No'}</td><td><button class="btn btn-outline" onclick="rollbackSnap('${x.name}')">⏪ Rollback</button> <button class="btn btn-outline" onclick="toggleHold('${x.name}', ${!x.is_held})">${x.is_held ? 'Desbloquear' : 'Bloquear'}</button></td></tr>`).join('');
+      }
+      const r2 = await apiFetch('/api/backups/r2');
+      if (r2 && r2.r2_objects) {
+        const tbody = document.getElementById('r2-tbody');
+        tbody.innerHTML = r2.r2_objects.map(o => `<tr><td>${o.name}</td><td>${o.size}</td><td><button class="btn btn-outline" onclick="restoreR2()">📥 Restaurar</button></td></tr>`).join('');
+      }
+    }
+
+    async function createSnapshotPrompt() {
+      const tag = prompt('Etiqueta para el nuevo snapshot:');
+      if (tag) {
+        await apiFetch('/api/backups/snapshot/create', 'POST', {tag});
+        loadBackupsData();
+      }
+    }
+
+    async function rollbackSnap(name) {
+      if (confirm('¿Revertir instantáneamente al snapshot ' + name + '?')) {
+        await apiFetch('/api/backups/snapshot/rollback', 'POST', {snapshot: name});
+        alert('Rollback completado.');
+      }
+    }
+
+    async function toggleHold(name, hold) {
+      await apiFetch('/api/backups/snapshot/hold', 'POST', {snapshot: name, hold});
+      loadBackupsData();
+    }
+
+    async function triggerR2Backup() {
+      await apiFetch('/api/backups/r2/trigger', 'POST', {mode: 'incremental'});
+      alert('Job de Backup a Cloudflare R2 iniciado.');
+    }
+
+    async function triggerDrDrill() {
+      alert('Iniciando simulacro automatizado de Disaster Recovery...');
+      const res = await apiFetch('/api/backups/r2/restore', 'POST', {});
+      alert(res.output || 'Simulacro completado.');
+    }
+
+    async function loadUsersData() {
+      const u = await apiFetch('/api/users');
+      if (u && u.users) {
+        document.getElementById('users-list-box').innerHTML = '<pre>' + u.users + '</pre>';
+      }
+    }
+
+    async function createUser() {
+      const u = document.getElementById('new-user-name').value;
+      const p = document.getElementById('new-user-pass').value;
+      if (u && p) {
+        await apiFetch('/api/users/create', 'POST', {username: u, password: p});
+        alert('Usuario creado.');
+        loadUsersData();
+      }
+    }
+
+    async function importCsv() {
+      const csv = document.getElementById('csv-input').value;
+      if (csv) {
+        const res = await apiFetch('/api/users/csv-import', 'POST', {csv});
+        alert('Carga masiva completada: ' + (res.created ? res.created.join(', ') : ''));
+        loadUsersData();
+      }
+    }
+
+    async function loadFilesData(path = '') {
+      const f = await apiFetch('/api/files?path=' + encodeURIComponent(path));
+      if (f && f.entries) {
+        document.getElementById('current-file-path').textContent = f.path;
+        const tbody = document.getElementById('files-tbody');
+        tbody.innerHTML = f.entries.map(e => `<tr><td>${e.name}</td><td>${e.is_dir ? '📁 Carpeta' : '📄 Archivo'}</td><td>${e.size}</td><td>${e.date}</td><td><button class="btn btn-outline" onclick="deleteFile('${f.path}/${e.name}')">🗑️</button></td></tr>`).join('');
+      }
+    }
+
+    async function deleteFile(p) {
+      if (confirm('¿Mover a la papelera: ' + p + '?')) {
+        await apiFetch('/api/files/delete', 'POST', {filepath: p});
+        loadFilesData();
+      }
+    }
+
+    async function loadSecurityData() {
+      const s = await apiFetch('/api/security');
+      if (s) {
+        document.getElementById('val-shield').textContent = s.status === 1 ? 'ACTIVO' : '¡ALERTA!';
+        document.getElementById('val-shield').style.color = s.status === 1 ? 'var(--success)' : 'var(--danger)';
+        document.getElementById('val-threats').textContent = s.blocked_threats;
+        document.getElementById('security-logs').textContent = s.logs;
+      }
+    }
+
+    async function testCanary() {
+      await apiFetch('/api/security/test-canary', 'POST', {});
+      alert('Canary alterado. El centinela restaurará en <5s.');
+      setTimeout(loadSecurityData, 3000);
+    }
+
+    async function loadServicesData() {
+      const s = await apiFetch('/api/services');
+      if (s && s.pods) {
+        const tbody = document.getElementById('services-tbody');
+        tbody.innerHTML = s.pods.map(p => `<tr><td>${p.name}</td><td>${p.ready}</td><td>${p.status}</td><td>${p.restarts}</td><td><button class="btn btn-outline" onclick="viewLogs('${p.name}')">📜 Logs</button></td></tr>`).join('');
+      }
+    }
+
+    async function viewLogs(pod) {
+      const l = await apiFetch('/api/services/logs?pod=' + encodeURIComponent(pod));
+      document.getElementById('logs-title').textContent = 'Logs: ' + pod;
+      document.getElementById('logs-box').textContent = l.logs || 'Sin logs.';
+      document.getElementById('modal-logs').classList.add('open');
+    }
+
+    function closeLogsModal() { document.getElementById('modal-logs').classList.remove('open'); }
+
+    async function runSmokeTests() {
+      const t = document.getElementById('diagnostics-terminal');
+      t.textContent = 'Ejecutando Smoke Tests en vivo...';
+      const r = await apiFetch('/api/diagnostics/smoke-test', 'POST', {});
+      t.textContent = r.log || 'Finalizado.';
+    }
+
+    async function downloadReport() {
+      const r = await apiFetch('/api/reports/executive');
+      const blob = new Blob([r.report], {type: 'text/markdown'});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'Reporte_Ejecutivo_NAS_' + Date.now() + '.md';
+      a.click();
+    }
+
+    async function toggleLanOnly() {
+      const res = await apiFetch('/api/wan/toggle-lan', 'POST', {});
+      alert(res.message);
+    }
+
+    async function rotateTunnel() {
+      alert('Rotando enlace Cloudflare WAN...');
+      await apiFetch('/api/wan/rotate-tunnel', 'POST', {});
+      loadPublicStatus();
+    }
+
+    async function flushArc() {
+      await apiFetch('/api/system/flush-arc', 'POST', {});
+      alert('Memoria RAM liberada.');
+      loadAdminData();
+    }
+
+    async function rebootSystem() {
+      if (confirm('¿Confirmar reinicio seguro del servidor NAS?')) {
+        await apiFetch('/api/system/reboot', 'POST', {});
+      }
+    }
+
+    async function shutdownSystem() {
+      if (confirm('¿Confirmar apagado ordenado del NAS (zpool sync)?')) {
+        await apiFetch('/api/system/shutdown', 'POST', {});
+      }
+    }
+
+    checkAuth();
+    setInterval(loadPublicStatus, 15000);
+  </script>
+</body>
+</html>

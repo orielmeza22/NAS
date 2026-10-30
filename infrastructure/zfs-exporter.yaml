@@ -8,6 +8,7 @@ metadata:
     app.kubernetes.io/name: zfs-exporter
     app.kubernetes.io/component: observability
     app.kubernetes.io/part-of: nas-platform
+    release: monitoring
 spec:
   replicas: 1
   selector:
@@ -19,6 +20,7 @@ spec:
         app.kubernetes.io/name: zfs-exporter
         app.kubernetes.io/component: observability
         app.kubernetes.io/part-of: nas-platform
+        release: monitoring
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "9134"
@@ -35,6 +37,7 @@ spec:
               set -u
               while true; do
                 nsenter --target 1 --mount --uts --ipc --net --pid -- sh -c '
+                  # 1. Pool status
                   POOL_LINE=$(zpool list -H -p -o name,size,alloc,free,cap,health tank 2>/dev/null || true)
                   if [ -n "$POOL_LINE" ]; then
                     NAME=$(echo "$POOL_LINE" | awk "{print \$1}")
@@ -44,12 +47,47 @@ spec:
                     CAP=$(echo "$POOL_LINE" | awk "{print \$5}")
                     HEALTH_STR=$(echo "$POOL_LINE" | awk "{print \$6}")
                     if [ "$HEALTH_STR" = "ONLINE" ]; then HEALTH=1; else HEALTH=0; fi
-                    CKSUM_ERR=$(zpool status tank | awk "/raidz1/ {print \$5}" | head -n 1)
+                    CKSUM_ERR=$(zpool status tank 2>/dev/null | awk "/raidz1/ {print \$5}" | head -n 1)
                     CKSUM_ERR=${CKSUM_ERR:-0}
                     LAST_BKP=0
                     if [ -f /tmp/nas-tunnel/last_offsite_backup_ts ]; then
                       LAST_BKP=$(cat /tmp/nas-tunnel/last_offsite_backup_ts | tr -d "[:space:]")
                     fi
+
+                    # 2. ARC Stats
+                    ARC_HITS=$(grep -w hits /proc/spl/kstat/zfs/arcstats 2>/dev/null | awk "{print \$3}" || echo 0)
+                    ARC_MISSES=$(grep -w misses /proc/spl/kstat/zfs/arcstats 2>/dev/null | awk "{print \$3}" || echo 0)
+                    ARC_SIZE=$(grep -w size /proc/spl/kstat/zfs/arcstats 2>/dev/null | awk "{print \$3}" || echo 0)
+                    TOTAL_ARC=$((ARC_HITS + ARC_MISSES))
+                    if [ "$TOTAL_ARC" -gt 0 ]; then
+                      ARC_RATIO=$(awk "BEGIN {printf \"%.2f\", ($ARC_HITS / $TOTAL_ARC) * 100}")
+                    else
+                      ARC_RATIO=100.00
+                    fi
+
+                    # 3. Snapshots Total
+                    SNAP_COUNT=$(zfs list -t snapshot -H 2>/dev/null | wc -l || echo 0)
+
+                    # 4. Anti-Ransomware Shield
+                    RW_STATUS=1
+                    RW_BLOCKED=0
+                    if [ -f /tmp/nas-tunnel/ransomware_status ]; then
+                      RW_STATUS=$(cat /tmp/nas-tunnel/ransomware_status | tr -d "[:space:]")
+                    fi
+                    if [ -f /tmp/nas-tunnel/ransomware_threats_blocked ]; then
+                      RW_BLOCKED=$(cat /tmp/nas-tunnel/ransomware_threats_blocked | tr -d "[:space:]")
+                    fi
+
+                    # 5. Samba & Service connections
+                    SMB_SESSIONS=$(smbstatus -b 2>/dev/null | grep -v "PID" | grep -v -- "---" | grep -v "^$" | wc -l || echo 0)
+                    SMB_LOCKED=$(smbstatus -L 2>/dev/null | grep -v "PID" | grep -v -- "---" | grep -v "^$" | wc -l || echo 0)
+
+                    TUNNEL_UP=0
+                    if [ -f /tmp/nas-tunnel/url.txt ]; then
+                      TUN_URL=$(cat /tmp/nas-tunnel/url.txt | tr -d "[:space:]")
+                      if [ -n "$TUN_URL" ]; then TUNNEL_UP=1; fi
+                    fi
+
                     cat <<EOF > /tmp/zfs_metrics.prom.tmp
               # HELP zfs_pool_health ZFS pool health status (1=ONLINE, 0=DEGRADED/FAULTED)
               # TYPE zfs_pool_health gauge
@@ -72,6 +110,30 @@ spec:
               # HELP zfs_last_offsite_backup_timestamp_seconds Unix timestamp of last successful R2 offsite backup
               # TYPE zfs_last_offsite_backup_timestamp_seconds gauge
               zfs_last_offsite_backup_timestamp_seconds{pool="$NAME"} ${LAST_BKP:-0}
+              # HELP zfs_arc_hit_ratio_percent OpenZFS ARC Cache Hit Ratio percentage
+              # TYPE zfs_arc_hit_ratio_percent gauge
+              zfs_arc_hit_ratio_percent{pool="$NAME"} $ARC_RATIO
+              # HELP zfs_arc_size_bytes OpenZFS ARC Cache current memory size
+              # TYPE zfs_arc_size_bytes gauge
+              zfs_arc_size_bytes{pool="$NAME"} $ARC_SIZE
+              # HELP zfs_snapshots_total Total immutable snapshots in ZFS pool
+              # TYPE zfs_snapshots_total gauge
+              zfs_snapshots_total{pool="$NAME"} $SNAP_COUNT
+              # HELP nas_ransomware_shield_status Status of 360 Ransomware Shield (1=PROTECTED, 0=ALERT)
+              # TYPE nas_ransomware_shield_status gauge
+              nas_ransomware_shield_status $RW_STATUS
+              # HELP nas_ransomware_threats_blocked_total Total ransomware threats blocked and quarantined
+              # TYPE nas_ransomware_threats_blocked_total counter
+              nas_ransomware_threats_blocked_total $RW_BLOCKED
+              # HELP samba_active_sessions_total Active SMB client sessions
+              # TYPE samba_active_sessions_total gauge
+              samba_active_sessions_total $SMB_SESSIONS
+              # HELP samba_locked_files_total Files locked in active editing via SMB
+              # TYPE samba_locked_files_total gauge
+              samba_locked_files_total $SMB_LOCKED
+              # HELP cloudflare_tunnel_up Cloudflare Zero-Trust WAN Tunnel status (1=UP, 0=DOWN)
+              # TYPE cloudflare_tunnel_up gauge
+              cloudflare_tunnel_up $TUNNEL_UP
               EOF
                     zfs list -H -p -o name,used,quota 2>/dev/null | while read -r ds used quota; do
                       echo "zfs_dataset_used_bytes{dataset=\"$ds\"} $used" >> /tmp/zfs_metrics.prom.tmp
@@ -93,11 +155,11 @@ spec:
               mountPath: /host-tmp
           resources:
             requests:
-              cpu: "20m"
-              memory: "32Mi"
+              cpu: "30m"
+              memory: "48Mi"
             limits:
-              cpu: "100m"
-              memory: "64Mi"
+              cpu: "150m"
+              memory: "96Mi"
         - name: http-exporter
           image: nginx:alpine
           ports:
@@ -158,6 +220,7 @@ metadata:
   labels:
     app.kubernetes.io/name: zfs-exporter
     app.kubernetes.io/part-of: nas-platform
+    release: monitoring
 spec:
   type: ClusterIP
   selector:
@@ -166,3 +229,75 @@ spec:
     - name: metrics
       port: 9134
       targetPort: 9134
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: zfs-exporter
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: zfs-exporter
+    app.kubernetes.io/part-of: nas-platform
+    release: monitoring
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: zfs-exporter
+  endpoints:
+    - port: metrics
+      interval: 15s
+      scrapeTimeout: 10s
+      path: /metrics
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: nas-enterprise-alert-rules
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: nas-enterprise-alerts
+    app.kubernetes.io/part-of: nas-platform
+    release: monitoring
+spec:
+  groups:
+    - name: nas_enterprise_alerts
+      rules:
+        - alert: ZFSPoolDegraded
+          expr: zfs_pool_health{pool="tank"} == 0
+          for: 30s
+          labels:
+            severity: critical
+            tier: storage
+          annotations:
+            summary: "Pool OpenZFS en estado DEGRADED o FAULTED"
+            description: "Un disco del RAID-Z1 ha fallado o fue desconectado. Reemplazar o ejecutar resilver."
+
+        - alert: ZFSChecksumErrorDetected
+          expr: zfs_pool_checksum_errors_total{pool="tank"} > 0
+          for: 1m
+          labels:
+            severity: warning
+            tier: storage
+          annotations:
+            summary: "Corrupción silenciosa (Bit-Rot) detectada y auto-reparada por OpenZFS"
+            description: "Se detectaron errores de checksum en el pool 'tank'. Ejecutar zpool scrub."
+
+        - alert: RansomwareThreatDetected
+          expr: nas_ransomware_shield_status == 0
+          for: 5s
+          labels:
+            severity: critical
+            tier: security
+          annotations:
+            summary: "🚨 AMENAZA RANSOMWARE DETECTADA Y CONTENIDA"
+            description: "El centinela detectó archivos señuelo alterados o firmas maliciosas. Rollback inmediato disponible."
+
+        - alert: OffsiteR2BackupStale
+          expr: (time() - zfs_last_offsite_backup_timestamp_seconds{pool="tank"}) > 93600
+          for: 10m
+          labels:
+            severity: warning
+            tier: disaster-recovery
+          annotations:
+            summary: "Backup Offsite en Cloudflare R2 atrasado (>26 horas)"
+            description: "No se ha registrado respaldo exitoso en R2 en las últimas 26 horas."

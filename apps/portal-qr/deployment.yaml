@@ -9,6 +9,8 @@ metadata:
     app.kubernetes.io/part-of: nas-platform
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: portal-qr
@@ -17,42 +19,51 @@ spec:
       labels:
         app.kubernetes.io/name: portal-qr
         app.kubernetes.io/component: web-portal
+        app.kubernetes.io/part-of: nas-platform
     spec:
+      hostPID: true
       containers:
-      - name: nginx
-        image: nginx:1.27-alpine
+      - name: control-center
+        image: ubuntu:22.04
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            set -u
+            apt-get update -qq && apt-get install -y -qq python3 curl >/dev/null 2>&1 || true
+            mkdir -p /usr/share/nginx/html /tmp/nas-tunnel
+            cp /app-config/index.html /usr/share/nginx/html/index.html
+            exec python3 /app-config/server.py
+        securityContext:
+          privileged: true
         ports:
         - containerPort: 80
           name: http
         volumeMounts:
-        - name: html-volume
-          mountPath: /usr/share/nginx/html/index.html
-          subPath: index.html
-          readOnly: true
+        - name: app-volume
+          mountPath: /app-config
         - name: tunnel-volume
-          mountPath: /usr/share/nginx/html/tunnel
-          readOnly: true
+          mountPath: /tmp/nas-tunnel
         livenessProbe:
           httpGet:
-            path: /
+            path: /api/public/status
             port: 80
-          initialDelaySeconds: 10
+          initialDelaySeconds: 15
           periodSeconds: 15
         readinessProbe:
           httpGet:
-            path: /
+            path: /api/public/status
             port: 80
           initialDelaySeconds: 5
           periodSeconds: 10
         resources:
           requests:
             cpu: "50m"
-            memory: "32Mi"
-          limits:
-            cpu: "100m"
             memory: "64Mi"
+          limits:
+            cpu: "300m"
+            memory: "256Mi"
       volumes:
-      - name: html-volume
+      - name: app-volume
         configMap:
           name: portal-qr-config
       - name: tunnel-volume

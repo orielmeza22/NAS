@@ -1,0 +1,133 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ransomware-sentinel
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: ransomware-sentinel
+    app.kubernetes.io/component: security-shield
+    app.kubernetes.io/part-of: nas-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ransomware-sentinel
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ransomware-sentinel
+        app.kubernetes.io/component: security-shield
+        app.kubernetes.io/part-of: nas-platform
+    spec:
+      hostPID: true
+      containers:
+        - name: sentinel
+          image: ubuntu:22.04
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -u
+              echo "[$(date -Iseconds)] Iniciando Centinela Anti-Ransomware 360° para todo el sistema..."
+              mkdir -p /tmp/nas-tunnel /tank-nas/.quarantine
+              echo "1" > /tmp/nas-tunnel/ransomware_status
+              if [ ! -f /tmp/nas-tunnel/ransomware_threats_blocked ]; then
+                echo "0" > /tmp/nas-tunnel/ransomware_threats_blocked
+              fi
+
+              CANARY_PAYLOAD="EnterpriseNAS-Shield-CanaryHoneypot-Protected-$(date +%Y)"
+              TARGET_DIRS="/tank-nas/profesores /tank-nas/alumnos /tank-nas/publico /tank-nas/nextcloud /tank-nas/postgres"
+
+              plant_canaries() {
+                for dir in $TARGET_DIRS; do
+                  if [ -d "$dir" ]; then
+                    canary="$dir/.canary_honeypot.docx"
+                    if [ ! -f "$canary" ]; then
+                      echo "$CANARY_PAYLOAD" > "$canary"
+                      sha256sum "$canary" | awk '{print $1}' > "${canary}.sha256"
+                      chmod 444 "$canary" "${canary}.sha256" 2>/dev/null || true
+                    fi
+                  fi
+                done
+              }
+
+              plant_canaries
+
+              while true; do
+                THREAT_FOUND=0
+                # 1. Verificar integridad de Honeypots
+                for dir in $TARGET_DIRS; do
+                  canary="$dir/.canary_honeypot.docx"
+                  if [ -f "$canary" ] && [ -f "${canary}.sha256" ]; then
+                    CURRENT_HASH=$(sha256sum "$canary" 2>/dev/null | awk '{print $1}' || echo "corrupted")
+                    EXPECTED_HASH=$(cat "${canary}.sha256" 2>/dev/null | awk '{print $1}' || echo "expected")
+                    if [ "$CURRENT_HASH" != "$EXPECTED_HASH" ]; then
+                      THREAT_FOUND=1
+                      echo "[ALERTA SEGURIDAD] Canary alterado en $dir (Posible Ransomware en curso)" >> /tmp/nas-tunnel/ransomware_events.log
+                      # Restaurar Canary
+                      rm -f "$canary" "${canary}.sha256"
+                      plant_canaries
+                    fi
+                  fi
+                done
+
+                # 2. Escaneo en tiempo real de firmas de Ransomware en todo /tank/nas
+                DETECTED_FILES=$(find /tank-nas -maxdepth 4 -type f \( \
+                  -name "*.encrypted" -o -name "*.locked" -o -name "*.crypto" -o \
+                  -name "*.wannacry" -o -name "*.lockbit" -o -name "*.ryuk" -o \
+                  -name "*.akira" -o -name "*.conti" -o -iname "*DECRYPT*" -o \
+                  -iname "*RESTORE_FILES*" \) 2>/dev/null || true)
+
+                if [ -n "$DETECTED_FILES" ]; then
+                  THREAT_FOUND=1
+                  while IFS= read -r badfile; do
+                    if [ -n "$badfile" ]; then
+                      echo "[BLOQUEADO] Amenaza Ransomware detectada: $badfile" >> /tmp/nas-tunnel/ransomware_events.log
+                      mv "$badfile" /tank-nas/.quarantine/ 2>/dev/null || rm -f "$badfile" 2>/dev/null || true
+                      CNT=$(cat /tmp/nas-tunnel/ransomware_threats_blocked 2>/dev/null || echo 0)
+                      echo $((CNT + 1)) > /tmp/nas-tunnel/ransomware_threats_blocked
+                    fi
+                  done <<< "$DETECTED_FILES"
+                fi
+
+                # 3. Actualizar estado del escudo
+                if [ "$THREAT_FOUND" -eq 1 ]; then
+                  echo "0" > /tmp/nas-tunnel/ransomware_status
+                else
+                  echo "1" > /tmp/nas-tunnel/ransomware_status
+                fi
+
+                # 4. Asegurar Inmutabilidad (zfs hold) en snapshots recientes
+                nsenter --target 1 --mount --uts --ipc --net --pid -- sh -c '
+                  zfs list -t snapshot -o name -H 2>/dev/null | tail -n 5 | while read -r snap; do
+                    if ! zfs holds "$snap" 2>/dev/null | grep -q "sentinel-immutable"; then
+                      zfs hold sentinel-immutable "$snap" 2>/dev/null || true
+                    fi
+                  done
+                ' 2>/dev/null || true
+
+                sleep 5
+              done
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: tank-storage
+              mountPath: /tank-nas
+            - name: host-tunnel
+              mountPath: /tmp/nas-tunnel
+          resources:
+            requests:
+              cpu: "30m"
+              memory: "48Mi"
+            limits:
+              cpu: "150m"
+              memory: "128Mi"
+      volumes:
+        - name: tank-storage
+          hostPath:
+            path: /tank/nas
+            type: Directory
+        - name: host-tunnel
+          hostPath:
+            path: /tmp/nas-tunnel
+            type: DirectoryOrCreate
