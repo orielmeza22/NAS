@@ -58,10 +58,10 @@ nextcloud:
     type: postgresql
     host: nextcloud-postgres.default.svc.cluster.local:5432
     database: nextcloud
-    user: nextcloud
     existingSecret:
       enabled: true
       secretName: nextcloud-admin-credentials
+      usernameKey: username
       passwordKey: password
   livenessProbe:
     enabled: true
