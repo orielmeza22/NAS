@@ -385,7 +385,7 @@ class NasApiHandler(BaseHTTPRequestHandler):
         if not user or user == "admin":
             self.send_json({"success": False, "output": "Operacion denegada para la cuenta de administrador root."}, 400)
             return
-        cmd = f'kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c "php /var/www/html/occ user:delete \\"{user}\\"" 2>&1'
+        cmd = f'kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c "php /var/www/html/occ user:delete -n \\"{user}\\"" 2>&1'
         ok, out, err = run_host_cmd(cmd)
         run_host_cmd(f'kubectl exec deployment/samba -- smbpasswd -x \\"{user}\\" 2>/dev/null || true')
         self.send_json({"success": ok, "output": out or err})
