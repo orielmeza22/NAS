@@ -1,0 +1,231 @@
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: nextcloud-postgres-pv
+  labels:
+    app.kubernetes.io/name: nextcloud-postgres
+    app.kubernetes.io/part-of: nas-platform
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: /tank/nas/postgres
+    type: DirectoryOrCreate
+  persistentVolumeReclaimPolicy: Retain
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nextcloud-postgres-pvc
+  namespace: default
+  labels:
+    app.kubernetes.io/name: nextcloud-postgres
+    app.kubernetes.io/part-of: nas-platform
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  volumeName: nextcloud-postgres-pv
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nextcloud-postgres
+  namespace: default
+  labels:
+    app.kubernetes.io/name: nextcloud-postgres
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: nas-platform
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nextcloud-postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nextcloud-postgres
+        app.kubernetes.io/component: database
+        app.kubernetes.io/part-of: nas-platform
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+              name: postgres
+          env:
+            - name: POSTGRES_DB
+              value: "nextcloud"
+            - name: POSTGRES_USER
+              value: "nextcloud"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: nextcloud-admin-credentials
+                  key: password
+            - name: PGDATA
+              value: "/var/lib/postgresql/data/pgdata"
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/data
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -U nextcloud -d nextcloud
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 5
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -U nextcloud -d nextcloud
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+      volumes:
+        - name: pgdata
+          persistentVolumeClaim:
+            claimName: nextcloud-postgres-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nextcloud-postgres
+  namespace: default
+  labels:
+    app.kubernetes.io/name: nextcloud-postgres
+    app.kubernetes.io/part-of: nas-platform
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: nextcloud-postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nextcloud-redis
+  namespace: default
+  labels:
+    app.kubernetes.io/name: nextcloud-redis
+    app.kubernetes.io/component: cache
+    app.kubernetes.io/part-of: nas-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nextcloud-redis
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nextcloud-redis
+        app.kubernetes.io/component: cache
+        app.kubernetes.io/part-of: nas-platform
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          command:
+            - redis-server
+            - --save
+            - ""
+            - --appendonly
+            - "no"
+            - --maxmemory
+            - "128mb"
+            - --maxmemory-policy
+            - "allkeys-lru"
+          ports:
+            - containerPort: 6379
+              name: redis
+          livenessProbe:
+            exec:
+              command:
+                - redis-cli
+                - ping
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 3
+          readinessProbe:
+            exec:
+              command:
+                - redis-cli
+                - ping
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "250m"
+              memory: "160Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nextcloud-redis
+  namespace: default
+  labels:
+    app.kubernetes.io/name: nextcloud-redis
+    app.kubernetes.io/part-of: nas-platform
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: nextcloud-redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: nextcloud-db-redis-netpol
+  namespace: default
+  labels:
+    app.kubernetes.io/name: nextcloud
+    app.kubernetes.io/part-of: nas-platform
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values:
+          - nextcloud-postgres
+          - nextcloud-redis
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: nextcloud
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 6379

@@ -46,24 +46,40 @@ spec:
               export RCLONE_CONFIG_R2_NO_CHECK_BUCKET="true"
 
               BUCKET="${R2_BUCKET_NAME:-nas-backup}"
-              DATE_TAG=$(date +%Y%m%d-%H%M)
-              REMOTE_OBJECT="r2:${BUCKET}/daily/tank-backup-${DATE_TAG}.zfs.enc"
+              DATE_TAG=$(date +%Y%m%d-%H%M%S)
+              DAY_OF_WEEK=$(date +%u)
+              CURR_SNAP="tank/nas@offsite-sync-${DATE_TAG}"
 
-              echo "[INFO] Localizando snapshot más reciente de ZFS..."
-              LATEST_SNAP=$(nsenter --target 1 --mount --uts --ipc --net --pid -- zfs list -t snapshot -o name -H | tail -n 1)
+              echo "[INFO] Localizando snapshot base previo para diferencial incremental..."
+              PREV_SNAP=$(nsenter --target 1 --mount --uts --ipc --net --pid -- \
+                zfs list -t snapshot -o name -s creation -H | grep '^tank/nas@offsite-sync-' | tail -n 1 || true)
 
-              if [ -z "$LATEST_SNAP" ]; then
-                echo "[ERROR] No se encontraron snapshots en el pool de ZFS."
-                exit 1
+              echo "[INFO] Creando punto de corte inmutable: ${CURR_SNAP}..."
+              nsenter --target 1 --mount --uts --ipc --net --pid -- zfs snapshot "$CURR_SNAP"
+
+              if [ "$DAY_OF_WEEK" = "7" ] || [ -z "$PREV_SNAP" ]; then
+                REMOTE_OBJECT="r2:${BUCKET}/weekly/tank-full-${DATE_TAG}.zfs.enc"
+                echo "[INFO] Ejecutando FULL BACKUP SEMANAL: ${CURR_SNAP} -> ${REMOTE_OBJECT}"
+                nsenter --target 1 --mount --uts --ipc --net --pid -- sh -c \
+                  'zfs send -c "$1" | openssl enc -aes-256-cbc -salt -pbkdf2 -pass "pass:$2"' \
+                  -- "$CURR_SNAP" "$BACKUP_ENCRYPTION_KEY" | \
+                  rclone rcat "$REMOTE_OBJECT"
+              else
+                REMOTE_OBJECT="r2:${BUCKET}/incremental/tank-inc-${DATE_TAG}.zfs.enc"
+                echo "[INFO] Ejecutando BACKUP INCREMENTAL DIARIO: ${PREV_SNAP} -> ${CURR_SNAP} (${REMOTE_OBJECT})"
+                nsenter --target 1 --mount --uts --ipc --net --pid -- sh -c \
+                  'zfs send -c -i "$1" "$2" | openssl enc -aes-256-cbc -salt -pbkdf2 -pass "pass:$3"' \
+                  -- "$PREV_SNAP" "$CURR_SNAP" "$BACKUP_ENCRYPTION_KEY" | \
+                  rclone rcat "$REMOTE_OBJECT"
               fi
 
-              echo "[INFO] Streaming y cifrando snapshot al vuelo: $LATEST_SNAP (AES-256-CBC -> R2)..."
+              # Registrar timestamp de último backup exitoso para el exportador Prometheus
               nsenter --target 1 --mount --uts --ipc --net --pid -- sh -c \
-                'zfs send -c "$1" | openssl enc -aes-256-cbc -salt -pbkdf2 -pass "pass:$2"' \
-                -- "$LATEST_SNAP" "$BACKUP_ENCRYPTION_KEY" | \
-                rclone rcat "$REMOTE_OBJECT"
+                'mkdir -p /tmp/nas-tunnel && date +%s > /tmp/nas-tunnel/last_offsite_backup_ts'
 
-              echo "[INFO] Aplicando política de retención: conservando últimos 7 días en Cloudflare R2..."
+              echo "[INFO] Aplicando política de retención GFS (7 días incrementales, 30 días semanales)..."
+              rclone delete --min-age 7d "r2:$BUCKET/incremental/" 2>/dev/null || true
+              rclone delete --min-age 30d "r2:$BUCKET/weekly/" 2>/dev/null || true
               rclone delete --min-age 7d "r2:$BUCKET/daily/" 2>/dev/null || true
 
               echo "============================================================"

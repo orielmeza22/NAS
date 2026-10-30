@@ -1,0 +1,168 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zfs-exporter
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: zfs-exporter
+    app.kubernetes.io/component: observability
+    app.kubernetes.io/part-of: nas-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: zfs-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: zfs-exporter
+        app.kubernetes.io/component: observability
+        app.kubernetes.io/part-of: nas-platform
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9134"
+        prometheus.io/path: "/metrics"
+    spec:
+      hostPID: true
+      containers:
+        - name: collector
+          image: ubuntu@sha256:66460d557b25769b102175144d538d88219c077c678a49af4afca6fbfc1b5252
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -u
+              while true; do
+                nsenter --target 1 --mount --uts --ipc --net --pid -- sh -c '
+                  POOL_LINE=$(zpool list -H -p -o name,size,alloc,free,cap,health tank 2>/dev/null || true)
+                  if [ -n "$POOL_LINE" ]; then
+                    NAME=$(echo "$POOL_LINE" | awk "{print \$1}")
+                    SIZE=$(echo "$POOL_LINE" | awk "{print \$2}")
+                    ALLOC=$(echo "$POOL_LINE" | awk "{print \$3}")
+                    FREE=$(echo "$POOL_LINE" | awk "{print \$4}")
+                    CAP=$(echo "$POOL_LINE" | awk "{print \$5}")
+                    HEALTH_STR=$(echo "$POOL_LINE" | awk "{print \$6}")
+                    if [ "$HEALTH_STR" = "ONLINE" ]; then HEALTH=1; else HEALTH=0; fi
+                    CKSUM_ERR=$(zpool status tank | awk "/raidz1/ {print \$5}" | head -n 1)
+                    CKSUM_ERR=${CKSUM_ERR:-0}
+                    LAST_BKP=0
+                    if [ -f /tmp/nas-tunnel/last_offsite_backup_ts ]; then
+                      LAST_BKP=$(cat /tmp/nas-tunnel/last_offsite_backup_ts | tr -d "[:space:]")
+                    fi
+                    cat <<EOF > /tmp/zfs_metrics.prom.tmp
+              # HELP zfs_pool_health ZFS pool health status (1=ONLINE, 0=DEGRADED/FAULTED)
+              # TYPE zfs_pool_health gauge
+              zfs_pool_health{pool="$NAME"} $HEALTH
+              # HELP zfs_pool_size_bytes Total size of ZFS pool in bytes
+              # TYPE zfs_pool_size_bytes gauge
+              zfs_pool_size_bytes{pool="$NAME"} $SIZE
+              # HELP zfs_pool_allocated_bytes Allocated bytes in ZFS pool
+              # TYPE zfs_pool_allocated_bytes gauge
+              zfs_pool_allocated_bytes{pool="$NAME"} $ALLOC
+              # HELP zfs_pool_free_bytes Free bytes in ZFS pool
+              # TYPE zfs_pool_free_bytes gauge
+              zfs_pool_free_bytes{pool="$NAME"} $FREE
+              # HELP zfs_pool_capacity_percent Capacity used percentage of ZFS pool
+              # TYPE zfs_pool_capacity_percent gauge
+              zfs_pool_capacity_percent{pool="$NAME"} $CAP
+              # HELP zfs_pool_checksum_errors_total Total checksum errors detected on ZFS pool
+              # TYPE zfs_pool_checksum_errors_total counter
+              zfs_pool_checksum_errors_total{pool="$NAME"} $CKSUM_ERR
+              # HELP zfs_last_offsite_backup_timestamp_seconds Unix timestamp of last successful R2 offsite backup
+              # TYPE zfs_last_offsite_backup_timestamp_seconds gauge
+              zfs_last_offsite_backup_timestamp_seconds{pool="$NAME"} ${LAST_BKP:-0}
+              EOF
+                    zfs list -H -p -o name,used,quota 2>/dev/null | while read -r ds used quota; do
+                      echo "zfs_dataset_used_bytes{dataset=\"$ds\"} $used" >> /tmp/zfs_metrics.prom.tmp
+                      echo "zfs_dataset_quota_bytes{dataset=\"$ds\"} $quota" >> /tmp/zfs_metrics.prom.tmp
+                    done
+                  fi
+                '
+                if [ -f /host-tmp/zfs_metrics.prom.tmp ]; then
+                  cp /host-tmp/zfs_metrics.prom.tmp /metrics-dir/metrics
+                fi
+                sleep 15
+              done
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: metrics-dir
+              mountPath: /metrics-dir
+            - name: host-tmp
+              mountPath: /host-tmp
+          resources:
+            requests:
+              cpu: "20m"
+              memory: "32Mi"
+            limits:
+              cpu: "100m"
+              memory: "64Mi"
+        - name: http-exporter
+          image: nginx:alpine
+          ports:
+            - containerPort: 9134
+              name: metrics
+          command:
+            - /bin/sh
+            - -c
+            - |
+              cat <<'EOF' > /etc/nginx/conf.d/default.conf
+              server {
+                listen 9134;
+                default_type text/plain;
+                location /metrics {
+                  alias /usr/share/nginx/html/metrics;
+                }
+                location /healthz {
+                  return 200 "ok\n";
+                }
+              }
+              EOF
+              touch /usr/share/nginx/html/metrics
+              exec nginx -g "daemon off;"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9134
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 9134
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          volumeMounts:
+            - name: metrics-dir
+              mountPath: /usr/share/nginx/html
+          resources:
+            requests:
+              cpu: "20m"
+              memory: "32Mi"
+            limits:
+              cpu: "100m"
+              memory: "64Mi"
+      volumes:
+        - name: metrics-dir
+          emptyDir: {}
+        - name: host-tmp
+          hostPath:
+            path: /tmp
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zfs-exporter
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: zfs-exporter
+    app.kubernetes.io/part-of: nas-platform
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: zfs-exporter
+  ports:
+    - name: metrics
+      port: 9134
+      targetPort: 9134

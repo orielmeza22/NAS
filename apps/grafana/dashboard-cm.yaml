@@ -1,3 +1,4 @@
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -114,6 +115,81 @@ data:
               "legendFormat": "Escritura {{device}}"
             }
           ]
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "mappings": [
+                {
+                  "options": {
+                    "0": { "color": "red", "index": 1, "text": "DEGRADED / FAULTED" },
+                    "1": { "color": "green", "index": 0, "text": "ONLINE (RAID-Z1 OK)" }
+                  },
+                  "type": "value"
+                }
+              ],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red", "value": null },
+                  { "color": "green", "value": 1 }
+                ]
+              }
+            }
+          },
+          "gridPos": { "h": 6, "w": 8, "x": 0, "y": 16 },
+          "id": 6,
+          "title": "Estado de Salud Pool OpenZFS (tank)",
+          "type": "stat",
+          "targets": [
+            {
+              "expr": "zfs_pool_health{pool=\"tank\"}",
+              "legendFormat": "Pool {{pool}}"
+            }
+          ]
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "red", "value": 1 }
+                ]
+              }
+            }
+          },
+          "gridPos": { "h": 6, "w": 8, "x": 8, "y": 16 },
+          "id": 7,
+          "title": "Errores de Checksum ZFS (Bit-Rot Detectado)",
+          "type": "stat",
+          "targets": [
+            {
+              "expr": "zfs_pool_checksum_errors_total{pool=\"tank\"}",
+              "legendFormat": "Errores CKSUM"
+            }
+          ]
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes"
+            }
+          },
+          "gridPos": { "h": 6, "w": 8, "x": 16, "y": 16 },
+          "id": 8,
+          "title": "Uso por Dataset y Cuotas Departamentales",
+          "type": "bargauge",
+          "targets": [
+            {
+              "expr": "zfs_dataset_used_bytes",
+              "legendFormat": "{{dataset}}"
+            }
+          ]
         }
       ],
       "refresh": "10s",
@@ -125,5 +201,5 @@ data:
       "timezone": "browser",
       "title": "Enterprise NAS Overview",
       "uid": "nas-platform-overview",
-      "version": 1
+      "version": 2
     }

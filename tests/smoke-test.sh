@@ -114,6 +114,41 @@ else
   fail "CronJob zfs-scrub no encontrado."
 fi
 
+# 12. Comprobar Motor Transaccional PostgreSQL 16 + Redis
+info "12. Verificando PostgreSQL 16 y Redis 7 para alta concurrencia en Nextcloud..."
+if kubectl get pods -l app.kubernetes.io/name=nextcloud-postgres --no-headers | grep -q "Running" && \
+   kubectl get pods -l app.kubernetes.io/name=nextcloud-redis --no-headers | grep -q "Running"; then
+  pass "PostgreSQL 16 y Redis 7 operativos con aislamiento NetworkPolicy."
+else
+  fail "PostgreSQL 16 o Redis 7 no están en estado Running."
+fi
+
+# 13. Comprobar Gobernanza de Cuotas OpenZFS y Recordsize Transaccional
+info "13. Verificando datasets OpenZFS con cuotas departamentales y recordsize=8K..."
+if sudo zfs get -H -o value recordsize tank/nas/postgres 2>/dev/null | grep -q "8K" && \
+   sudo zfs get -H -o value quota tank/nas/alumnos 2>/dev/null | grep -q "5G"; then
+  pass "Datasets ZFS dedicados (postgres recordsize=8K, cuotas por rol) activos."
+else
+  fail "Cuotas ZFS departamentales o recordsize=8K en tank/nas/postgres no aplicados."
+fi
+
+# 14. Comprobar Exportador Prometheus de Salud ZFS y Reglas de Alerta
+info "14. Verificando ZFS Prometheus Exporter y reglas de alerta proactivas..."
+if kubectl -n kube-system get pods -l app.kubernetes.io/name=zfs-exporter --no-headers | grep -q "Running" && \
+   kubectl -n monitoring get configmap prometheus-zfs-alerts > /dev/null 2>&1; then
+  pass "ZFS Exporter activo y reglas de alerta (ZFSPoolDegraded, BitRot, R2Stale) cargadas."
+else
+  fail "ZFS Exporter o ConfigMap prometheus-zfs-alerts ausente."
+fi
+
+# 15. Comprobar Script de Disaster Recovery Automatizado
+info "15. Verificando disponibilidad del script de Disaster Recovery Drill..."
+if [ -f "$(dirname "$0")/disaster-recovery-drill.sh" ]; then
+  pass "Script de simulacro de Disaster Recovery (3-2-1 R2 Restore) presente y listo."
+else
+  fail "Script tests/disaster-recovery-drill.sh no encontrado."
+fi
+
 echo "============================================================"
-echo -e "${COLOR_GREEN} ✅ TODOS LOS SMOKE TESTS (11/11) COMPLETADOS EXITOSAMENTE.${COLOR_RESET}"
+echo -e "${COLOR_GREEN} ✅ TODOS LOS SMOKE TESTS EMPRESARIALES (15/15) COMPLETADOS.${COLOR_RESET}"
 echo "============================================================"

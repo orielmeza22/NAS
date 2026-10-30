@@ -1,0 +1,83 @@
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: zfs-quotas-enforcer
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: zfs-quotas-enforcer
+    app.kubernetes.io/component: storage-governance
+    app.kubernetes.io/part-of: nas-platform
+spec:
+  schedule: "0 */6 * * *"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: zfs-quotas-enforcer
+        spec:
+          hostPID: true
+          containers:
+            - name: zfs-governance
+              image: ubuntu@sha256:66460d557b25769b102175144d538d88219c077c678a49af4afca6fbfc1b5252
+              command:
+                - nsenter
+                - --target
+                - "1"
+                - --mount
+                - --uts
+                - --ipc
+                - --net
+                - --pid
+                - --
+                - sh
+                - -c
+                - |
+                  set -eu
+                  echo "[INFO] Aplicando gobernanza empresarial de datasets y cuotas OpenZFS..."
+
+                  ensure_dataset_with_quota() {
+                    ds="$1"
+                    mnt="/$1"
+                    quota_val="$2"
+                    rec_size="${3:-128K}"
+                    if ! zfs list -H "$ds" >/dev/null 2>&1; then
+                      echo "[INFO] Migrando directorio $mnt a dataset ZFS dedicado $ds..."
+                      if [ -d "$mnt" ]; then
+                        rm -rf "${mnt}.mig"
+                        mv "$mnt" "${mnt}.mig"
+                      fi
+                      zfs create -o compression=lz4 -o atime=off -o acltype=posixacl -o xattr=sa -o "recordsize=${rec_size}" -o "quota=${quota_val}" "$ds"
+                      if [ -d "${mnt}.mig" ]; then
+                        cp -a "${mnt}.mig/." "$mnt/"
+                        rm -rf "${mnt}.mig"
+                      fi
+                    else
+                      zfs set "quota=${quota_val}" "recordsize=${rec_size}" compression=lz4 atime=off "$ds"
+                    fi
+                  }
+
+                  # 1. Dataset transaccional para PostgreSQL 16 (páginas de 8K)
+                  ensure_dataset_with_quota "tank/nas/postgres" "10G" "8K"
+                  zfs set logbias=latency "tank/nas/postgres"
+
+                  # 2. Cuotas departamentales para evitar agotamiento de pool (DoS por disco lleno)
+                  ensure_dataset_with_quota "tank/nas/profesores" "10G" "128K"
+                  ensure_dataset_with_quota "tank/nas/alumnos" "5G" "128K"
+                  ensure_dataset_with_quota "tank/nas/publico" "5G" "128K"
+
+                  echo "[PASS] Cuotas y optimizaciones ZFS aplicadas:"
+                  zfs get -o name,property,value quota,recordsize,compression tank/nas/postgres tank/nas/profesores tank/nas/alumnos tank/nas/publico
+              securityContext:
+                privileged: true
+              resources:
+                requests:
+                  cpu: "50m"
+                  memory: "32Mi"
+                limits:
+                  cpu: "200m"
+                  memory: "128Mi"
+          restartPolicy: OnFailure
