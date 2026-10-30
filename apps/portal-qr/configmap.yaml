@@ -493,10 +493,11 @@ data:
             if is_up.strip() == "1":
                 run_host_cmd("pkill -9 cloudflared 2>/dev/null || true")
                 run_host_cmd("rm -f /tmp/nas-tunnel/url.txt")
-                self.send_json({"status": "offline", "message": "Modo Solo LAN activado (Túnel cerrado)."})
+                self.send_json({"status": "offline", "message": "Modo Solo LAN activado. El acceso desde internet ha sido cerrado."})
             else:
-                run_host_cmd("nohup cloudflared tunnel --url http://localhost:8082 > /dev/null 2>&1 &")
-                self.send_json({"status": "online", "message": "Túnel Cloudflare WAN activado."})
+                run_host_cmd("/home/oriel/Escritorio/iniciar-nas.sh >/dev/null 2>&1 &")
+                time.sleep(3)
+                self.send_json({"status": "online", "message": "Túnel Cloudflare iniciado. El NAS vuelve a estar Online desde internet."})
     
         def handle_wan_rotate(self):
             cmd = "/home/oriel/Escritorio/iniciar-nas.sh 2>&1 || true"
@@ -631,8 +632,8 @@ data:
           <span id="raid-badge" class="status-badge badge-online"><span class="pulse-dot"></span> RAID-Z1 ONLINE</span>
         </div>
         <div class="header-actions">
-          <button class="btn btn-outline" id="btn-killswitch" onclick="toggleLanOnly()" title="Aísla el NAS cortando la salida pública a internet">
-            🌐 Modo Solo LAN
+          <button class="btn btn-outline" id="btn-killswitch" onclick="toggleLanOnly()" title="Control de salida a internet del NAS">
+            🛑 Pausar Internet (Modo Solo LAN)
           </button>
           <button class="btn btn-outline" onclick="rotateTunnel()" title="Genera un enlace público nuevo de Cloudflare en 5 segundos">
             🔄 Rotar Link WAN
@@ -1081,11 +1082,25 @@ data:
               badge.className = 'status-badge badge-degraded';
               badge.innerHTML = '<span class="pulse-dot"></span> RAID-Z1 ' + data.raid_health;
             }
-            if (data.tunnel_url) {
+    
+            const ksBtn = document.getElementById('btn-killswitch');
+            if (data.tunnel_url && data.tunnel_url.startsWith('http')) {
+              ksBtn.innerHTML = '🛑 Pausar Internet (Modo Solo LAN)';
+              ksBtn.className = 'btn btn-outline';
+              ksBtn.style.background = '';
+              ksBtn.title = 'Haz clic para cortar la salida a internet y dejar el NAS operando exclusivamente en la red local de la escuela.';
               document.getElementById('public-qr').src = 'https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=' + encodeURIComponent(data.tunnel_url);
               const link = document.getElementById('public-link');
               link.href = data.tunnel_url;
               link.textContent = data.tunnel_url;
+            } else {
+              ksBtn.innerHTML = '🌐 Poner Online (Habilitar Internet)';
+              ksBtn.className = 'btn';
+              ksBtn.style.background = '#10b981';
+              ksBtn.title = 'Haz clic para reconectar el túnel de Cloudflare y permitir el acceso de alumnos y profesores desde internet.';
+              const link = document.getElementById('public-link');
+              link.href = '#';
+              link.textContent = '🔒 Internet Pausado (Operando en Modo Solo LAN)';
             }
           } catch (e) { console.error(e); }
         }
@@ -1392,15 +1407,25 @@ data:
         }
     
         async function toggleLanOnly() {
-          const res = await apiFetch('/api/wan/toggle-lan', 'POST', {});
-          alert(res.message);
-          loadPublicStatus();
+          const ksBtn = document.getElementById('btn-killswitch');
+          const isOnline = ksBtn.innerHTML.includes('Pausar');
+          const promptMsg = isOnline
+            ? '⚠️ ¿Deseas pausar el acceso a internet (Modo Solo LAN)?\nEl túnel público de Cloudflare se cerrará y solo se podrá acceder desde computadoras conectadas a la red local de la escuela.'
+            : '🌐 ¿Deseas volver a poner el NAS Online en internet?\nSe reactivará el túnel seguro de Cloudflare para acceso externo.';
+          if (confirm(promptMsg)) {
+            ksBtn.textContent = '⏳ Procesando...';
+            const res = await apiFetch('/api/wan/toggle-lan', 'POST', {});
+            if (res && res.message) alert(res.message);
+            setTimeout(loadPublicStatus, 3000);
+          }
         }
     
         async function rotateTunnel() {
-          alert('Generando nuevo enlace WAN Zero-Trust en Cloudflare...');
-          await apiFetch('/api/wan/rotate-tunnel', 'POST', {});
-          loadPublicStatus();
+          if (confirm('🔄 ¿Deseas rotar el enlace público de Cloudflare?\nSe generará una dirección web nueva en 5 segundos y se actualizará automáticamente en Nextcloud y en el código QR.')) {
+            alert('Generando nuevo enlace WAN Zero-Trust en Cloudflare...');
+            await apiFetch('/api/wan/rotate-tunnel', 'POST', {});
+            setTimeout(loadPublicStatus, 4000);
+          }
         }
     
         async function flushArc() {

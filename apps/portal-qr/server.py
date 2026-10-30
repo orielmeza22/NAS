@@ -483,10 +483,11 @@ class NasApiHandler(BaseHTTPRequestHandler):
         if is_up.strip() == "1":
             run_host_cmd("pkill -9 cloudflared 2>/dev/null || true")
             run_host_cmd("rm -f /tmp/nas-tunnel/url.txt")
-            self.send_json({"status": "offline", "message": "Modo Solo LAN activado (Túnel cerrado)."})
+            self.send_json({"status": "offline", "message": "Modo Solo LAN activado. El acceso desde internet ha sido cerrado."})
         else:
-            run_host_cmd("nohup cloudflared tunnel --url http://localhost:8082 > /dev/null 2>&1 &")
-            self.send_json({"status": "online", "message": "Túnel Cloudflare WAN activado."})
+            run_host_cmd("/home/oriel/Escritorio/iniciar-nas.sh >/dev/null 2>&1 &")
+            time.sleep(3)
+            self.send_json({"status": "online", "message": "Túnel Cloudflare iniciado. El NAS vuelve a estar Online desde internet."})
 
     def handle_wan_rotate(self):
         cmd = "/home/oriel/Escritorio/iniciar-nas.sh 2>&1 || true"
