@@ -635,7 +635,7 @@ echo Servidor NAS: \!SERVER_HOST!
 echo.
 echo Seleccione el recurso al que desea conectarse:
 echo.
-echo   [1] Carpeta de ALUMNOS       - Montar en unidad Z: (\!SERVER_HOST!lumnos)
+echo   [1] Carpeta de ALUMNOS       - Montar en unidad Z: (\!SERVER_HOST!\alumnos)
 echo   [2] Carpeta de PROFESORES    - Montar en unidad P: (\!SERVER_HOST!\profesores)
 echo   [3] Carpeta PUBLICA          - Montar en unidad X: (\!SERVER_HOST!\publico)
 echo   [4] Cambiar direccion IP del servidor NAS
