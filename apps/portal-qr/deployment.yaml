@@ -24,12 +24,12 @@ spec:
       hostPID: true
       containers:
       - name: control-center
-        image: ubuntu:22.04
-        command: ["/bin/bash", "-c"]
+        image: python:3.11-alpine
+        command: ["/bin/sh", "-c"]
         args:
           - |
             set -u
-            apt-get update -qq && apt-get install -y -qq python3 curl >/dev/null 2>&1 || true
+            apk add --no-cache util-linux bash curl >/dev/null 2>&1 || true
             mkdir -p /usr/share/nginx/html /tmp/nas-tunnel
             cp /app-config/index.html /usr/share/nginx/html/index.html
             exec python3 /app-config/server.py
@@ -43,25 +43,32 @@ spec:
           mountPath: /app-config
         - name: tunnel-volume
           mountPath: /tmp/nas-tunnel
+        startupProbe:
+          httpGet:
+            path: /api/public/status
+            port: 80
+          initialDelaySeconds: 2
+          periodSeconds: 2
+          failureThreshold: 30
         livenessProbe:
           httpGet:
             path: /api/public/status
             port: 80
-          initialDelaySeconds: 15
+          initialDelaySeconds: 5
           periodSeconds: 15
         readinessProbe:
           httpGet:
             path: /api/public/status
             port: 80
-          initialDelaySeconds: 5
+          initialDelaySeconds: 2
           periodSeconds: 10
         resources:
           requests:
-            cpu: "50m"
-            memory: "64Mi"
+            cpu: "30m"
+            memory: "48Mi"
           limits:
-            cpu: "300m"
-            memory: "256Mi"
+            cpu: "250m"
+            memory: "192Mi"
       volumes:
       - name: app-volume
         configMap:
