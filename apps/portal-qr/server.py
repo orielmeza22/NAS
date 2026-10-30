@@ -103,6 +103,10 @@ class NasApiHandler(BaseHTTPRequestHandler):
             self.handle_wan_status()
         elif path == "/api/reports/executive":
             self.handle_executive_report()
+        elif path == "/api/samba/status":
+            self.handle_samba_status()
+        elif path == "/api/samba/connector":
+            self.serve_samba_connector()
         else:
             self.send_json({"error": "Not Found"}, 404)
 
@@ -175,6 +179,10 @@ class NasApiHandler(BaseHTTPRequestHandler):
             self.handle_wan_toggle()
         elif path == "/api/wan/rotate-tunnel":
             self.handle_wan_rotate()
+        elif path == "/api/samba/quota":
+            self.handle_samba_quota(body)
+        elif path == "/api/samba/restart":
+            self.handle_samba_restart()
         elif path == "/api/system/reboot":
             self.send_json({"success": True, "message": "Reiniciando servidor..."})
             run_host_cmd("sync && reboot")
@@ -519,6 +527,219 @@ class NasApiHandler(BaseHTTPRequestHandler):
         _, users, _ = run_host_cmd("kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c 'php /var/www/html/occ user:list' 2>/dev/null || true")
         report = f"# REPORTE EJECUTIVO DE SALUD Y AUDITORIA NAS\nFecha: {time.ctime()}\n\n## 1. ESTADO DE RAID-Z1\n{pool}\n\n## 2. BACKUPS Y SNAPSHOTS\n{snaps}\n\n## 3. USUARIOS ACTIVOS\n{users}\n"
         self.send_json({"report": report})
+
+    def handle_samba_status(self):
+        # 1. Pod & Daemon Status
+        _, pod_st, _ = run_host_cmd("kubectl get pod -l app.kubernetes.io/name=samba -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo 'Unknown'")
+        _, version_st, _ = run_host_cmd("kubectl exec deployment/samba -- smbd -V 2>/dev/null || echo 'Version 4.12'")
+        
+        # 2. ZFS Shares & Quotas
+        shares = [
+            {"id": "profesores", "name": "[profesores]", "dataset": "tank/nas/profesores", "access": "Solo Docentes / Directivos"},
+            {"id": "alumnos", "name": "[alumnos]", "dataset": "tank/nas/alumnos", "access": "Estudiantes y Laboratorio"},
+            {"id": "publico", "name": "[publico]", "dataset": "tank/nas/publico", "access": "Acceso General Institucional"},
+            {"id": "nextcloud", "name": "[nextcloud]", "dataset": "tank/nas/nextcloud", "access": "Almacenamiento Cloud / Web"}
+        ]
+        shares_data = []
+        for s in shares:
+            _, zout, _ = run_host_cmd(f"zfs list -H -o used,available,quota,recordsize {s['dataset']} 2>/dev/null || echo '0 0 none 128K'")
+            p = zout.strip().split()
+            used = p[0] if len(p) > 0 else "0"
+            avail = p[1] if len(p) > 1 else "0"
+            quota = p[2] if len(p) > 2 else "none"
+            rec = p[3] if len(p) > 3 else "128K"
+            shares_data.append({
+                "id": s["id"],
+                "name": s["name"],
+                "dataset": s["dataset"],
+                "used": used,
+                "avail": avail,
+                "quota": quota,
+                "recordsize": rec,
+                "access": s["access"]
+            })
+
+        # 3. Active Sessions (smbstatus)
+        _, smb_out, _ = run_host_cmd("kubectl exec deployment/samba -- smbstatus -b 2>/dev/null || true")
+        sessions = []
+        capture = False
+        for line in smb_out.splitlines():
+            line = line.strip()
+            if "PID" in line and "Username" in line:
+                capture = True
+                continue
+            if capture and line.startswith("---"):
+                continue
+            if capture and line:
+                parts = line.split()
+                if len(parts) >= 4:
+                    sessions.append({
+                        "pid": parts[0],
+                        "user": parts[1],
+                        "group": parts[2],
+                        "machine": parts[3],
+                        "proto": parts[4] if len(parts) > 4 else "SMB3"
+                    })
+
+        # 4. Registered Samba Users (pdbedit)
+        _, pdb_out, _ = run_host_cmd("kubectl exec deployment/samba -- pdbedit -L 2>/dev/null || true")
+        samba_users = []
+        for line in pdb_out.splitlines():
+            if ":" in line:
+                samba_users.append(line.split(":")[0])
+
+        self.send_json({
+            "status": pod_st.strip(),
+            "version": version_st.strip(),
+            "shares": shares_data,
+            "sessions": sessions,
+            "users": samba_users,
+            "features": {
+                "recycle_bin": "vfs_recycle (Activo)",
+                "anti_ransomware": "Veto Files (*.locked, *.crypto, *.wannacry)",
+                "apple_compat": "vfs_fruit (macOS nativo)"
+            }
+        })
+
+    def handle_samba_quota(self, body):
+        share = body.get("share", "").strip()
+        quota = body.get("quota", "").strip()
+        if not share or not quota:
+            self.send_json({"success": False, "output": "Parametros share o quota invalidos."}, 400)
+            return
+        dataset = f"tank/nas/{share}"
+        ok, out, err = run_host_cmd(f"zfs set quota={quota} {dataset}")
+        self.send_json({"success": ok, "output": out or err})
+
+    def handle_samba_restart(self):
+        ok, out, err = run_host_cmd("kubectl rollout restart deployment/samba")
+        self.send_json({"success": ok, "output": out or err})
+
+    def serve_samba_connector(self):
+        bat_content = r"""@echo off
+setlocal enabledelayedexpansion
+title Conector de Unidades de Red - Enterprise NAS
+chcp 65001 >nul
+color 1F
+
+:: Obtener IP del servidor o usar predeterminada de red
+set "SERVER_HOST=192.168.1.50"
+if "%~1" neq "" set "SERVER_HOST=%~1"
+
+:MENU
+cls
+echo ==============================================================================
+echo       CONECTOR DE UNIDADES DE RED ESCOLAR (SAMBA / SMB)
+echo ==============================================================================
+echo Servidor NAS: \!SERVER_HOST!
+echo.
+echo Seleccione el recurso al que desea conectarse:
+echo.
+echo   [1] Carpeta de ALUMNOS       - Montar en unidad Z: (\!SERVER_HOST!lumnos)
+echo   [2] Carpeta de PROFESORES    - Montar en unidad P: (\!SERVER_HOST!\profesores)
+echo   [3] Carpeta PUBLICA          - Montar en unidad X: (\!SERVER_HOST!\publico)
+echo   [4] Cambiar direccion IP del servidor NAS
+echo   [5] Desconectar todas las unidades de red del NAS
+echo   [6] Salir
+echo.
+set /p OPCION="Ingrese una opcion (1-6) y presione Enter: "
+
+if "!OPCION!"=="1" goto CONECTAR_ALUMNOS
+if "!OPCION!"=="2" goto CONECTAR_PROFESORES
+if "!OPCION!"=="3" goto CONECTAR_PUBLICO
+if "!OPCION!"=="4" goto CAMBIAR_IP
+if "!OPCION!"=="5" goto DESCONECTAR
+if "!OPCION!"=="6" exit /b 0
+goto MENU
+
+:CAMBIAR_IP
+cls
+echo ==============================================================================
+echo CONFIGURAR DIRECCION IP DEL SERVIDOR
+echo ==============================================================================
+echo.
+echo Ingrese la direccion IP del servidor NAS:
+set /p SERVER_HOST="Direccion IP: "
+goto MENU
+
+:CONECTAR_ALUMNOS
+set "DRIVE=Z:"
+set "SHARE=alumnos"
+goto PEDIR_CREDENCIALES
+
+:CONECTAR_PROFESORES
+set "DRIVE=P:"
+set "SHARE=profesores"
+goto PEDIR_CREDENCIALES
+
+:CONECTAR_PUBLICO
+set "DRIVE=X:"
+set "SHARE=publico"
+goto PEDIR_CREDENCIALES
+
+:PEDIR_CREDENCIALES
+cls
+echo ==============================================================================
+echo CONECTANDO A RECURSO: \!SERVER_HOST!\!SHARE! EN UNIDAD !DRIVE!
+echo ==============================================================================
+echo.
+echo Ingrese sus credenciales de la institucion:
+echo.
+set /p NAS_USER="Usuario: "
+if "!NAS_USER!"=="" (
+    echo [ERROR] El usuario no puede estar vacio.
+    pause
+    goto MENU
+)
+
+set /p NAS_PASS="Contraseña: "
+if "!NAS_PASS!"=="" (
+    echo [ERROR] La contrasena no puede estar vacia.
+    pause
+    goto MENU
+)
+
+echo.
+echo Conectando... por favor espere...
+net use !DRIVE! /delete /yes >nul 2>&1
+net use !DRIVE! "\!SERVER_HOST!\!SHARE!" /user:"!NAS_USER!" "!NAS_PASS!" /persistent:yes >nul 2>&1
+
+if !errorlevel! equ 0 (
+    echo.
+    echo ==============================================================================
+    echo [EXITO] Unidad !DRIVE! conectada correctamente a \!SERVER_HOST!\!SHARE!
+    echo La carpeta ya se encuentra disponible en 'Este equipo'.
+    echo ==============================================================================
+    echo.
+    start "" !DRIVE!
+) else (
+    echo.
+    echo ==============================================================================
+    echo [FALLO DE CONEXION]
+    echo Verifique que el usuario y contrasena sean correctos y que la IP sea accesible.
+    echo ==============================================================================
+)
+echo.
+pause
+goto MENU
+
+:DESCONECTAR
+cls
+echo Desconectando unidades Z:, P:, X:...
+net use Z: /delete /yes >nul 2>&1
+net use P: /delete /yes >nul 2>&1
+net use X: /delete /yes >nul 2>&1
+echo [OK] Unidades desconectadas del sistema.
+pause
+goto MENU
+"""
+        payload = bat_content.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-bat; charset=utf-8")
+        self.send_header("Content-Disposition", 'attachment; filename="Conectar-Unidad-NAS.bat"')
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
 
 if __name__ == "__main__":
     server = HTTPServer(("0.0.0.0", PORT), NasApiHandler)

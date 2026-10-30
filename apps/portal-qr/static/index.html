@@ -147,6 +147,7 @@
         <button class="tab-item" onclick="navigateTab('storage')">Almacenamiento (ZFS RAID)</button>
         <button class="tab-item" onclick="navigateTab('backups')">Copias de Seguridad (R2)</button>
         <button class="tab-item" onclick="navigateTab('identity')">Identidad y Accesos</button>
+        <button class="tab-item" onclick="navigateTab('samba')">Servicio SMB (Samba)</button>
         <button class="tab-item" onclick="navigateTab('filesystem')">Sistema de Archivos</button>
         <button class="tab-item" onclick="navigateTab('security')">Seguridad y Resiliencia</button>
         <button class="tab-item" onclick="navigateTab('services')">Subsistemas K3s</button>
@@ -377,6 +378,100 @@
             </thead>
             <tbody id="identity-users-table">
               <tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:16px;">Cargando directorio de cuentas...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 4B. SERVICIO SMB (SAMBA) -->
+      <div id="tab-samba" class="tab-content" style="display:none;">
+        <div class="module-header">
+          <div>
+            <h2>Servicio de Archivos de Red Local (Samba / SMB)</h2>
+            <p>Recursos compartidos LAN, gobernanza de cuotas ZFS en tiempo real, auditoría de sesiones activas y conectores automáticos.</p>
+          </div>
+          <span class="module-tag" id="smb-pod-badge">Protocolo: SMB2 / SMB3</span>
+        </div>
+
+        <div class="metrics-grid">
+          <div class="panel">
+            <div class="panel-title">Estado del Microservicio SMB</div>
+            <div class="metric-value font-mono" id="smb-status-val">ACTIVO</div>
+            <div class="panel-hint" id="smb-version-val">Samba v4.12.2 (Daemon smbd/nmbd)</div>
+          </div>
+          <div class="panel">
+            <div class="panel-title">Extensiones y Seguridad VFS</div>
+            <div style="font-size:12px; margin-top:6px; color:var(--text-main); font-weight:600;">vfs_recycle + Veto Files</div>
+            <div class="panel-hint">Papelera de red y bloqueo de extensiones maliciosas.</div>
+          </div>
+          <div class="panel">
+            <div class="panel-title">Sesiones de Red Conectadas</div>
+            <div class="metric-value font-mono" id="smb-sessions-val">0</div>
+            <div class="panel-hint">Clientes SMB autenticados en tiempo real.</div>
+          </div>
+          <div class="panel">
+            <div class="panel-title">Mantenimiento de Red</div>
+            <div class="panel-hint">Reinicia el daemon de Samba aplicando cambios de configuración.</div>
+            <button class="btn btn-sm btn-primary" style="margin-top:8px; width:100%;" onclick="dispatchRestartSamba()">Reiniciar Servicio SMB</button>
+          </div>
+        </div>
+
+        <div class="panel" style="margin-bottom:16px;">
+          <div class="panel-title">Conector de Disco de Red para Alumnos y Docentes (Cero Comandos)</div>
+          <p style="font-size:12px; color:var(--text-muted); margin-top:4px; margin-bottom:12px;">
+            Permite a los usuarios acceder al almacenamiento escolar sin necesidad de conocimientos técnicos. Al descargar y ejecutar el archivo para Windows, se abre un asistente gráfico que solicita las credenciales y monta instantáneamente la unidad fija (<code style="color:#60a5fa;">Z:\ Alumnos</code> o <code style="color:#60a5fa;">P:\ Profesores</code>) en 'Este equipo'.
+          </p>
+          <div style="display:flex; gap:10px; flex-wrap:wrap;">
+            <button class="btn btn-primary" onclick="dispatchDownloadConnector()">
+              Descargar Conector de Red (.bat) para Windows
+            </button>
+            <button class="btn" onclick="toggleUncInfo()">
+              Ver Rutas UNC para Conexión Manual
+            </button>
+          </div>
+          <div id="smb-unc-box" style="display:none; margin-top:12px; padding:12px; background:var(--bg-base); border:1px solid var(--border-subtle); border-radius:4px; font-family:var(--font-mono); font-size:12px;">
+            <div><strong>Ruta Alumnos:</strong> \\&lt;IP-DEL-NAS&gt;\alumnos &nbsp;(Unidad Z:)</div>
+            <div style="margin-top:4px;"><strong>Ruta Profesores:</strong> \\&lt;IP-DEL-NAS&gt;\profesores &nbsp;(Unidad P:)</div>
+            <div style="margin-top:4px;"><strong>Ruta Pública:</strong> \\&lt;IP-DEL-NAS&gt;\publico &nbsp;(Unidad X:)</div>
+          </div>
+        </div>
+
+        <div class="panel" style="margin-bottom:16px;">
+          <div class="panel-title">Gobernanza de Recursos Compartidos y Cuotas OpenZFS</div>
+          <div class="panel-hint" style="margin-bottom:8px;">Control de límites de almacenamiento en disco asignados a cada departamento institucional.</div>
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Recurso SMB</th>
+                <th>Dataset OpenZFS</th>
+                <th>Espacio Usado</th>
+                <th>Disponible</th>
+                <th>Cuota Límite</th>
+                <th>Ámbito de Acceso</th>
+                <th style="text-align:right;">Acción</th>
+              </tr>
+            </thead>
+            <tbody id="smb-shares-table">
+              <tr><td colspan="7" style="text-align:center; padding:14px; color:var(--text-muted);">Consultando recursos de almacenamiento...</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title">Sesiones SMB Activas en Tiempo Real (Auditoría smbstatus)</div>
+          <div class="panel-hint" style="margin-bottom:8px;">Registro de equipos cliente y usuarios conectados a través de la red local.</div>
+          <table class="table">
+            <thead>
+              <tr>
+                <th>PID</th>
+                <th>Usuario</th>
+                <th>Grupo</th>
+                <th>Equipo / IP de Origen</th>
+                <th>Protocolo</th>
+              </tr>
+            </thead>
+            <tbody id="smb-sessions-table">
+              <tr><td colspan="5" style="text-align:center; padding:14px; color:var(--text-muted);">No hay sesiones activas en este momento.</td></tr>
             </tbody>
           </table>
         </div>
@@ -643,6 +738,7 @@
       if (tabKey === 'storage') requestStorageMetrics();
       if (tabKey === 'backups') requestBackupMetrics();
       if (tabKey === 'identity') requestIdentityMetrics();
+      if (tabKey === 'samba') requestSambaMetrics();
       if (tabKey === 'filesystem') requestFilesystemMetrics();
       if (tabKey === 'security') requestSecurityMetrics();
       if (tabKey === 'services') requestServicesMetrics();
@@ -895,6 +991,85 @@
       } else {
         alert('Error al importar CSV: ' + (res ? res.output : 'Error desconocido'));
       }
+    }
+
+    
+    function toggleUncInfo() {
+      const box = document.getElementById('smb-unc-box');
+      box.style.display = (box.style.display === 'none') ? 'block' : 'none';
+    }
+
+    async function requestSambaMetrics() {
+      const s = await callApi('/api/samba/status');
+      if (!s) return;
+
+      document.getElementById('smb-status-val').textContent = s.status || 'ACTIVO';
+      document.getElementById('smb-version-val').textContent = s.version || 'Samba v4.12.2';
+      document.getElementById('smb-sessions-val').textContent = (s.sessions ? s.sessions.length : 0);
+
+      // Render shares table
+      const tbodyShares = document.getElementById('smb-shares-table');
+      if (s.shares && s.shares.length > 0) {
+        tbodyShares.innerHTML = s.shares.map(sh => `
+          <tr>
+            <td style="font-family:var(--font-mono); font-weight:700; color:#60a5fa;">${sh.name}</td>
+            <td style="font-family:var(--font-mono);">${sh.dataset}</td>
+            <td style="font-family:var(--font-mono);">${sh.used}</td>
+            <td style="font-family:var(--font-mono);">${sh.avail}</td>
+            <td style="font-family:var(--font-mono); font-weight:600; color:${sh.quota === 'none' ? 'var(--text-disabled)' : 'var(--text-main)'};">${sh.quota}</td>
+            <td><span class="badge" style="font-size:10px;">${sh.access}</span></td>
+            <td style="text-align:right;">
+              <button class="btn btn-sm" onclick="dispatchEditSambaQuota('${sh.id}', '${sh.quota}')">Modificar cuota</button>
+            </td>
+          </tr>
+        `).join('');
+      } else {
+        tbodyShares.innerHTML = '<tr><td colspan="7" style="text-align:center; padding:14px; color:var(--text-muted);">No se detectaron recursos compartidos.</td></tr>';
+      }
+
+      // Render sessions table
+      const tbodySessions = document.getElementById('smb-sessions-table');
+      if (s.sessions && s.sessions.length > 0) {
+        tbodySessions.innerHTML = s.sessions.map(ss => `
+          <tr>
+            <td style="font-family:var(--font-mono);">${ss.pid}</td>
+            <td style="font-weight:600;">${ss.user}</td>
+            <td>${ss.group}</td>
+            <td style="font-family:var(--font-mono);">${ss.machine}</td>
+            <td style="font-family:var(--font-mono);">${ss.proto}</td>
+          </tr>
+        `).join('');
+      } else {
+        tbodySessions.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:14px; color:var(--text-muted);">No hay conexiones de clientes activas en este instante.</td></tr>';
+      }
+    }
+
+    async function dispatchEditSambaQuota(shareId, currentQuota) {
+      const q = prompt(`Ingrese la nueva cuota ZFS para el recurso '${shareId}' (ej: 10G, 50G, 100G, o 'none' para ilimitado):`, currentQuota);
+      if (q && q.trim()) {
+        const res = await callApi('/api/samba/quota', 'POST', { share: shareId, quota: q.trim() });
+        if (res && res.success) {
+          requestSambaMetrics();
+        } else {
+          alert('Error al modificar la cuota ZFS: ' + (res ? res.output : 'Error desconocido'));
+        }
+      }
+    }
+
+    async function dispatchRestartSamba() {
+      if (confirm("¿Confirma el reinicio del servicio de archivos Samba (SMB)? Las conexiones activas se restablecerán.")) {
+        const res = await callApi('/api/samba/restart', 'POST');
+        if (res && res.success) {
+          alert("Reinicio del servicio Samba solicitado. El microservicio estará en línea en breves segundos.");
+          setTimeout(requestSambaMetrics, 3000);
+        } else {
+          alert("Error al reiniciar el servicio: " + (res ? res.output : "Error desconocido"));
+        }
+      }
+    }
+
+    function dispatchDownloadConnector() {
+      window.location.href = '/api/samba/connector';
     }
 
     async function requestFilesystemMetrics(path = '') {
