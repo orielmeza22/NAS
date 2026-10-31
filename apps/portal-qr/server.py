@@ -487,7 +487,8 @@ class NasApiHandler(BaseHTTPRequestHandler):
         self.send_json({"success": ok, "message": "Infección simulada en Canary. El centinela restaurará en <5s."})
 
     def handle_services_list(self):
-        _, out, _ = run_host_cmd("kubectl get pods -A -l 'app.kubernetes.io/part-of=nas-platform' --no-headers 2>/dev/null || true")
+        cmd = "kubectl get pods -A --no-headers 2>/dev/null | grep -E 'nextcloud|samba|portal-qr|sentinel|zfs-exporter' || true"
+        _, out, _ = run_host_cmd(cmd)
         pods = []
         for line in out.splitlines():
             p = line.split()
@@ -497,11 +498,11 @@ class NasApiHandler(BaseHTTPRequestHandler):
 
     def handle_service_restart(self, body):
         dep = body.get("deployment")
-        ok, out, err = run_host_cmd(f"kubectl rollout restart deployment/{dep}")
+        ok, out, err = run_host_cmd(f"kubectl rollout restart deployment/{dep} || kubectl rollout restart deployment/{dep} -n kube-system")
         self.send_json({"success": ok, "output": out or err})
 
     def handle_service_logs(self, pod):
-        _, out, _ = run_host_cmd(f"kubectl logs '{pod}' --tail=100 2>&1 || echo 'Error obteniendo logs'")
+        _, out, _ = run_host_cmd(f"kubectl logs '{pod}' --all-containers --tail=100 2>&1 || kubectl logs -n kube-system '{pod}' --all-containers --tail=100 2>&1 || echo 'Error obteniendo logs'")
         self.send_json({"logs": out})
 
     def handle_wan_status(self):
