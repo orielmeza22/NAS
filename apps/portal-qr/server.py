@@ -72,8 +72,10 @@ class NasApiHandler(BaseHTTPRequestHandler):
         elif path == "/api/public/status":
             self.handle_public_status()
             return
-
+        elif path == "/api/samba/connector":
+            self.serve_samba_connector()
             return
+
 
         if not self.is_auth():
             self.send_json({"error": "Unauthorized"}, 401)
