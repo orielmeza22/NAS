@@ -264,3 +264,16 @@ Engineering Lead: Oriel Meza
 Architecture Status: STANDARDS_TRACK_COMPLIANT
 Revision: 1.0.0
 ```
+
+---
+
+## Annex A: SMB Control Plane, Identity Provisioning and Client Connector (31/10/2026)
+
+- Portal threading: `ThreadedHTTPServer` plus relaxed probes (`timeoutSeconds: 5`, `failureThreshold: 5`) to remove crashloops caused by a single-threaded server.
+- Nextcloud backend moved to PostgreSQL 16 with Redis 7.
+- SMB tab: per-share ZFS quotas (`zfs set quota`), live `smbstatus` sessions, controlled Samba restart.
+- Identity: unified create/delete/reset across Nextcloud (`occ`) and Samba (`smbpasswd`), including CSV batch import.
+- Client connector: public `GET /api/samba/connector` serving `Conectar-Unidad-NAS.bat` (no secrets embedded).
+- Known debt: hardcoded `ADMIN_PASS_FALLBACK` in `server.py`; no `.env.example`.
+
+Full reference: `docs/SAMBA_Y_CONECTOR.md`.

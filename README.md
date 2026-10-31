@@ -22,6 +22,7 @@ La arquitectura reemplaza los servidores de archivos monolíticos tradicionales 
 - [Estructura del Repositorio](#estructura-del-repositorio)
 - [Guía de Aprovisionamiento e Instalación](#guía-de-aprovisionamiento-e-instalación)
 - [Operación, Backups y Recuperación ante Desastres](#operación-backups-y-recuperación-ante-desastres)
+- [Centro de Control: SMB, Identidades y Conector](#centro-de-control-smb-identidades-y-conector)
 - [Autoría](#autoría)
 
 ---
@@ -308,6 +309,14 @@ sudo zfs send -i tank/nas@anterior tank/nas@actual | \
 6. **Aplicar infrastructure/** → ArgoCD reconstruye todo automáticamente desde Git
 
 > ⏱️ **RTO estimado:** 30-45 minutos (asumiendo que el pool ZFS está intacto)
+
+---
+
+## Centro de Control: SMB, Identidades y Conector
+
+El portal (`apps/portal-qr`, NodePort 30081) incluye gestion de cuotas ZFS y sesiones Samba,
+alta/baja de usuarios sincronizada en Samba y Nextcloud, y un conector `.bat` de un clic para Windows
+(unidades Z:, P:, X:). Detalle, API y decisiones: [docs/SAMBA_Y_CONECTOR.md](docs/SAMBA_Y_CONECTOR.md).
 
 ---
 
