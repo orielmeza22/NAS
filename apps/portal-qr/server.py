@@ -73,6 +73,8 @@ class NasApiHandler(BaseHTTPRequestHandler):
             self.handle_public_status()
             return
 
+            return
+
         if not self.is_auth():
             self.send_json({"error": "Unauthorized"}, 401)
             return
@@ -109,8 +111,7 @@ class NasApiHandler(BaseHTTPRequestHandler):
             self.handle_executive_report()
         elif path == "/api/samba/status":
             self.handle_samba_status()
-        elif path == "/api/samba/connector":
-            self.serve_samba_connector()
+
         else:
             self.send_json({"error": "Not Found"}, 404)
 

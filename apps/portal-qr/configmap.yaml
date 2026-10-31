@@ -83,6 +83,8 @@ data:
                 self.handle_public_status()
                 return
     
+                return
+    
             if not self.is_auth():
                 self.send_json({"error": "Unauthorized"}, 401)
                 return
@@ -119,8 +121,7 @@ data:
                 self.handle_executive_report()
             elif path == "/api/samba/status":
                 self.handle_samba_status()
-            elif path == "/api/samba/connector":
-                self.serve_samba_connector()
+    
             else:
                 self.send_json({"error": "Not Found"}, 404)
     
@@ -896,6 +897,11 @@ data:
           <img id="qr-preview" class="qr-frame" src="" alt="Código QR del endpoint">
           <div>
             <a id="url-preview" class="endpoint-link" href="#" target="_blank">Resolviendo endpoint WAN...</a>
+          </div>
+          <div style="margin-top:16px;">
+            <a href="/api/samba/connector" class="btn btn-primary" download="Conectar-Unidad-NAS.bat" style="text-decoration:none; display:inline-block; font-size:12px; padding:6px 14px;">
+              Descargar Conector de Red (.bat) para Windows
+            </a>
           </div>
           <div style="margin-top:24px; padding-top:14px; border-top:1px solid var(--border-subtle); font-size:11px; color:var(--text-disabled);">
             Modo de solo lectura para clientes. La gestión de almacenamiento y usuarios requiere autenticación de administrador.
