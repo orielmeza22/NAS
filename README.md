@@ -206,6 +206,40 @@ NAS/
 | **Sistema Operativo** | Debian 12 / Ubuntu 22.04 LTS | Debian 12 / Ubuntu 24.04 LTS |
 | **Conectividad** | 1 Gbps LAN | 1 Gbps LAN + conexión a internet para túnel Zero Trust |
 
+---
+
+### Opción A — Despliegue Rápido Automatizado (Zero-Touch en 1 Comando) ⚡
+
+Para desplegar la plataforma completa de forma 100% desatendida en un servidor nuevo o máquina virtual:
+
+```bash
+git clone https://github.com/orielmeza22/NAS.git
+cd NAS
+make bootstrap
+```
+
+El script de aprovisionamiento [`scripts/bootstrap-enterprise-nas.sh`](scripts/bootstrap-enterprise-nas.sh) ejecutará de forma idempotente:
+1. Instalación de paquetes del sistema (`zfsutils-linux`, `rclone`, `jq`, `curl`).
+2. Creación del pool OpenZFS `tank` en **RAID-Z1** (con aprovisionamiento de discos virtuales si es entorno de pruebas/VM).
+3. Creación de datasets departamentales con sus cuotas y afinamiento de `recordsize` (`8K` para PostgreSQL, `128K` para archivos).
+4. Instalación de **K3s** con permisos de kubeconfig.
+5. Sincronización y despliegue atómico de toda la plataforma mediante el patrón **App-of-Apps** de ArgoCD.
+
+#### Atajos Operacionales del CLI de Administración (`Makefile`):
+
+| Comando | Acción |
+|---|---|
+| `make bootstrap` | Aprovisiona el servidor completo desde cero de forma automatizada. |
+| `make status` | Consulta en tiempo real el estado de los Pods K3s, el pool ZFS RAID-Z1 y el túnel WAN. |
+| `make smoke-test` | Ejecuta la suite de 18 pruebas automatizadas de validación y conectividad. |
+| `make backup-now` | Dispara un respaldo offsite inmediato hacia Cloudflare R2. |
+| `make rollback-latest` | Revierte instantáneamente el almacenamiento al snapshot local más reciente. |
+| `make dr-drill` | Ejecuta un simulacro de recuperación ante desastres (Disaster Recovery Drill). |
+
+---
+
+### Opción B — Despliegue Manual Paso a Paso (Para entornos a medida o auditoría)
+
 ### Paso 1 — Inicializar el Pool y Datasets OpenZFS
 
 ```bash
