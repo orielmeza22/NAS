@@ -6,10 +6,12 @@ metadata:
     app.kubernetes.io/name: nextcloud
     app.kubernetes.io/part-of: nas-platform
 spec:
+  storageClassName: ""
   capacity:
     storage: 100Gi
   accessModes:
     - ReadWriteOnce
   hostPath:
     path: /tank/nas/nextcloud
+    type: DirectoryOrCreate
   persistentVolumeReclaimPolicy: Retain

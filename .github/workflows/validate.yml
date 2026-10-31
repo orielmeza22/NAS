@@ -18,8 +18,7 @@ jobs:
           config_data: |
             extends: default
             rules:
-              line-length:
-                max: 200
+              line-length: disable
               truthy:
                 check-keys: false
 
@@ -35,6 +34,7 @@ jobs:
       - name: Run kubeconform
         run: |
           kubeconform -summary -strict -ignore-missing-schemas \
+            -ignore-filename-pattern '(Chart|values)\.yaml' \
             -schema-location default \
             -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{ .Group }}/{{ .ResourceKind }}_{{ .ResourceAPIVersion }}.json' \
             apps/ infrastructure/

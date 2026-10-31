@@ -6,10 +6,12 @@ metadata:
     app.kubernetes.io/name: samba
     app.kubernetes.io/part-of: nas-platform
 spec:
+  storageClassName: ""
   capacity:
     storage: 100Gi
   accessModes:
     - ReadWriteOnce
   hostPath:
-    path: /tank/nas/samba
+    path: /tank/nas
+    type: DirectoryOrCreate
   persistentVolumeReclaimPolicy: Retain

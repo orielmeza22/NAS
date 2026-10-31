@@ -35,6 +35,7 @@ spec:
               - ALL
         ports:
         - containerPort: 445
+          hostPort: 445
           name: smb
         - containerPort: 137
           name: netbios-ns
@@ -91,13 +92,13 @@ spec:
         - "-g"
         - "recycle:touch = yes"
         - "-s"
-        - "Profesores;/samba/profesores;yes;no;no;all;none;none"
+        - "profesores;/samba/profesores;yes;no;no;all;none;none"
         - "-s"
-        - "Alumnos;/samba/alumnos;yes;no;no;all;none;none;Alumnos;veto files = /*.exe/*.msi/*.iso/*.bat/*.cmd/*.torrent/*.scr/*.encrypted/*.locked/*.crypto/*.wannacry/*.lockbit/*.ryuk/*.akira/*.conti/*DECRYPT*/*RESTORE_FILES*/"
+        - "alumnos;/samba/alumnos;yes;no;no;all;none;none;alumnos;veto files = /*.exe/*.msi/*.iso/*.bat/*.cmd/*.torrent/*.scr/*.encrypted/*.locked/*.crypto/*.wannacry/*.lockbit/*.ryuk/*.akira/*.conti/*DECRYPT*/*RESTORE_FILES*/"
         - "-s"
-        - "Compartido;/samba/compartido;yes;no;no;all;none;none"
+        - "publico;/samba/publico;yes;no;no;all;none;none"
         - "-s"
-        - "Administracion;/samba/administracion;yes;no;no;all;none;none"
+        - "nextcloud;/samba/nextcloud;yes;no;no;all;none;none"
         - "-u"
         - "$(USER_PROFESORES)"
         - "-u"
@@ -107,6 +108,8 @@ spec:
         volumeMounts:
         - name: samba-storage
           mountPath: /samba
+        - name: samba-private
+          mountPath: /var/lib/samba/private
         resources:
           requests:
             cpu: "100m"
@@ -118,3 +121,7 @@ spec:
       - name: samba-storage
         persistentVolumeClaim:
           claimName: samba-pvc
+      - name: samba-private
+        hostPath:
+          path: /tank/nas/.samba-private
+          type: DirectoryOrCreate

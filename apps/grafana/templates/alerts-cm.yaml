@@ -1,0 +1,55 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-zfs-alerts
+  namespace: default
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/component: alerting
+    app.kubernetes.io/part-of: nas-platform
+data:
+  zfs-enterprise-rules.yml: |
+    groups:
+      - name: zfs_and_backup_enterprise_alerts
+        interval: 30s
+        rules:
+          - alert: ZFSPoolDegraded
+            expr: zfs_pool_health{pool="tank"} == 0
+            for: 1m
+            labels:
+              severity: critical
+              tier: storage
+            annotations:
+              summary: "Pool OpenZFS en estado DEGRADED o FAULTED"
+              description: "El pool RAID-Z1 'tank' reporta fallo de salud (zfs_pool_health == 0). Reemplazar disco dañado y ejecutar zpool replace."
+
+          - alert: ZFSChecksumErrorDetected
+            expr: zfs_pool_checksum_errors_total{pool="tank"} > 0
+            for: 1m
+            labels:
+              severity: warning
+              tier: storage
+            annotations:
+              summary: "Corrupción silenciosa (Bit-Rot) detectada y reparada por ZFS"
+              description: "Se detectaron errores de checksum en el pool 'tank'. Revisar estado S.M.A.R.T. y ejecutar zpool scrub."
+
+          - alert: ZFSPoolCapacityHigh
+            expr: zfs_pool_capacity_percent{pool="tank"} > 80
+            for: 5m
+            labels:
+              severity: warning
+              tier: storage
+            annotations:
+              summary: "Capacidad del pool OpenZFS supera el 80%"
+              description: "El rendimiento Copy-on-Write de ZFS se degrada por encima del 80% de ocupación."
+
+          - alert: OffsiteR2BackupStale
+            expr: (time() - zfs_last_offsite_backup_timestamp_seconds{pool="tank"}) > 93600
+            for: 10m
+            labels:
+              severity: critical
+              tier: disaster-recovery
+            annotations:
+              summary: "Backup Offsite en Cloudflare R2 atrasado (>26 horas)"
+              description: "El CronJob zfs-offsite-backup no ha registrado una subida exitosa en las últimas 26 horas."

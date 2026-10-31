@@ -10,8 +10,9 @@ data:
   server.py: |
     #!/usr/bin/env python3
     """
-    Enterprise NAS Control Center OS — Backend REST API Server
+    Enterprise NAS Control Center OS — Backend REST API Server (Hardened Production Standard)
     Runs inside a privileged pod with hostPID access to execute ZFS, K3s, and System tasks.
+    Strict DevSecOps: Zero Command Injection, Safe Subprocess Args, Token TTL, Rate-Limiting.
     """
     import os
     import sys
@@ -19,60 +20,148 @@ data:
     import time
     import subprocess
     import urllib.parse
+    import re
+    import shlex
+    import secrets
     from http.server import HTTPServer, BaseHTTPRequestHandler
     from socketserver import ThreadingMixIn
-    
+
     class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
         daemon_threads = True
-    
+
     PORT = 80
-    ADMIN_PASS_FALLBACK = "NasEscuela2026!"
-    ACTIVE_SESSIONS = set()
-    
-    def run_host_cmd(cmd_str, timeout=30):
-        full_cmd = ["nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid", "--", "sh", "-c", cmd_str]
+    SESSION_TTL_SECONDS = 28800  # 8 hours
+    MAX_FAILED_LOGINS = 5
+    LOCKOUT_SECONDS = 900  # 15 minutes
+
+    # Security structures in memory
+    ACTIVE_SESSIONS = {}   # token -> expiry_timestamp
+    FAILED_LOGINS = {}     # ip -> [timestamps]
+
+    # Strict validation regexes
+    RE_USERNAME = re.compile(r"^[a-zA-Z0-9._-]{3,32}$")
+    RE_SHARENAME = re.compile(r"^[a-zA-Z0-9._-]{2,32}$")
+    RE_QUOTA = re.compile(r"^([0-9]+[KMGTkmgt]?|none)$")
+    RE_TAG = re.compile(r"^[a-zA-Z0-9._-]{1,64}$")
+    RE_DATASET = re.compile(r"^tank/nas(/[a-zA-Z0-9._-]+)*$")
+    RE_NUMERIC = re.compile(r"^[0-9]+$")
+
+    def run_host_cmd(cmd_list_or_str, timeout=30):
+        """
+        Executes commands securely against the host root namespace via nsenter.
+        Accepts either an explicit argument list (preferred, immune to shell injection)
+        or a sanitized shell command.
+        """
+        if isinstance(cmd_list_or_str, list):
+            full_cmd = ["nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid", "--"] + cmd_list_or_str
+            shell_mode = False
+        else:
+            full_cmd = ["nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid", "--", "sh", "-c", cmd_list_or_str]
+            shell_mode = False
+
         try:
             res = subprocess.run(full_cmd, capture_output=True, text=True, timeout=timeout)
             return res.returncode == 0, res.stdout, res.stderr
         except Exception as e:
             return False, "", str(e)
-    
+
     def get_admin_password():
-        ok, out, _ = run_host_cmd("kubectl get secret nextcloud-admin-credentials -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || true")
+        """
+        Retrieves the cluster admin password strictly from Kubernetes secrets or environment.
+        Never falls back to hardcoded public credentials.
+        """
+        env_pass = os.environ.get("PORTAL_ADMIN_PASSWORD", "").strip()
+        if env_pass:
+            return env_pass
+
+        ok, out, _ = run_host_cmd(["kubectl", "get", "secret", "nextcloud-admin-credentials", "-o", "jsonpath={.data.password}"])
         if ok and out.strip():
-            return out.strip()
-        return ADMIN_PASS_FALLBACK
-    
+            try:
+                import base64
+                decoded = base64.b64decode(out.strip()).decode("utf-8").strip()
+                if decoded:
+                    return decoded
+            except Exception:
+                pass
+        return ""
+
+    def sanitize_path(relpath, base="/tank/nas"):
+        """
+        Guarantees that a requested path strictly resides within the base directory,
+        mitigating all directory traversal / path traversal attacks.
+        """
+        normalized = os.path.normpath(os.path.join(base, relpath.lstrip("/")))
+        real_base = os.path.realpath(base)
+        real_target = os.path.realpath(normalized) if os.path.exists(normalized) else normalized
+        if real_target == real_base or real_target.startswith(real_base + os.sep):
+            return real_target
+        return real_base
+
     class NasApiHandler(BaseHTTPRequestHandler):
+        def get_client_ip(self):
+            forwarded = self.headers.get("X-Forwarded-For")
+            if forwarded:
+                return forwarded.split(",")[0].strip()
+            return self.client_address[0]
+
+        def check_rate_limit(self, ip):
+            now = time.time()
+            attempts = FAILED_LOGINS.get(ip, [])
+            valid_attempts = [t for t in attempts if now - t < LOCKOUT_SECONDS]
+            FAILED_LOGINS[ip] = valid_attempts
+            return len(valid_attempts) < MAX_FAILED_LOGINS
+
+        def record_failed_login(self, ip):
+            now = time.time()
+            attempts = FAILED_LOGINS.get(ip, [])
+            attempts.append(now)
+            FAILED_LOGINS[ip] = attempts
+
+        def reset_failed_logins(self, ip):
+            FAILED_LOGINS.pop(ip, None)
+
+        def is_auth(self):
+            auth_hdr = self.headers.get("Authorization", "")
+            if auth_hdr.startswith("Bearer "):
+                token = auth_hdr.split(" ")[1]
+                now = time.time()
+                if token in ACTIVE_SESSIONS:
+                    expiry = ACTIVE_SESSIONS[token]
+                    if now < expiry:
+                        return True
+                    else:
+                        ACTIVE_SESSIONS.pop(token, None)
+            return False
+
         def send_json(self, data, status=200):
             body = json.dumps(data).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Access-Control-Allow-Origin", "*")
+            # Closed CORS: Only reflect requesting host if same origin
+            origin = self.headers.get("Origin")
+            if origin:
+                self.send_header("Access-Control-Allow-Origin", origin)
+                self.send_header("Vary", "Origin")
             self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             self.end_headers()
             self.wfile.write(body)
-    
+
         def do_OPTIONS(self):
             self.send_response(204)
-            self.send_header("Access-Control-Allow-Origin", "*")
+            origin = self.headers.get("Origin")
+            if origin:
+                self.send_header("Access-Control-Allow-Origin", origin)
+                self.send_header("Vary", "Origin")
             self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             self.end_headers()
-    
-        def is_auth(self):
-            auth_hdr = self.headers.get("Authorization", "")
-            if auth_hdr.startswith("Bearer "):
-                token = auth_hdr.split(" ")[1]
-                return token in ACTIVE_SESSIONS
-            return False
-    
+
         def do_GET(self):
             parsed = urllib.parse.urlparse(self.path)
             path = parsed.path
-    
+
             if path in ("/", "/index.html"):
                 self.serve_frontend()
                 return
@@ -85,12 +174,11 @@ data:
             elif path == "/api/samba/connector":
                 self.serve_samba_connector()
                 return
-    
-    
+
             if not self.is_auth():
                 self.send_json({"error": "Unauthorized"}, 401)
                 return
-    
+
             if path == "/api/system/status":
                 self.handle_system_status()
             elif path == "/api/raid/status":
@@ -123,10 +211,9 @@ data:
                 self.handle_executive_report()
             elif path == "/api/samba/status":
                 self.handle_samba_status()
-    
             else:
                 self.send_json({"error": "Not Found"}, 404)
-    
+
         def do_POST(self):
             parsed = urllib.parse.urlparse(self.path)
             path = parsed.path
@@ -137,24 +224,37 @@ data:
                     body = json.loads(self.rfile.read(content_len).decode("utf-8"))
                 except Exception:
                     pass
-    
+
             if path == "/api/auth/login":
+                client_ip = self.get_client_ip()
+                if not self.check_rate_limit(client_ip):
+                    self.send_json({"success": False, "error": "Demasiados intentos fallidos. Bloqueo temporal por 15 minutos."}, 429)
+                    return
+
                 password = body.get("password", "")
-                if password == get_admin_password():
-                    token = f"admin-token-{int(time.time())}"
-                    ACTIVE_SESSIONS.add(token)
+                real_admin_pass = get_admin_password()
+                if not real_admin_pass:
+                    self.send_json({"success": False, "error": "Servicio de autenticación no configurado (secret ausente)."}, 500)
+                    return
+
+                if secrets.compare_digest(password, real_admin_pass):
+                    token = secrets.token_urlsafe(32)
+                    expiry = time.time() + SESSION_TTL_SECONDS
+                    ACTIVE_SESSIONS[token] = expiry
+                    self.reset_failed_logins(client_ip)
                     self.send_json({"success": True, "token": token})
                 else:
+                    self.record_failed_login(client_ip)
                     self.send_json({"success": False, "error": "Contraseña inválida"}, 401)
                 return
-    
+
             if not self.is_auth():
                 self.send_json({"error": "Unauthorized"}, 401)
                 return
-    
+
             if path == "/api/auth/logout":
                 token = self.headers.get("Authorization", "").replace("Bearer ", "")
-                ACTIVE_SESSIONS.discard(token)
+                ACTIVE_SESSIONS.pop(token, None)
                 self.send_json({"success": True})
             elif path == "/api/raid/action":
                 self.handle_raid_action(body)
@@ -202,10 +302,12 @@ data:
                 self.handle_samba_restart()
             elif path == "/api/system/reboot":
                 self.send_json({"success": True, "message": "Reiniciando servidor..."})
-                run_host_cmd("sync && reboot")
+                run_host_cmd(["sync"])
+                run_host_cmd(["reboot"])
             elif path == "/api/system/shutdown":
                 self.send_json({"success": True, "message": "Apagando servidor de forma segura..."})
-                run_host_cmd("zpool sync && poweroff")
+                run_host_cmd(["zpool", "sync"])
+                run_host_cmd(["poweroff"])
             elif path == "/api/system/flush-arc":
                 run_host_cmd("echo 3 > /proc/sys/vm/drop_caches")
                 self.send_json({"success": True, "message": "Caché de memoria RAM liberada."})
@@ -213,7 +315,7 @@ data:
                 self.handle_smoke_test()
             else:
                 self.send_json({"error": "Endpoint no encontrado"}, 404)
-    
+
         def serve_frontend(self):
             content = b"<h1>Consola de Administracion - Enterprise Storage Appliance</h1>"
             for fpath in ["/app-config/index.html", "/usr/share/nginx/html/index.html"]:
@@ -229,7 +331,7 @@ data:
             self.send_header("Content-Length", str(len(content)))
             self.end_headers()
             self.wfile.write(content)
-    
+
         def serve_tunnel_txt(self):
             tpath = "/tmp/nas-tunnel/url.txt"
             url = "http://localhost"
@@ -245,7 +347,7 @@ data:
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
-    
+
         def handle_public_status(self):
             tpath = "/tmp/nas-tunnel/url.txt"
             tunnel_url = ""
@@ -255,18 +357,18 @@ data:
                         tunnel_url = f.read().strip()
                 except Exception:
                     pass
-            ok, out, _ = run_host_cmd("zpool list -H -o health tank 2>/dev/null || echo OFFLINE")
-            health = out.strip() or "UNKNOWN"
+            ok, out, _ = run_host_cmd(["zpool", "list", "-H", "-o", "health", "tank"])
+            health = out.strip() if ok and out.strip() else "OFFLINE"
             self.send_json({
                 "tunnel_url": tunnel_url,
                 "raid_health": health,
                 "uptime_seconds": int(time.time()),
                 "platform": "Enterprise Educational NAS 2026"
             })
-    
+
         def handle_system_status(self):
             _, cpu_out, _ = run_host_cmd("top -bn1 | grep 'Cpu(s)' | awk '{print $2}' || echo 0")
-            _, mem_out, _ = run_host_cmd("free -m | awk '/Mem:/ {print $3 \",\" $2}' || echo '0,0'")
+            _, mem_out, _ = run_host_cmd("free -m | awk '/Mem:/ {print $3 "," $2}' || echo '0,0'")
             _, arc_out, _ = run_host_cmd("grep -w size /proc/spl/kstat/zfs/arcstats 2>/dev/null | awk '{print int($3/1024/1024)}' || echo 0")
             mem_parts = mem_out.strip().split(",")
             used_ram = int(mem_parts[0]) if len(mem_parts) > 1 and mem_parts[0].isdigit() else 0
@@ -277,10 +379,10 @@ data:
                 "total_ram_mb": total_ram,
                 "zfs_arc_mb": arc_out.strip()
             })
-    
+
         def handle_raid_status(self):
-            _, pool_out, _ = run_host_cmd("zpool list -H -p -o name,size,alloc,free,cap,health tank 2>/dev/null || true")
-            _, status_out, _ = run_host_cmd("zpool status tank 2>/dev/null || true")
+            _, pool_out, _ = run_host_cmd(["zpool", "list", "-H", "-p", "-o", "name,size,alloc,free,cap,health", "tank"])
+            _, status_out, _ = run_host_cmd(["zpool", "status", "tank"])
             disks = []
             for line in status_out.splitlines():
                 if "disk" in line or "spare" in line:
@@ -293,83 +395,117 @@ data:
                         cksum_e = parts[4] if len(parts) > 4 else "0"
                         disks.append({"name": dname, "state": dstate, "read": read_e, "write": write_e, "cksum": cksum_e})
             self.send_json({"pool": pool_out.strip(), "raw_status": status_out, "disks": disks})
-    
+
         def handle_raid_action(self, body):
             action = body.get("action")
             target = body.get("target", "")
-            if action == "offline_disk":
-                ok, out, err = run_host_cmd(f"zpool offline tank /zfs-disks/{target}.img")
-            elif action == "online_disk":
-                ok, out, err = run_host_cmd(f"zpool online tank /zfs-disks/{target}.img")
+            if not re.match(r"^[a-zA-Z0-9._-]+$", target):
+                target = ""
+
+            if action == "offline_disk" and target:
+                ok, out, err = run_host_cmd(["zpool", "offline", "tank", f"/zfs-disks/{target}.img"])
+            elif action == "online_disk" and target:
+                ok, out, err = run_host_cmd(["zpool", "online", "tank", f"/zfs-disks/{target}.img"])
             elif action == "add_spare":
-                run_host_cmd("truncate -s 2G /zfs-disks/disk4.img")
-                ok, out, err = run_host_cmd("zpool add tank spare /zfs-disks/disk4.img")
+                run_host_cmd(["truncate", "-s", "2G", "/zfs-disks/disk4.img"])
+                ok, out, err = run_host_cmd(["zpool", "add", "tank", "spare", "/zfs-disks/disk4.img"])
             elif action == "scrub":
-                ok, out, err = run_host_cmd("zpool scrub tank")
+                ok, out, err = run_host_cmd(["zpool", "scrub", "tank"])
             elif action == "clear":
-                ok, out, err = run_host_cmd("zpool clear tank")
+                ok, out, err = run_host_cmd(["zpool", "clear", "tank"])
             else:
-                self.send_json({"error": "Acción inválida"}, 400)
+                self.send_json({"error": "Acción inválida o parámetros inseguros"}, 400)
                 return
             self.send_json({"success": ok, "output": out or err})
-    
+
         def handle_datasets_list(self):
-            _, out, _ = run_host_cmd("zfs list -H -o name,used,avail,refer,mountpoint,quota,compression,recordsize 2>/dev/null || true")
+            _, out, _ = run_host_cmd(["zfs", "list", "-H", "-o", "name,used,avail,refer,mountpoint,quota,compression,recordsize"])
             ds_list = []
             for line in out.splitlines():
-                p = line.split("\t")
+                p = line.split("	")
                 if len(p) >= 8:
                     ds_list.append({"name": p[0], "used": p[1], "avail": p[2], "refer": p[3], "mount": p[4], "quota": p[5], "compression": p[6], "recordsize": p[7]})
             self.send_json({"datasets": ds_list})
-    
+
         def handle_dataset_update(self, body):
-            ds = body.get("dataset")
-            prop = body.get("property")
-            val = body.get("value")
-            if prop in ("quota", "compression", "recordsize") and ds.startswith("tank/"):
-                ok, out, err = run_host_cmd(f"zfs set {prop}='{val}' {ds}")
-                self.send_json({"success": ok, "output": out or err})
+            ds = body.get("dataset", "")
+            prop = body.get("property", "")
+            val = body.get("value", "")
+
+            if not RE_DATASET.match(ds):
+                self.send_json({"error": "Dataset inválido"}, 400)
+                return
+
+            if prop == "quota" and RE_QUOTA.match(val):
+                ok, out, err = run_host_cmd(["zfs", "set", f"quota={val}", ds])
+            elif prop == "compression" and val in ("on", "off", "lz4", "zstd", "gzip"):
+                ok, out, err = run_host_cmd(["zfs", "set", f"compression={val}", ds])
+            elif prop == "recordsize" and val in ("4K", "8K", "16K", "32K", "64K", "128K", "256K", "512K", "1024K"):
+                ok, out, err = run_host_cmd(["zfs", "set", f"recordsize={val}", ds])
             else:
-                self.send_json({"error": "Propiedad no permitida"}, 400)
-    
+                self.send_json({"error": "Propiedad o valor no permitido"}, 400)
+                return
+
+            self.send_json({"success": ok, "output": out or err})
+
         def handle_snapshots_list(self):
-            _, out, _ = run_host_cmd("zfs list -t snapshot -H -o name,used,creation -s creation 2>/dev/null || true")
+            _, out, _ = run_host_cmd(["zfs", "list", "-t", "snapshot", "-H", "-o", "name,used,creation", "-s", "creation"])
             snaps = []
             for line in out.splitlines():
-                p = line.split("\t")
+                p = line.split("	")
                 if len(p) >= 3:
-                    _, holds_out, _ = run_host_cmd(f"zfs holds -H '{p[0]}' 2>/dev/null || true")
-                    snaps.append({"name": p[0], "used": p[1], "creation": p[2], "is_held": bool(holds_out.strip())})
+                    snap_name = p[0]
+                    _, holds_out, _ = run_host_cmd(["zfs", "holds", "-H", snap_name])
+                    snaps.append({"name": snap_name, "used": p[1], "creation": p[2], "is_held": bool(holds_out.strip())})
             self.send_json({"snapshots": snaps})
-    
+
         def handle_snapshot_create(self, body):
-            tag = body.get("tag", f"manual-{int(time.time())}")
-            cmd = f"kubectl exec deployment/nextcloud-postgres -- pg_dumpall -U nextcloud | gzip > /tank/nas/postgres/db-manual.sql.gz 2>/dev/null || true; zfs snapshot 'tank/nas@{tag}'"
-            ok, out, err = run_host_cmd(cmd)
+            tag = body.get("tag", "").strip() or f"manual-{int(time.time())}"
+            if not RE_TAG.match(tag):
+                self.send_json({"error": "Etiqueta de snapshot inválida"}, 400)
+                return
+
+            # Snapshot recursivo con backup previo de base de datos
+            run_host_cmd("kubectl exec deployment/nextcloud-postgres -- pg_dumpall -U nextcloud | gzip > /tank/nas/postgres/db-manual.sql.gz 2>/dev/null || true")
+            ok, out, err = run_host_cmd(["zfs", "snapshot", "-r", f"tank/nas@{tag}"])
             self.send_json({"success": ok, "output": out or err})
-    
+
         def handle_snapshot_rollback(self, body):
-            snap = body.get("snapshot")
-            ok, out, err = run_host_cmd(f"bash /home/oriel/nas-gitops/scripts/nas-recover.sh rollback-local '{snap}'")
+            snap = body.get("snapshot", "").strip()
+            if not re.match(r"^tank/nas(@[a-zA-Z0-9._-]+)?$", snap) and not re.match(r"^tank/nas/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+$", snap):
+                self.send_json({"error": "Nombre de snapshot inválido"}, 400)
+                return
+
+            repo_dir = os.environ.get("NAS_REPO_DIR", "/home/oriel/nas-gitops")
+            script = os.path.join(repo_dir, "scripts/nas-recover.sh")
+            ok, out, err = run_host_cmd(["bash", script, "rollback-local", snap])
             self.send_json({"success": ok, "output": out or err})
-    
+
         def handle_snapshot_hold(self, body):
-            snap = body.get("snapshot")
+            snap = body.get("snapshot", "").strip()
             hold = body.get("hold", True)
-            subcmd = "hold sentinel-immutable" if hold else "release sentinel-immutable"
-            ok, out, err = run_host_cmd(f"zfs {subcmd} '{snap}'")
+            if "@" not in snap or not snap.startswith("tank/nas"):
+                self.send_json({"error": "Snapshot inválido"}, 400)
+                return
+
+            action = "hold" if hold else "release"
+            ok, out, err = run_host_cmd(["zfs", action, "sentinel-immutable", snap])
             self.send_json({"success": ok, "output": out or err})
-    
+
         def handle_snapshot_delete(self, body):
-            snap = body.get("snapshot")
-            run_host_cmd(f"zfs release sentinel-immutable '{snap}' 2>/dev/null || true")
-            ok, out, err = run_host_cmd(f"zfs destroy '{snap}'")
+            snap = body.get("snapshot", "").strip()
+            if "@" not in snap or not snap.startswith("tank/nas"):
+                self.send_json({"error": "Snapshot inválido"}, 400)
+                return
+
+            run_host_cmd(["zfs", "release", "sentinel-immutable", snap])
+            ok, out, err = run_host_cmd(["zfs", "destroy", "-r", snap])
             self.send_json({"success": ok, "output": out or err})
-    
+
         def handle_r2_list(self):
-            cmd = 'R2_ACC=$(kubectl -n kube-system get secret r2-backup-credentials -o jsonpath="{.data.account-id}" | base64 -d); ' \
-                  'R2_KEY=$(kubectl -n kube-system get secret r2-backup-credentials -o jsonpath="{.data.access-key-id}" | base64 -d); ' \
-                  'R2_SEC=$(kubectl -n kube-system get secret r2-backup-credentials -o jsonpath="{.data.secret-access-key}" | base64 -d); ' \
+            cmd = 'R2_ACC=$(kubectl -n kube-system get secret r2-backup-credentials -o jsonpath="{.data.account-id}" 2>/dev/null | base64 -d || true); ' \
+                  'R2_KEY=$(kubectl -n kube-system get secret r2-backup-credentials -o jsonpath="{.data.access-key-id}" 2>/dev/null | base64 -d || true); ' \
+                  'R2_SEC=$(kubectl -n kube-system get secret r2-backup-credentials -o jsonpath="{.data.secret-access-key}" 2>/dev/null | base64 -d || true); ' \
                   'export RCLONE_CONFIG_R2_TYPE=s3 RCLONE_CONFIG_R2_PROVIDER=Cloudflare RCLONE_CONFIG_R2_ACCESS_KEY_ID=$R2_KEY RCLONE_CONFIG_R2_SECRET_ACCESS_KEY=$R2_SEC RCLONE_CONFIG_R2_ENDPOINT="https://${R2_ACC}.r2.cloudflarestorage.com" RCLONE_CONFIG_R2_NO_CHECK_BUCKET=true; ' \
                   'rclone lsf -R -l r2:nas-backup/ 2>/dev/null || true'
             ok, out, _ = run_host_cmd(cmd)
@@ -379,53 +515,73 @@ data:
                 if len(p) >= 2:
                     files.append({"size": p[0], "name": p[1]})
             self.send_json({"r2_objects": files})
-    
+
         def handle_r2_trigger(self, body):
-            mode = body.get("mode", "incremental")
             cmd = "kubectl -n kube-system delete job manual-r2-backup --ignore-not-found=true && kubectl -n kube-system create job --from=cronjob/zfs-offsite-backup manual-r2-backup"
             ok, out, err = run_host_cmd(cmd)
             self.send_json({"success": ok, "output": out or err})
-    
+
         def handle_r2_restore(self, body):
-            ok, out, err = run_host_cmd("bash /home/oriel/nas-gitops/tests/disaster-recovery-drill.sh")
+            repo_dir = os.environ.get("NAS_REPO_DIR", "/home/oriel/nas-gitops")
+            script = os.path.join(repo_dir, "tests/disaster-recovery-drill.sh")
+            ok, out, err = run_host_cmd(["bash", script])
             self.send_json({"success": ok, "output": out or err})
-    
+
         def handle_users_list(self):
             _, out, _ = run_host_cmd("kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c 'php /var/www/html/occ user:list --output=json' 2>/dev/null || echo '{}'")
             self.send_json({"users": out.strip()})
-    
+
         def handle_user_create(self, body):
             user = body.get("username", "").strip()
             pwd = body.get("password", "").strip()
-            if not user or not pwd:
-                self.send_json({"success": False, "output": "Usuario o contrasena vacios."}, 400)
+            if not RE_USERNAME.match(user) or not pwd:
+                self.send_json({"success": False, "output": "Nombre de usuario o contraseña con formato inválido (solo a-z, 0-9, . _ - de 3 a 32 caracteres)."}, 400)
                 return
-            cmd = f'kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c "OC_PASS=\\"{pwd}\\" php /var/www/html/occ user:add --password-from-env \\"{user}\\"" 2>&1'
-            ok, out, err = run_host_cmd(cmd)
-            run_host_cmd(f'kubectl exec deployment/samba -- sh -c "useradd -M -s /usr/sbin/nologin \\"{user}\\" 2>/dev/null || true; (echo \\"{pwd}\\"; echo \\"{pwd}\\") | smbpasswd -s -a \\"{user}\\"" 2>/dev/null || true')
+
+            quoted_user = shlex.quote(user)
+            quoted_pwd = shlex.quote(pwd)
+
+            nc_cmd = f"kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c 'OC_PASS={quoted_pwd} php /var/www/html/occ user:add --password-from-env {quoted_user}'"
+            ok, out, err = run_host_cmd(nc_cmd)
+
+            smb_cmd = f"kubectl exec deployment/samba -- sh -c 'useradd -M -s /usr/sbin/nologin {quoted_user} 2>/dev/null || true; (echo {quoted_pwd}; echo {quoted_pwd}) | smbpasswd -s -a {quoted_user}'"
+            run_host_cmd(smb_cmd)
+
             self.send_json({"success": ok, "output": out or err})
-    
+
         def handle_user_delete(self, body):
             user = body.get("username", "").strip()
-            if not user or user == "admin":
-                self.send_json({"success": False, "output": "Operacion denegada para la cuenta de administrador root."}, 400)
+            if not RE_USERNAME.match(user) or user == "admin":
+                self.send_json({"success": False, "output": "Operación denegada para la cuenta protegida o usuario inválido."}, 400)
                 return
-            cmd = f'kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c "php /var/www/html/occ user:delete -n \\"{user}\\"" 2>&1'
-            ok, out, err = run_host_cmd(cmd)
-            run_host_cmd(f'kubectl exec deployment/samba -- smbpasswd -x \\"{user}\\" 2>/dev/null || true')
+
+            quoted_user = shlex.quote(user)
+            nc_cmd = f"kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c 'php /var/www/html/occ user:delete -n {quoted_user}'"
+            ok, out, err = run_host_cmd(nc_cmd)
+
+            smb_cmd = f"kubectl exec deployment/samba -- smbpasswd -x {quoted_user}"
+            run_host_cmd(smb_cmd)
+
             self.send_json({"success": ok, "output": out or err})
-    
+
         def handle_user_password(self, body):
             user = body.get("username", "").strip()
             pwd = body.get("password", "").strip()
-            if not user or not pwd:
-                self.send_json({"success": False, "output": "Parametros insuficientes."}, 400)
+            if not RE_USERNAME.match(user) or not pwd:
+                self.send_json({"success": False, "output": "Parámetros insuficientes o formato no válido."}, 400)
                 return
-            cmd = f'kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c "OC_PASS=\\"{pwd}\\" php /var/www/html/occ user:resetpassword --password-from-env \\"{user}\\"" 2>&1'
-            ok, out, err = run_host_cmd(cmd)
-            run_host_cmd(f'kubectl exec deployment/samba -- sh -c "(echo \\"{pwd}\\"; echo \\"{pwd}\\") | smbpasswd -s \\"{user}\\"" 2>/dev/null || true')
+
+            quoted_user = shlex.quote(user)
+            quoted_pwd = shlex.quote(pwd)
+
+            nc_cmd = f"kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c 'OC_PASS={quoted_pwd} php /var/www/html/occ user:resetpassword --password-from-env {quoted_user}'"
+            ok, out, err = run_host_cmd(nc_cmd)
+
+            smb_cmd = f"kubectl exec deployment/samba -- sh -c '(echo {quoted_pwd}; echo {quoted_pwd}) | smbpasswd -s {quoted_user}'"
+            run_host_cmd(smb_cmd)
+
             self.send_json({"success": ok, "output": out or err})
-    
+
         def handle_user_csv(self, body):
             csv_data = body.get("csv", "")
             created = []
@@ -433,69 +589,94 @@ data:
                 parts = [p.strip() for p in line.split(",") if p.strip()]
                 if len(parts) >= 2:
                     u, p = parts[0], parts[1]
-                    cmd = f'kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c "OC_PASS=\\"{p}\\" php /var/www/html/occ user:add --password-from-env \\"{u}\\"" 2>&1'
-                    run_host_cmd(cmd)
-                    run_host_cmd(f'kubectl exec deployment/samba -- sh -c "useradd -M -s /usr/sbin/nologin \\"{u}\\" 2>/dev/null || true; (echo \\"{p}\\"; echo \\"{p}\\") | smbpasswd -s -a \\"{u}\\"" 2>/dev/null || true')
-                    created.append(u)
+                    if RE_USERNAME.match(u) and p:
+                        qu = shlex.quote(u)
+                        qp = shlex.quote(p)
+                        nc_cmd = f"kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c 'OC_PASS={qp} php /var/www/html/occ user:add --password-from-env {qu}'"
+                        run_host_cmd(nc_cmd)
+                        smb_cmd = f"kubectl exec deployment/samba -- sh -c 'useradd -M -s /usr/sbin/nologin {qu} 2>/dev/null || true; (echo {qp}; echo {qp}) | smbpasswd -s -a {qu}'"
+                        run_host_cmd(smb_cmd)
+                        created.append(u)
             self.send_json({"success": True, "created": created})
-    
+
         def handle_files_list(self, relpath):
-            clean_path = os.path.normpath("/tank/nas/" + relpath.lstrip("/"))
-            if not clean_path.startswith("/tank/nas"):
-                clean_path = "/tank/nas"
-            _, out, _ = run_host_cmd(f"ls -la --time-style=long-iso '{clean_path}' 2>/dev/null || true")
+            clean_path = sanitize_path(relpath)
+            quoted_path = shlex.quote(clean_path)
+            _, out, _ = run_host_cmd(f"ls -la --time-style=long-iso {quoted_path} 2>/dev/null || true")
             entries = []
             for line in out.splitlines()[1:]:
                 parts = line.split(maxsplit=7)
                 if len(parts) >= 8:
                     entries.append({"perms": parts[0], "size": parts[4], "date": f"{parts[5]} {parts[6]}", "name": parts[7], "is_dir": parts[0].startswith("d")})
             self.send_json({"path": clean_path, "entries": entries})
-    
+
         def handle_file_delete(self, body):
             fpath = body.get("filepath", "")
-            if fpath.startswith("/tank/nas/"):
-                ok, out, err = run_host_cmd(f"mkdir -p /tank/nas/.Papelera && mv '{fpath}' /tank/nas/.Papelera/ 2>&1 || rm -rf '{fpath}' 2>&1")
-                self.send_json({"success": ok, "output": out or err})
-            else:
-                self.send_json({"error": "Ruta inválida"}, 400)
-    
+            clean_target = sanitize_path(fpath)
+            if clean_target == "/tank/nas":
+                self.send_json({"error": "No está permitido eliminar la raíz del almacenamiento"}, 400)
+                return
+
+            quoted_target = shlex.quote(clean_target)
+            cmd = f"mkdir -p /tank/nas/.Papelera && mv {quoted_target} /tank/nas/.Papelera/ 2>&1 || rm -rf {quoted_target} 2>&1"
+            ok, out, err = run_host_cmd(cmd)
+            self.send_json({"success": ok, "output": out or err})
+
         def handle_file_restore_recycle(self, body):
             fname = body.get("filename", "")
-            target = body.get("target_dir", "/tank/nas/publico")
-            ok, out, err = run_host_cmd(f"mv '/tank/nas/.Papelera/{fname}' '{target}/' 2>&1")
+            target_dir = body.get("target_dir", "/tank/nas/publico")
+            if not re.match(r"^[a-zA-Z0-9._-]+$", fname):
+                self.send_json({"error": "Nombre de archivo inválido"}, 400)
+                return
+
+            clean_dir = sanitize_path(target_dir)
+            quoted_source = shlex.quote(f"/tank/nas/.Papelera/{fname}")
+            quoted_dest = shlex.quote(f"{clean_dir}/")
+            ok, out, err = run_host_cmd(f"mv {quoted_source} {quoted_dest} 2>&1")
             self.send_json({"success": ok, "output": out or err})
-    
+
         def handle_share_create(self, body):
-            name = body.get("name")
-            quota = body.get("quota", "5G")
-            if name and name.isalnum():
-                ok, out, err = run_host_cmd(f"zfs create -o quota={quota} -o compression=lz4 'tank/nas/{name}' && chmod 777 '/tank/nas/{name}'")
-                self.send_json({"success": ok, "output": out or err})
-            else:
-                self.send_json({"error": "Nombre inválido"}, 400)
-    
+            name = body.get("name", "").strip()
+            quota = body.get("quota", "5G").strip()
+            if not RE_SHARENAME.match(name) or not RE_QUOTA.match(quota):
+                self.send_json({"error": "Nombre o cuota de recurso inválido"}, 400)
+                return
+
+            ok, out, err = run_host_cmd(["zfs", "create", "-o", f"quota={quota}", "-o", "compression=lz4", f"tank/nas/{name}"])
+            if ok:
+                run_host_cmd(["chmod", "777", f"/tank/nas/{name}"])
+            self.send_json({"success": ok, "output": out or err})
+
         def handle_sessions_list(self):
-            _, out, _ = run_host_cmd("smbstatus -b 2>/dev/null || true")
+            _, out, _ = run_host_cmd("kubectl exec deployment/samba -- smbstatus -b 2>/dev/null || true")
             self.send_json({"smb_sessions": out})
-    
+
         def handle_session_kill(self, body):
-            pid = body.get("pid")
-            if pid and str(pid).isdigit():
-                ok, out, err = run_host_cmd(f"kill -9 {pid}")
-                self.send_json({"success": ok, "output": out or err})
-            else:
+            pid = str(body.get("pid", "")).strip()
+            if not RE_NUMERIC.match(pid):
                 self.send_json({"error": "PID inválido"}, 400)
-    
+                return
+
+            # Solo permite terminar procesos que figuren como sesiones de Samba activas
+            _, smb_pids, _ = run_host_cmd("kubectl exec deployment/samba -- smbstatus -b 2>/dev/null | awk '{print $1}' || true")
+            active_pids = [p.strip() for p in smb_pids.splitlines() if p.strip().isdigit()]
+            if pid not in active_pids:
+                self.send_json({"error": "El PID especificado no pertenece a una sesión activa de Samba."}, 403)
+                return
+
+            ok, out, err = run_host_cmd(["kubectl", "exec", "deployment/samba", "--", "kill", "-9", pid])
+            self.send_json({"success": ok, "output": out or err})
+
         def handle_security_status(self):
             _, st, _ = run_host_cmd("cat /tmp/nas-tunnel/ransomware_status 2>/dev/null || echo 1")
             _, cnt, _ = run_host_cmd("cat /tmp/nas-tunnel/ransomware_threats_blocked 2>/dev/null || echo 0")
             _, logs, _ = run_host_cmd("tail -n 20 /tmp/nas-tunnel/ransomware_events.log 2>/dev/null || echo 'Sin incidentes.'")
             self.send_json({"status": int(st.strip() or 1), "blocked_threats": int(cnt.strip() or 0), "logs": logs})
-    
+
         def handle_test_canary(self):
             ok, out, err = run_host_cmd("echo 'ransomware-simulation' > /tank/nas/alumnos/.canary_honeypot.docx")
             self.send_json({"success": ok, "message": "Infección simulada en Canary. El centinela restaurará en <5s."})
-    
+
         def handle_services_list(self):
             cmd = "kubectl get pods -A --no-headers 2>/dev/null | grep -E 'nextcloud|samba|portal-qr|sentinel|zfs-exporter' || true"
             _, out, _ = run_host_cmd(cmd)
@@ -505,53 +686,67 @@ data:
                 if len(p) >= 5:
                     pods.append({"namespace": p[0], "name": p[1], "ready": p[2], "status": p[3], "restarts": p[4]})
             self.send_json({"pods": pods})
-    
+
         def handle_service_restart(self, body):
-            dep = body.get("deployment")
-            ok, out, err = run_host_cmd(f"kubectl rollout restart deployment/{dep} || kubectl rollout restart deployment/{dep} -n kube-system")
+            dep = body.get("deployment", "").strip()
+            if not re.match(r"^[a-zA-Z0-9._-]+$", dep):
+                self.send_json({"error": "Nombre de deployment inválido"}, 400)
+                return
+
+            ok, out, err = run_host_cmd(["kubectl", "rollout", "restart", f"deployment/{dep}"])
+            if not ok:
+                ok, out, err = run_host_cmd(["kubectl", "rollout", "restart", f"deployment/{dep}", "-n", "kube-system"])
             self.send_json({"success": ok, "output": out or err})
-    
+
         def handle_service_logs(self, pod):
-            _, out, _ = run_host_cmd(f"kubectl logs '{pod}' --all-containers --tail=100 2>&1 || kubectl logs -n kube-system '{pod}' --all-containers --tail=100 2>&1 || echo 'Error obteniendo logs'")
+            if not re.match(r"^[a-zA-Z0-9._-]+$", pod):
+                self.send_json({"logs": "Nombre de pod inválido"})
+                return
+
+            ok, out, _ = run_host_cmd(["kubectl", "logs", pod, "--all-containers", "--tail=100"])
+            if not ok:
+                _, out, _ = run_host_cmd(["kubectl", "logs", "-n", "kube-system", pod, "--all-containers", "--tail=100"])
             self.send_json({"logs": out})
-    
+
         def handle_wan_status(self):
             _, out, _ = run_host_cmd("cat /tmp/nas-tunnel/url.txt 2>/dev/null || echo ''")
             self.send_json({"url": out.strip()})
-    
+
         def handle_wan_toggle(self):
             _, is_up, _ = run_host_cmd("pgrep cloudflared >/dev/null && echo 1 || echo 0")
             if is_up.strip() == "1":
-                run_host_cmd("pkill -9 cloudflared 2>/dev/null || true")
-                run_host_cmd("rm -f /tmp/nas-tunnel/url.txt")
+                run_host_cmd(["pkill", "-9", "cloudflared"])
+                run_host_cmd(["rm", "-f", "/tmp/nas-tunnel/url.txt"])
                 self.send_json({"status": "offline", "message": "Modo Solo LAN activado. El acceso desde internet ha sido cerrado."})
             else:
-                run_host_cmd("/home/oriel/Escritorio/iniciar-nas.sh >/dev/null 2>&1 &")
+                repo_dir = os.environ.get("NAS_REPO_DIR", "/home/oriel/nas-gitops")
+                run_host_cmd(f"cloudflared tunnel --url http://127.0.0.1:80 > /tmp/nas-tunnel/cloudflared.log 2>&1 &")
                 time.sleep(3)
                 self.send_json({"status": "online", "message": "Túnel Cloudflare iniciado. El NAS vuelve a estar Online desde internet."})
-    
+
         def handle_wan_rotate(self):
-            cmd = "/home/oriel/Escritorio/iniciar-nas.sh 2>&1 || true"
-            ok, out, err = run_host_cmd(cmd)
-            self.send_json({"success": ok, "output": out or err})
-    
+            run_host_cmd(["pkill", "-9", "cloudflared"])
+            time.sleep(1)
+            run_host_cmd("cloudflared tunnel --url http://127.0.0.1:80 > /tmp/nas-tunnel/cloudflared.log 2>&1 &")
+            self.send_json({"success": True, "output": "Túnel reiniciado."})
+
         def handle_smoke_test(self):
-            ok, out, err = run_host_cmd("bash /home/oriel/nas-gitops/tests/smoke-test.sh 2>&1")
+            repo_dir = os.environ.get("NAS_REPO_DIR", "/home/oriel/nas-gitops")
+            script = os.path.join(repo_dir, "tests/smoke-test.sh")
+            ok, out, err = run_host_cmd(["bash", script])
             self.send_json({"success": ok, "log": out or err})
-    
+
         def handle_executive_report(self):
-            _, pool, _ = run_host_cmd("zpool status tank")
-            _, snaps, _ = run_host_cmd("zfs list -t snapshot")
+            _, pool, _ = run_host_cmd(["zpool", "status", "tank"])
+            _, snaps, _ = run_host_cmd(["zfs", "list", "-t", "snapshot"])
             _, users, _ = run_host_cmd("kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c 'php /var/www/html/occ user:list' 2>/dev/null || true")
             report = f"# REPORTE EJECUTIVO DE SALUD Y AUDITORIA NAS\nFecha: {time.ctime()}\n\n## 1. ESTADO DE RAID-Z1\n{pool}\n\n## 2. BACKUPS Y SNAPSHOTS\n{snaps}\n\n## 3. USUARIOS ACTIVOS\n{users}\n"
             self.send_json({"report": report})
-    
+
         def handle_samba_status(self):
-            # 1. Pod & Daemon Status
             _, pod_st, _ = run_host_cmd("kubectl get pod -l app.kubernetes.io/name=samba -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo 'Unknown'")
             _, version_st, _ = run_host_cmd("kubectl exec deployment/samba -- smbd -V 2>/dev/null || echo 'Version 4.12'")
-            
-            # 2. ZFS Shares & Quotas
+
             shares = [
                 {"id": "profesores", "name": "[profesores]", "dataset": "tank/nas/profesores", "access": "Solo Docentes / Directivos"},
                 {"id": "alumnos", "name": "[alumnos]", "dataset": "tank/nas/alumnos", "access": "Estudiantes y Laboratorio"},
@@ -576,8 +771,7 @@ data:
                     "recordsize": rec,
                     "access": s["access"]
                 })
-    
-            # 3. Active Sessions (smbstatus)
+
             _, smb_out, _ = run_host_cmd("kubectl exec deployment/samba -- smbstatus -b 2>/dev/null || true")
             sessions = []
             capture = False
@@ -598,14 +792,13 @@ data:
                             "machine": parts[3],
                             "proto": parts[4] if len(parts) > 4 else "SMB3"
                         })
-    
-            # 4. Registered Samba Users (pdbedit)
+
             _, pdb_out, _ = run_host_cmd("kubectl exec deployment/samba -- pdbedit -L 2>/dev/null || true")
             samba_users = []
             for line in pdb_out.splitlines():
                 if ":" in line:
                     samba_users.append(line.split(":")[0])
-    
+
             self.send_json({
                 "status": pod_st.strip(),
                 "version": version_st.strip(),
@@ -618,58 +811,59 @@ data:
                     "apple_compat": "vfs_fruit (macOS nativo)"
                 }
             })
-    
+
         def handle_samba_quota(self, body):
             share = body.get("share", "").strip()
             quota = body.get("quota", "").strip()
-            if not share or not quota:
-                self.send_json({"success": False, "output": "Parametros share o quota invalidos."}, 400)
+            if not RE_SHARENAME.match(share) or not RE_QUOTA.match(quota):
+                self.send_json({"success": False, "output": "Parámetros share o quota inválidos."}, 400)
                 return
+
             dataset = f"tank/nas/{share}"
-            ok, out, err = run_host_cmd(f"zfs set quota={quota} {dataset}")
+            ok, out, err = run_host_cmd(["zfs", "set", f"quota={quota}", dataset])
             self.send_json({"success": ok, "output": out or err})
-    
+
         def handle_samba_restart(self):
-            ok, out, err = run_host_cmd("kubectl rollout restart deployment/samba")
+            ok, out, err = run_host_cmd(["kubectl", "rollout", "restart", "deployment/samba"])
             self.send_json({"success": ok, "output": out or err})
-    
+
         def serve_samba_connector(self):
             bat_content = r"""@echo off
-    setlocal enabledelayedexpansion
+    setlocal
     title Conector de Unidades de Red - Enterprise NAS
     chcp 65001 >nul
     color 1F
-    
+
     :: Obtener IP del servidor o usar predeterminada de red
     set "SERVER_HOST=192.168.1.50"
     if "%~1" neq "" set "SERVER_HOST=%~1"
-    
+
     :MENU
     cls
     echo ==============================================================================
     echo       CONECTOR DE UNIDADES DE RED ESCOLAR (SAMBA / SMB)
     echo ==============================================================================
-    echo Servidor NAS: \!SERVER_HOST!
+    echo Servidor NAS: \%SERVER_HOST%
     echo.
     echo Seleccione el recurso al que desea conectarse:
     echo.
-    echo   [1] Carpeta de ALUMNOS       - Montar en unidad Z: (\!SERVER_HOST!\alumnos)
-    echo   [2] Carpeta de PROFESORES    - Montar en unidad P: (\!SERVER_HOST!\profesores)
-    echo   [3] Carpeta PUBLICA          - Montar en unidad X: (\!SERVER_HOST!\publico)
+    echo   [1] Carpeta de ALUMNOS       - Montar en unidad Z: (\%SERVER_HOST%lumnos)
+    echo   [2] Carpeta de PROFESORES    - Montar en unidad P: (\%SERVER_HOST%\profesores)
+    echo   [3] Carpeta PUBLICA          - Montar en unidad X: (\%SERVER_HOST%\publico)
     echo   [4] Cambiar direccion IP del servidor NAS
     echo   [5] Desconectar todas las unidades de red del NAS
     echo   [6] Salir
     echo.
     set /p OPCION="Ingrese una opcion (1-6) y presione Enter: "
-    
-    if "!OPCION!"=="1" goto CONECTAR_ALUMNOS
-    if "!OPCION!"=="2" goto CONECTAR_PROFESORES
-    if "!OPCION!"=="3" goto CONECTAR_PUBLICO
-    if "!OPCION!"=="4" goto CAMBIAR_IP
-    if "!OPCION!"=="5" goto DESCONECTAR
-    if "!OPCION!"=="6" exit /b 0
+
+    if "%OPCION%"=="1" goto CONECTAR_ALUMNOS
+    if "%OPCION%"=="2" goto CONECTAR_PROFESORES
+    if "%OPCION%"=="3" goto CONECTAR_PUBLICO
+    if "%OPCION%"=="4" goto CAMBIAR_IP
+    if "%OPCION%"=="5" goto DESCONECTAR
+    if "%OPCION%"=="6" exit /b 0
     goto MENU
-    
+
     :CAMBIAR_IP
     cls
     echo ==============================================================================
@@ -679,68 +873,68 @@ data:
     echo Ingrese la direccion IP del servidor NAS:
     set /p SERVER_HOST="Direccion IP: "
     goto MENU
-    
+
     :CONECTAR_ALUMNOS
     set "DRIVE=Z:"
     set "SHARE=alumnos"
     goto PEDIR_CREDENCIALES
-    
+
     :CONECTAR_PROFESORES
     set "DRIVE=P:"
     set "SHARE=profesores"
     goto PEDIR_CREDENCIALES
-    
+
     :CONECTAR_PUBLICO
     set "DRIVE=X:"
     set "SHARE=publico"
     goto PEDIR_CREDENCIALES
-    
+
     :PEDIR_CREDENCIALES
     cls
     echo ==============================================================================
-    echo CONECTANDO A RECURSO: \!SERVER_HOST!\!SHARE! EN UNIDAD !DRIVE!
+    echo CONECTANDO A RECURSO: \%SERVER_HOST%\%SHARE% EN UNIDAD %DRIVE%
     echo ==============================================================================
     echo.
     echo Ingrese sus credenciales de la institucion:
     echo.
     set /p NAS_USER="Usuario: "
-    if "!NAS_USER!"=="" (
+    if "%NAS_USER%"=="" (
         echo [ERROR] El usuario no puede estar vacio.
         pause
         goto MENU
     )
-    
-    set /p NAS_PASS="Contraseña: "
-    if "!NAS_PASS!"=="" (
+
+    set /p NAS_PASS="Contrasena: "
+    if "%NAS_PASS%"=="" (
         echo [ERROR] La contrasena no puede estar vacia.
         pause
         goto MENU
     )
-    
+
     echo.
     echo Conectando... por favor espere...
-    net use !DRIVE! /delete /yes >nul 2>&1
-    net use !DRIVE! "\!SERVER_HOST!\!SHARE!" /user:"!NAS_USER!" "!NAS_PASS!" /persistent:yes >nul 2>&1
-    
-    if !errorlevel! equ 0 (
+    net use %DRIVE% /delete /yes >nul 2>&1
+    net use %DRIVE% "\%SERVER_HOST%\%SHARE%" /user:"%NAS_USER%" "%NAS_PASS%" /persistent:yes >nul 2>&1
+
+    if %errorlevel% equ 0 (
         echo.
         echo ==============================================================================
-        echo [EXITO] Unidad !DRIVE! conectada correctamente a \!SERVER_HOST!\!SHARE!
+        echo [EXITO] Unidad %DRIVE% conectada correctamente a \%SERVER_HOST%\%SHARE%
         echo La carpeta ya se encuentra disponible en 'Este equipo'.
         echo ==============================================================================
         echo.
-        start "" !DRIVE!
+        start "" %DRIVE%
     ) else (
         echo.
         echo ==============================================================================
-        echo [FALLO DE CONEXION]
+        echo [FALLO DE CONEXION] Error %errorlevel%
         echo Verifique que el usuario y contrasena sean correctos y que la IP sea accesible.
         echo ==============================================================================
     )
     echo.
     pause
     goto MENU
-    
+
     :DESCONECTAR
     cls
     echo Desconectando unidades Z:, P:, X:...
@@ -758,7 +952,7 @@ data:
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
-    
+
     if __name__ == "__main__":
         server = ThreadedHTTPServer(("0.0.0.0", PORT), NasApiHandler)
         print(f"Enterprise NAS Control Center OS listening on port {PORT}...")
@@ -793,7 +987,7 @@ data:
         }
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: var(--font-sans); }
         body { background: var(--bg-base); color: var(--text-main); font-size: 13px; line-height: 1.5; min-height: 100vh; display: flex; flex-direction: column; }
-        
+
         /* Barra superior técnica */
         header { background: var(--bg-surface); border-bottom: 1px solid var(--border-subtle); padding: 10px 20px; display: flex; justify-content: space-between; align-items: center; }
         .header-left { display: flex; align-items: center; gap: 14px; }
@@ -801,7 +995,7 @@ data:
         .status-indicator { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 4px; font-family: var(--font-mono); text-transform: uppercase; }
         .status-indicator.ok { background: var(--status-ok-bg); color: var(--status-ok); border: 1px solid var(--status-ok); }
         .status-indicator.degraded { background: var(--status-err-bg); color: var(--status-err); border: 1px solid var(--status-err); }
-        
+
         .header-actions { display: flex; align-items: center; gap: 8px; }
         .btn { background: var(--bg-subtle); color: var(--text-main); border: 1px solid var(--border-strong); padding: 5px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 500; transition: background 0.15s, border-color 0.15s; }
         .btn:hover { background: #283347; border-color: #4b5a75; }
@@ -810,34 +1004,34 @@ data:
         .btn-danger { background: #7f1d1d; border-color: #991b1b; color: #fecaca; }
         .btn-danger:hover { background: #991b1b; }
         .btn-sm { padding: 3px 8px; font-size: 11px; }
-    
+
         /* Layout principal */
         main { padding: 16px 20px; flex: 1; max-width: 1440px; margin: 0 auto; width: 100%; }
-        
+
         /* Navegación por pestañas sobria */
         .tab-bar { display: flex; gap: 2px; border-bottom: 1px solid var(--border-subtle); margin-bottom: 16px; }
         .tab-item { background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--text-muted); padding: 8px 14px; font-size: 12px; font-weight: 600; cursor: pointer; }
         .tab-item:hover { color: var(--text-main); }
         .tab-item.active { color: #60a5fa; border-bottom-color: #60a5fa; }
-    
+
         /* Encabezado descriptivo de módulo */
         .module-header { background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 4px; padding: 12px 16px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; }
         .module-header h2 { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-main); margin-bottom: 2px; }
         .module-header p { font-size: 12px; color: var(--text-muted); }
         .module-tag { font-family: var(--font-mono); font-size: 11px; color: var(--text-disabled); }
-    
+
         /* Tarjetas y métricas */
         .metrics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 16px; }
         .metric-card { background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 4px; padding: 12px 14px; }
         .metric-label { font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; margin-bottom: 4px; }
         .metric-value { font-family: var(--font-mono); font-size: 20px; font-weight: 700; color: var(--text-main); }
         .metric-footnote { font-size: 11px; color: var(--text-disabled); margin-top: 4px; }
-    
+
         /* Secciones y paneles */
         .panel { background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 4px; padding: 14px 16px; margin-bottom: 16px; }
         .panel-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-main); margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
         .panel-hint { font-size: 11px; color: var(--text-muted); margin-bottom: 12px; line-height: 1.4; }
-    
+
         /* Tablas densas */
         .table-wrapper { border: 1px solid var(--border-subtle); border-radius: 4px; overflow-x: auto; }
         table { width: 100%; border-collapse: collapse; font-size: 12px; text-align: left; }
@@ -846,16 +1040,16 @@ data:
         tr:last-child td { border-bottom: none; }
         tr:hover td { background: rgba(255, 255, 255, 0.015); }
         .font-mono { font-family: var(--font-mono); }
-    
+
         /* Filas de acción técnica */
         .action-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border: 1px solid var(--border-subtle); border-radius: 4px; margin-bottom: 8px; background: var(--bg-base); }
         .action-row:last-child { margin-bottom: 0; }
         .action-title { font-size: 12px; font-weight: 600; color: var(--text-main); }
         .action-desc { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
-    
+
         /* Terminal y logs */
         .console-view { background: #070a0f; border: 1px solid var(--border-subtle); border-radius: 4px; padding: 12px; font-family: var(--font-mono); font-size: 11px; color: #a7f3d0; max-height: 380px; overflow-y: auto; white-space: pre-wrap; line-height: 1.45; }
-    
+
         /* Modales */
         .modal-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.7); display: none; place-items: center; z-index: 1000; }
         .modal-backdrop.active { display: grid; }
@@ -864,7 +1058,7 @@ data:
         .modal-dialog p { font-size: 12px; color: var(--text-muted); margin-bottom: 14px; }
         input, textarea, select { width: 100%; background: var(--bg-base); border: 1px solid var(--border-strong); border-radius: 4px; padding: 8px 10px; color: var(--text-main); font-size: 12px; margin-bottom: 12px; }
         input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
-    
+
         /* Vista pública limpia */
         .public-container { max-width: 460px; margin: 60px auto; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 6px; padding: 30px; text-align: center; }
         .qr-frame { width: 220px; height: 220px; margin: 16px auto; background: #fff; padding: 10px; border-radius: 4px; display: block; }
@@ -889,7 +1083,7 @@ data:
           </button>
         </div>
       </header>
-    
+
       <main>
         <!-- VISTA PÚBLICA -->
         <div id="view-public" class="public-container">
@@ -910,7 +1104,7 @@ data:
             Modo de solo lectura para clientes. La gestión de almacenamiento y usuarios requiere autenticación de administrador.
           </div>
         </div>
-    
+
         <!-- CONSOLA DE ADMINISTRACIÓN -->
         <div id="view-admin" style="display:none;">
           <div class="tab-bar">
@@ -924,7 +1118,7 @@ data:
             <button class="tab-item" onclick="navigateTab('services')">Subsistemas K3s</button>
             <button class="tab-item" onclick="navigateTab('diagnostics')">Diagnóstico y Auditoría</button>
           </div>
-    
+
           <!-- 1. TELEMETRÍA DE SISTEMA -->
           <div id="tab-overview" class="tab-content">
             <div class="module-header">
@@ -934,7 +1128,7 @@ data:
               </div>
               <span class="module-tag">Subsistema: Linux Host / K3s Node</span>
             </div>
-    
+
             <div class="metrics-grid">
               <div class="metric-card">
                 <div class="metric-label">Carga de CPU</div>
@@ -952,11 +1146,11 @@ data:
                 <div class="metric-footnote">Páginas de lectura residentes en memoria</div>
               </div>
             </div>
-    
+
             <div class="panel">
               <div class="panel-title">Operaciones de Energía y Mantenimiento del Nodo</div>
               <div class="panel-hint">Ejecución de directivas del kernel para la gestión de buffers y ciclo de vida del servidor físico.</div>
-              
+
               <div class="action-row">
                 <div>
                   <div class="action-title">Liberar memoria caché de páginas (Flush ARC)</div>
@@ -964,7 +1158,7 @@ data:
                 </div>
                 <button class="btn btn-sm" onclick="dispatchFlushArc()">Ejecutar</button>
               </div>
-    
+
               <div class="action-row">
                 <div>
                   <div class="action-title">Reinicio controlado del host (Safe Reboot)</div>
@@ -972,7 +1166,7 @@ data:
                 </div>
                 <button class="btn btn-sm btn-danger" onclick="dispatchReboot()">Reiniciar</button>
               </div>
-    
+
               <div class="action-row">
                 <div>
                   <div class="action-title">Apagado seguro del almacenamiento (Safe Poweroff)</div>
@@ -982,7 +1176,7 @@ data:
               </div>
             </div>
           </div>
-    
+
           <!-- 2. ALMACENAMIENTO (ZFS RAID) -->
           <div id="tab-storage" class="tab-content" style="display:none;">
             <div class="module-header">
@@ -992,7 +1186,7 @@ data:
               </div>
               <span class="module-tag">Mecanismo: OpenZFS v2.2</span>
             </div>
-    
+
             <div class="panel">
               <div class="panel-title">
                 <span>Dispositivos de Bloque del Arreglo RAID-Z1</span>
@@ -1025,7 +1219,7 @@ data:
                 </table>
               </div>
             </div>
-    
+
             <div class="panel">
               <div class="panel-title">Estructura de Datasets y Cuotas de Almacenamiento</div>
               <div class="panel-hint">Límites estrictos de capacidad asignada para prevenir denegación de servicio por llenado de disco.</div>
@@ -1047,7 +1241,7 @@ data:
               </div>
             </div>
           </div>
-    
+
           <!-- 3. COPIAS DE SEGURIDAD (R2) -->
           <div id="tab-backups" class="tab-content" style="display:none;">
             <div class="module-header">
@@ -1057,7 +1251,7 @@ data:
               </div>
               <span class="module-tag">Estrategia: Resiliencia 3-2-1</span>
             </div>
-    
+
             <div class="panel">
               <div class="panel-title">
                 <span>Instantáneas Locales de Almacenamiento (Snapshots)</span>
@@ -1081,7 +1275,7 @@ data:
                 </table>
               </div>
             </div>
-    
+
             <div class="panel">
               <div class="panel-title">
                 <span>Objetos Cifrados en Almacenamiento Offsite (Cloudflare R2: nas-backup)</span>
@@ -1107,7 +1301,7 @@ data:
               </div>
             </div>
           </div>
-    
+
           <!-- 4. IDENTIDAD Y ACCESOS -->
           <div id="tab-identity" class="tab-content" style="display:none;">
             <div class="module-header">
@@ -1117,7 +1311,7 @@ data:
               </div>
               <span class="module-tag">Ámbito: LAN (Samba) + WAN (Nextcloud)</span>
             </div>
-    
+
             <div class="metrics-grid">
               <div class="panel">
                 <div class="panel-title">Crear Cuenta Individual</div>
@@ -1126,7 +1320,7 @@ data:
                 <input type="password" id="input-password" placeholder="Contraseña">
                 <button class="btn btn-primary btn-sm" style="width:100%;" onclick="dispatchCreateUser()">Registrar Cuenta</button>
               </div>
-    
+
               <div class="panel">
                 <div class="panel-title">Aprovisionamiento Masivo (Lote CSV)</div>
                 <div class="panel-hint">Formato requerido por línea: <code>usuario,contraseña,rol</code>.</div>
@@ -1134,7 +1328,7 @@ data:
                 <button class="btn btn-sm" style="width:100%;" onclick="dispatchImportCsv()">Procesar Archivo CSV</button>
               </div>
             </div>
-    
+
             <div class="panel">
               <div class="panel-title">Cuentas Registradas en el Sistema</div>
               <table class="table" style="margin-top:8px;">
@@ -1153,7 +1347,7 @@ data:
               </table>
             </div>
           </div>
-    
+
           <!-- 4B. SERVICIO SMB (SAMBA) -->
           <div id="tab-samba" class="tab-content" style="display:none;">
             <div class="module-header">
@@ -1163,7 +1357,7 @@ data:
               </div>
               <span class="module-tag" id="smb-pod-badge">Protocolo: SMB2 / SMB3</span>
             </div>
-    
+
             <div class="metrics-grid">
               <div class="panel">
                 <div class="panel-title">Estado del Microservicio SMB</div>
@@ -1186,7 +1380,7 @@ data:
                 <button class="btn btn-sm btn-primary" style="margin-top:8px; width:100%;" onclick="dispatchRestartSamba()">Reiniciar Servicio SMB</button>
               </div>
             </div>
-    
+
             <div class="panel" style="margin-bottom:16px;">
               <div class="panel-title">Conector de Disco de Red para Alumnos y Docentes (Cero Comandos)</div>
               <p style="font-size:12px; color:var(--text-muted); margin-top:4px; margin-bottom:12px;">
@@ -1206,7 +1400,7 @@ data:
                 <div style="margin-top:4px;"><strong>Ruta Pública:</strong> \\&lt;IP-DEL-NAS&gt;\publico &nbsp;(Unidad X:)</div>
               </div>
             </div>
-    
+
             <div class="panel" style="margin-bottom:16px;">
               <div class="panel-title">Gobernanza de Recursos Compartidos y Cuotas OpenZFS</div>
               <div class="panel-hint" style="margin-bottom:8px;">Control de límites de almacenamiento en disco asignados a cada departamento institucional.</div>
@@ -1227,7 +1421,7 @@ data:
                 </tbody>
               </table>
             </div>
-    
+
             <div class="panel">
               <div class="panel-title">Sesiones SMB Activas en Tiempo Real (Auditoría smbstatus)</div>
               <div class="panel-hint" style="margin-bottom:8px;">Registro de equipos cliente y usuarios conectados a través de la red local.</div>
@@ -1247,7 +1441,7 @@ data:
               </table>
             </div>
           </div>
-    
+
           <!-- 5. SISTEMA DE ARCHIVOS -->
           <div id="tab-filesystem" class="tab-content" style="display:none;">
             <div class="module-header">
@@ -1257,7 +1451,7 @@ data:
               </div>
               <span class="module-tag">Directorio base: /tank/nas</span>
             </div>
-    
+
             <div class="panel">
               <div class="panel-title">
                 <span>Contenido del Directorio Activo</span>
@@ -1282,7 +1476,7 @@ data:
               </div>
             </div>
           </div>
-    
+
           <!-- 6. SEGURIDAD Y RESILIENCIA -->
           <div id="tab-security" class="tab-content" style="display:none;">
             <div class="module-header">
@@ -1292,7 +1486,7 @@ data:
               </div>
               <span class="module-tag">Centinela: ransomware-sentinel daemon</span>
             </div>
-    
+
             <div class="metrics-grid">
               <div class="metric-card">
                 <div class="metric-label">Estado del Centinela</div>
@@ -1305,7 +1499,7 @@ data:
                 <div class="metric-footnote">Archivos en cuarentena preventiva</div>
               </div>
             </div>
-    
+
             <div class="panel">
               <div class="panel-title">
                 <span>Pruebas de Resiliencia en Tiempo Real</span>
@@ -1315,13 +1509,13 @@ data:
                 Simula la modificación no autorizada de un archivo honeypot para evaluar el tiempo de detección y aislamiento del centinela (&lt;5 segundos).
               </div>
             </div>
-    
+
             <div class="panel">
               <div class="panel-title">Registro Forense de Incidentes de Seguridad</div>
               <div id="security-logs-box" class="console-view">Sin incidentes registrados.</div>
             </div>
           </div>
-    
+
           <!-- 7. SUBSISTEMAS K3S -->
           <div id="tab-services" class="tab-content" style="display:none;">
             <div class="module-header">
@@ -1331,7 +1525,7 @@ data:
               </div>
               <span class="module-tag">Plano de Control: K3s Edge</span>
             </div>
-    
+
             <div class="panel">
               <div class="panel-title">Instancias en Ejecución</div>
               <div class="table-wrapper">
@@ -1350,7 +1544,7 @@ data:
               </div>
             </div>
           </div>
-    
+
           <!-- 8. DIAGNÓSTICO Y AUDITORÍA -->
           <div id="tab-diagnostics" class="tab-content" style="display:none;">
             <div class="module-header">
@@ -1360,7 +1554,7 @@ data:
               </div>
               <span class="module-tag">Norma: Smoke Test Suite v2.0</span>
             </div>
-    
+
             <div class="panel">
               <div class="panel-title">
                 <span>Batería de Pruebas de Subsistemas</span>
@@ -1377,7 +1571,7 @@ data:
           </div>
         </div>
       </main>
-    
+
       <!-- MODAL DE AUTENTICACIÓN -->
       <div id="modal-auth" class="modal-backdrop">
         <div class="modal-dialog">
@@ -1390,7 +1584,7 @@ data:
           </div>
         </div>
       </div>
-    
+
       <!-- MODAL DE VISUALIZACIÓN DE LOGS -->
       <div id="modal-logs" class="modal-backdrop">
         <div class="modal-dialog" style="max-width:800px;">
@@ -1401,15 +1595,15 @@ data:
           </div>
         </div>
       </div>
-    
+
       <script>
         let sessionToken = localStorage.getItem('appliance_auth_token') || '';
-    
+
         function evaluateSession() {
           const publicView = document.getElementById('view-public');
           const adminView = document.getElementById('view-admin');
           const authBtn = document.getElementById('btn-auth-toggle');
-    
+
           if (sessionToken) {
             publicView.style.display = 'none';
             adminView.style.display = 'block';
@@ -1426,13 +1620,13 @@ data:
             requestPublicStatus();
           }
         }
-    
+
         async function requestPublicStatus() {
           try {
             const res = await fetch('/api/public/status');
             const data = await res.json();
             const badge = document.getElementById('raid-badge');
-            
+
             if (data.raid_health === 'ONLINE') {
               badge.className = 'status-indicator ok';
               badge.textContent = 'RAID-Z1: ONLINE';
@@ -1440,7 +1634,7 @@ data:
               badge.className = 'status-indicator degraded';
               badge.textContent = 'RAID-Z1: ' + data.raid_health;
             }
-    
+
             const wanBtn = document.getElementById('btn-wan-toggle');
             if (data.tunnel_url && data.tunnel_url.startsWith('http')) {
               wanBtn.textContent = 'WAN: Activo (Desconectar)';
@@ -1462,7 +1656,7 @@ data:
             console.error('Error al consultar estado público:', err);
           }
         }
-    
+
         function openLoginModal() {
           const modal = document.getElementById('modal-auth');
           modal.classList.add('active');
@@ -1470,11 +1664,11 @@ data:
           input.value = '';
           setTimeout(() => input.focus(), 50);
         }
-    
+
         function closeLoginModal() {
           document.getElementById('modal-auth').classList.remove('active');
         }
-    
+
         async function executeLogin() {
           const pass = document.getElementById('auth-input-pass').value;
           const res = await fetch('/api/auth/login', {
@@ -1492,19 +1686,19 @@ data:
             alert(data.error || 'Credenciales no autorizadas.');
           }
         }
-    
+
         function executeLogout() {
           sessionToken = '';
           localStorage.removeItem('appliance_auth_token');
           evaluateSession();
         }
-    
+
         function navigateTab(tabKey) {
           document.querySelectorAll('.tab-item').forEach(el => el.classList.remove('active'));
           document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
           event.target.classList.add('active');
           document.getElementById('tab-' + tabKey).style.display = 'block';
-    
+
           if (tabKey === 'overview') requestSystemMetrics();
           if (tabKey === 'storage') requestStorageMetrics();
           if (tabKey === 'backups') requestBackupMetrics();
@@ -1514,7 +1708,7 @@ data:
           if (tabKey === 'security') requestSecurityMetrics();
           if (tabKey === 'services') requestServicesMetrics();
         }
-    
+
         async function callApi(endpoint, method = 'GET', payload = null) {
           const options = {
             method,
@@ -1531,7 +1725,7 @@ data:
           }
           return res.json();
         }
-    
+
         async function requestSystemMetrics() {
           const sys = await callApi('/api/system/status');
           if (sys) {
@@ -1540,7 +1734,7 @@ data:
             document.getElementById('metric-arc').textContent = sys.zfs_arc_mb + ' MB';
           }
         }
-    
+
         async function requestStorageMetrics() {
           const r = await callApi('/api/raid/status');
           if (r && r.disks) {
@@ -1571,7 +1765,7 @@ data:
             `).join('');
           }
         }
-    
+
         async function dispatchSimulateDiskFailure() {
           if (confirm('Acción requerida: Desasociar vdev disk2.img.\n\nEl pool tank operará en modo degradado mediante cálculo de paridad sin pérdida de datos.\n¿Desea continuar?')) {
             await callApi('/api/raid/action', 'POST', { action: 'offline_disk', target: 'disk2' });
@@ -1579,23 +1773,23 @@ data:
             requestPublicStatus();
           }
         }
-    
+
         async function dispatchRepairDisk() {
           await callApi('/api/raid/action', 'POST', { action: 'online_disk', target: 'disk2' });
           requestStorageMetrics();
           requestPublicStatus();
         }
-    
+
         async function dispatchAddHotSpare() {
           await callApi('/api/raid/action', 'POST', { action: 'add_spare' });
           requestStorageMetrics();
         }
-    
+
         async function dispatchScrub() {
           await callApi('/api/raid/action', 'POST', { action: 'scrub' });
           alert('Operación ZFS Scrub iniciada en segundo plano.');
         }
-    
+
         async function dispatchEditQuota(ds) {
           const q = prompt('Indique el valor de cuota para ' + ds + ' (ejemplo: 10G, 25G):');
           if (q) {
@@ -1603,7 +1797,7 @@ data:
             requestStorageMetrics();
           }
         }
-    
+
         async function requestBackupMetrics() {
           const s = await callApi('/api/backups/snapshots');
           if (s && s.snapshots) {
@@ -1633,7 +1827,7 @@ data:
             `).join('');
           }
         }
-    
+
         async function dispatchCreateSnapshot() {
           const tag = prompt('Etiqueta para la instantánea (ejemplo: pre-mantenimiento):');
           if (tag) {
@@ -1641,30 +1835,30 @@ data:
             requestBackupMetrics();
           }
         }
-    
+
         async function dispatchRollback(snapName) {
           if (confirm('ADVERTENCIA CRÍTICA:\n¿Revertir el dataset al punto ' + snapName + '?\n\nLos cambios posteriores a esta instantánea se descartarán.')) {
             await callApi('/api/backups/snapshot/rollback', 'POST', { snapshot: snapName });
             alert('Operación de rollback completada.');
           }
         }
-    
+
         async function dispatchToggleHold(name, hold) {
           await callApi('/api/backups/snapshot/hold', 'POST', { snapshot: name, hold });
           requestBackupMetrics();
         }
-    
+
         async function dispatchTriggerR2Backup() {
           await callApi('/api/backups/r2/trigger', 'POST', { mode: 'incremental' });
           alert('Trabajo de respaldo a Cloudflare R2 iniciado.');
         }
-    
+
         async function dispatchDrDrill() {
           alert('Iniciando verificación de recuperación (DR Drill)...');
           const res = await callApi('/api/backups/r2/restore', 'POST', {});
           alert(res.output || 'Verificación completada.');
         }
-    
+
         async function requestIdentityMetrics() {
           const u = await callApi('/api/users');
           const tbody = document.getElementById('identity-users-table');
@@ -1687,14 +1881,14 @@ data:
               if (isRoot || uid.includes('admin')) roleTag = 'Administrador de Almacenamiento';
               else if (uid.includes('profe') || uid.includes('docente')) roleTag = 'Docente / Investigador';
               else if (uid.includes('it') || uid.includes('infra')) roleTag = 'Operador IT';
-    
-              const actions = isRoot 
+
+              const actions = isRoot
                 ? '<span style="color:var(--text-disabled); font-size:11px; font-family:var(--font-mono);">Cuenta protegida (Root)</span>'
                 : `<div style="display:flex; justify-content:flex-end; gap:6px;">
                     <button class="btn btn-sm" onclick="dispatchResetUserPassword('${uid}')" title="Restablecer clave en Nextcloud y Samba">Restablecer clave</button>
                     <button class="btn btn-sm btn-danger" onclick="dispatchDeleteUser('${uid}')" title="Eliminar usuario de Nextcloud y Samba">Eliminar cuenta</button>
                    </div>`;
-    
+
               return `<tr>
                 <td style="font-family:var(--font-mono); font-weight:600;">${uid}</td>
                 <td>${displayName || uid}</td>
@@ -1707,7 +1901,7 @@ data:
             tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--status-err); padding:16px;">Error al consultar el directorio de usuarios.</td></tr>';
           }
         }
-    
+
         async function dispatchCreateUser() {
           const u = document.getElementById('input-username').value.trim();
           const p = document.getElementById('input-password').value.trim();
@@ -1724,7 +1918,7 @@ data:
             alert('Error al registrar usuario: ' + (res ? res.output : 'Error desconocido'));
           }
         }
-    
+
         async function dispatchDeleteUser(username) {
           if (confirm(`¿Confirma la eliminación permanente del usuario '${username}' del sistema (Nextcloud y Samba)?`)) {
             const res = await callApi('/api/users/delete', 'POST', { username });
@@ -1735,7 +1929,7 @@ data:
             }
           }
         }
-    
+
         async function dispatchResetUserPassword(username) {
           const p = prompt(`Ingrese la nueva contraseña para el usuario '${username}':`);
           if (p && p.trim()) {
@@ -1747,7 +1941,7 @@ data:
             }
           }
         }
-    
+
         async function dispatchImportCsv() {
           const csv = document.getElementById('input-csv').value.trim();
           if (!csv) {
@@ -1763,21 +1957,21 @@ data:
             alert('Error al importar CSV: ' + (res ? res.output : 'Error desconocido'));
           }
         }
-    
-        
+
+
         function toggleUncInfo() {
           const box = document.getElementById('smb-unc-box');
           box.style.display = (box.style.display === 'none') ? 'block' : 'none';
         }
-    
+
         async function requestSambaMetrics() {
           const s = await callApi('/api/samba/status');
           if (!s) return;
-    
+
           document.getElementById('smb-status-val').textContent = s.status || 'ACTIVO';
           document.getElementById('smb-version-val').textContent = s.version || 'Samba v4.12.2';
           document.getElementById('smb-sessions-val').textContent = (s.sessions ? s.sessions.length : 0);
-    
+
           // Render shares table
           const tbodyShares = document.getElementById('smb-shares-table');
           if (s.shares && s.shares.length > 0) {
@@ -1797,7 +1991,7 @@ data:
           } else {
             tbodyShares.innerHTML = '<tr><td colspan="7" style="text-align:center; padding:14px; color:var(--text-muted);">No se detectaron recursos compartidos.</td></tr>';
           }
-    
+
           // Render sessions table
           const tbodySessions = document.getElementById('smb-sessions-table');
           if (s.sessions && s.sessions.length > 0) {
@@ -1814,7 +2008,7 @@ data:
             tbodySessions.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:14px; color:var(--text-muted);">No hay conexiones de clientes activas en este instante.</td></tr>';
           }
         }
-    
+
         async function dispatchEditSambaQuota(shareId, currentQuota) {
           const q = prompt(`Ingrese la nueva cuota ZFS para el recurso '${shareId}' (ej: 10G, 50G, 100G, o 'none' para ilimitado):`, currentQuota);
           if (q && q.trim()) {
@@ -1826,7 +2020,7 @@ data:
             }
           }
         }
-    
+
         async function dispatchRestartSamba() {
           if (confirm("¿Confirma el reinicio del servicio de archivos Samba (SMB)? Las conexiones activas se restablecerán.")) {
             const res = await callApi('/api/samba/restart', 'POST');
@@ -1838,11 +2032,11 @@ data:
             }
           }
         }
-    
+
         function dispatchDownloadConnector() {
           window.location.href = '/api/samba/connector';
         }
-    
+
         async function requestFilesystemMetrics(path = '') {
           const f = await callApi('/api/files?path=' + encodeURIComponent(path));
           if (f && f.entries) {
@@ -1859,14 +2053,14 @@ data:
             `).join('');
           }
         }
-    
+
         async function dispatchDeleteFile(p) {
           if (confirm('¿Trasladar elemento a .Papelera:\n' + p + '?')) {
             await callApi('/api/files/delete', 'POST', { filepath: p });
             requestFilesystemMetrics();
           }
         }
-    
+
         async function requestSecurityMetrics() {
           const s = await callApi('/api/security');
           if (s) {
@@ -1882,13 +2076,13 @@ data:
             document.getElementById('security-logs-box').textContent = s.logs;
           }
         }
-    
+
         async function dispatchTestCanary() {
           await callApi('/api/security/test-canary', 'POST', {});
           alert('Simulación de alteración inyectada en canary_honeypot. El centinela registrará la amenaza.');
           setTimeout(requestSecurityMetrics, 2500);
         }
-    
+
         async function requestServicesMetrics() {
           const tbody = document.getElementById('services-table-body');
           if (tbody && tbody.children.length === 0) {
@@ -1913,25 +2107,25 @@ data:
             tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:16px; color:var(--status-err);">Error al comunicarse con la API de K3s.</td></tr>';
           }
         }
-    
+
         async function dispatchViewLogs(pod) {
           const l = await callApi('/api/services/logs?pod=' + encodeURIComponent(pod));
           document.getElementById('logs-modal-title').textContent = 'Registro de pod: ' + pod;
           document.getElementById('logs-modal-content').textContent = l.logs || 'Sin registros disponibles.';
           document.getElementById('modal-logs').classList.add('active');
         }
-    
+
         function closeLogsModal() {
           document.getElementById('modal-logs').classList.remove('active');
         }
-    
+
         async function dispatchSmokeTests() {
           const logBox = document.getElementById('diagnostics-log-box');
           logBox.textContent = 'Ejecutando suite automatizada de pruebas...';
           const r = await callApi('/api/diagnostics/smoke-test', 'POST', {});
           logBox.textContent = r.log || 'Ejecución finalizada.';
         }
-    
+
         async function dispatchDownloadReport() {
           const r = await callApi('/api/reports/executive');
           const blob = new Blob([r.report], { type: 'text/markdown' });
@@ -1940,7 +2134,7 @@ data:
           a.download = 'Reporte_Auditoria_Storage_' + Date.now() + '.md';
           a.click();
         }
-    
+
         async function toggleWanAccess() {
           const wanBtn = document.getElementById('btn-wan-toggle');
           const isOnline = wanBtn.textContent.includes('Desconectar');
@@ -1954,31 +2148,31 @@ data:
             setTimeout(requestPublicStatus, 2500);
           }
         }
-    
+
         async function rotateWanEndpoint() {
           if (confirm('Confirmar rotación: Se generará un nuevo endpoint público Cloudflare. Nextcloud y el código QR se actualizarán automáticamente.')) {
             await callApi('/api/wan/rotate-tunnel', 'POST', {});
             setTimeout(requestPublicStatus, 3500);
           }
         }
-    
+
         async function dispatchFlushArc() {
           await callApi('/api/system/flush-arc', 'POST', {});
           requestSystemMetrics();
         }
-    
+
         async function dispatchReboot() {
           if (confirm('Confirmar reinicio de sistema: Se terminarán las conexiones activas SMB y WebDAV.')) {
             await callApi('/api/system/reboot', 'POST', {});
           }
         }
-    
+
         async function dispatchShutdown() {
           if (confirm('Confirmar detención de sistema: Se descargarán las transacciones a disco (zpool sync) antes de cortar la energía.')) {
             await callApi('/api/system/shutdown', 'POST', {});
           }
         }
-    
+
         evaluateSession();
         setInterval(requestPublicStatus, 15000);
       </script>

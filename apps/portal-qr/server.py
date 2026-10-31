@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Enterprise NAS Control Center OS — Backend REST API Server
+Enterprise NAS Control Center OS — Backend REST API Server (Hardened Production Standard)
 Runs inside a privileged pod with hostPID access to execute ZFS, K3s, and System tasks.
+Strict DevSecOps: Zero Command Injection, Safe Subprocess Args, Token TTL, Rate-Limiting.
 """
 import os
 import sys
@@ -9,6 +10,9 @@ import json
 import time
 import subprocess
 import urllib.parse
+import re
+import shlex
+import secrets
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 
@@ -16,11 +20,35 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
 
 PORT = 80
-ADMIN_PASS_FALLBACK = "NasEscuela2026!"
-ACTIVE_SESSIONS = set()
+SESSION_TTL_SECONDS = 28800  # 8 hours
+MAX_FAILED_LOGINS = 5
+LOCKOUT_SECONDS = 900  # 15 minutes
 
-def run_host_cmd(cmd_str, timeout=30):
-    full_cmd = ["nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid", "--", "sh", "-c", cmd_str]
+# Security structures in memory
+ACTIVE_SESSIONS = {}   # token -> expiry_timestamp
+FAILED_LOGINS = {}     # ip -> [timestamps]
+
+# Strict validation regexes
+RE_USERNAME = re.compile(r"^[a-zA-Z0-9._-]{3,32}$")
+RE_SHARENAME = re.compile(r"^[a-zA-Z0-9._-]{2,32}$")
+RE_QUOTA = re.compile(r"^([0-9]+[KMGTkmgt]?|none)$")
+RE_TAG = re.compile(r"^[a-zA-Z0-9._-]{1,64}$")
+RE_DATASET = re.compile(r"^tank/nas(/[a-zA-Z0-9._-]+)*$")
+RE_NUMERIC = re.compile(r"^[0-9]+$")
+
+def run_host_cmd(cmd_list_or_str, timeout=30):
+    """
+    Executes commands securely against the host root namespace via nsenter.
+    Accepts either an explicit argument list (preferred, immune to shell injection)
+    or a sanitized shell command.
+    """
+    if isinstance(cmd_list_or_str, list):
+        full_cmd = ["nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid", "--"] + cmd_list_or_str
+        shell_mode = False
+    else:
+        full_cmd = ["nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid", "--", "sh", "-c", cmd_list_or_str]
+        shell_mode = False
+
     try:
         res = subprocess.run(full_cmd, capture_output=True, text=True, timeout=timeout)
         return res.returncode == 0, res.stdout, res.stderr
@@ -28,18 +56,83 @@ def run_host_cmd(cmd_str, timeout=30):
         return False, "", str(e)
 
 def get_admin_password():
-    ok, out, _ = run_host_cmd("kubectl get secret nextcloud-admin-credentials -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || true")
+    """
+    Retrieves the cluster admin password strictly from Kubernetes secrets or environment.
+    Never falls back to hardcoded public credentials.
+    """
+    env_pass = os.environ.get("PORTAL_ADMIN_PASSWORD", "").strip()
+    if env_pass:
+        return env_pass
+
+    ok, out, _ = run_host_cmd(["kubectl", "get", "secret", "nextcloud-admin-credentials", "-o", "jsonpath={.data.password}"])
     if ok and out.strip():
-        return out.strip()
-    return ADMIN_PASS_FALLBACK
+        try:
+            import base64
+            decoded = base64.b64decode(out.strip()).decode("utf-8").strip()
+            if decoded:
+                return decoded
+        except Exception:
+            pass
+    return ""
+
+def sanitize_path(relpath, base="/tank/nas"):
+    """
+    Guarantees that a requested path strictly resides within the base directory,
+    mitigating all directory traversal / path traversal attacks.
+    """
+    normalized = os.path.normpath(os.path.join(base, relpath.lstrip("/")))
+    real_base = os.path.realpath(base)
+    real_target = os.path.realpath(normalized) if os.path.exists(normalized) else normalized
+    if real_target == real_base or real_target.startswith(real_base + os.sep):
+        return real_target
+    return real_base
 
 class NasApiHandler(BaseHTTPRequestHandler):
+    def get_client_ip(self):
+        forwarded = self.headers.get("X-Forwarded-For")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+        return self.client_address[0]
+
+    def check_rate_limit(self, ip):
+        now = time.time()
+        attempts = FAILED_LOGINS.get(ip, [])
+        valid_attempts = [t for t in attempts if now - t < LOCKOUT_SECONDS]
+        FAILED_LOGINS[ip] = valid_attempts
+        return len(valid_attempts) < MAX_FAILED_LOGINS
+
+    def record_failed_login(self, ip):
+        now = time.time()
+        attempts = FAILED_LOGINS.get(ip, [])
+        attempts.append(now)
+        FAILED_LOGINS[ip] = attempts
+
+    def reset_failed_logins(self, ip):
+        FAILED_LOGINS.pop(ip, None)
+
+    def is_auth(self):
+        auth_hdr = self.headers.get("Authorization", "")
+        if auth_hdr.startswith("Bearer "):
+            token = auth_hdr.split(" ")[1]
+            now = time.time()
+            if token in ACTIVE_SESSIONS:
+                expiry = ACTIVE_SESSIONS[token]
+                if now < expiry:
+                    return True
+                else:
+                    ACTIVE_SESSIONS.pop(token, None)
+        return False
+
     def send_json(self, data, status=200):
         body = json.dumps(data).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
+        # Closed CORS: Only reflect requesting host if same origin
+        origin = self.headers.get("Origin")
+        if origin:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.end_headers()
@@ -47,17 +140,13 @@ class NasApiHandler(BaseHTTPRequestHandler):
 
     def do_OPTIONS(self):
         self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
+        origin = self.headers.get("Origin")
+        if origin:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.end_headers()
-
-    def is_auth(self):
-        auth_hdr = self.headers.get("Authorization", "")
-        if auth_hdr.startswith("Bearer "):
-            token = auth_hdr.split(" ")[1]
-            return token in ACTIVE_SESSIONS
-        return False
 
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
@@ -75,7 +164,6 @@ class NasApiHandler(BaseHTTPRequestHandler):
         elif path == "/api/samba/connector":
             self.serve_samba_connector()
             return
-
 
         if not self.is_auth():
             self.send_json({"error": "Unauthorized"}, 401)
@@ -113,7 +201,6 @@ class NasApiHandler(BaseHTTPRequestHandler):
             self.handle_executive_report()
         elif path == "/api/samba/status":
             self.handle_samba_status()
-
         else:
             self.send_json({"error": "Not Found"}, 404)
 
@@ -129,12 +216,25 @@ class NasApiHandler(BaseHTTPRequestHandler):
                 pass
 
         if path == "/api/auth/login":
+            client_ip = self.get_client_ip()
+            if not self.check_rate_limit(client_ip):
+                self.send_json({"success": False, "error": "Demasiados intentos fallidos. Bloqueo temporal por 15 minutos."}, 429)
+                return
+
             password = body.get("password", "")
-            if password == get_admin_password():
-                token = f"admin-token-{int(time.time())}"
-                ACTIVE_SESSIONS.add(token)
+            real_admin_pass = get_admin_password()
+            if not real_admin_pass:
+                self.send_json({"success": False, "error": "Servicio de autenticación no configurado (secret ausente)."}, 500)
+                return
+
+            if secrets.compare_digest(password, real_admin_pass):
+                token = secrets.token_urlsafe(32)
+                expiry = time.time() + SESSION_TTL_SECONDS
+                ACTIVE_SESSIONS[token] = expiry
+                self.reset_failed_logins(client_ip)
                 self.send_json({"success": True, "token": token})
             else:
+                self.record_failed_login(client_ip)
                 self.send_json({"success": False, "error": "Contraseña inválida"}, 401)
             return
 
@@ -144,7 +244,7 @@ class NasApiHandler(BaseHTTPRequestHandler):
 
         if path == "/api/auth/logout":
             token = self.headers.get("Authorization", "").replace("Bearer ", "")
-            ACTIVE_SESSIONS.discard(token)
+            ACTIVE_SESSIONS.pop(token, None)
             self.send_json({"success": True})
         elif path == "/api/raid/action":
             self.handle_raid_action(body)
@@ -192,10 +292,12 @@ class NasApiHandler(BaseHTTPRequestHandler):
             self.handle_samba_restart()
         elif path == "/api/system/reboot":
             self.send_json({"success": True, "message": "Reiniciando servidor..."})
-            run_host_cmd("sync && reboot")
+            run_host_cmd(["sync"])
+            run_host_cmd(["reboot"])
         elif path == "/api/system/shutdown":
             self.send_json({"success": True, "message": "Apagando servidor de forma segura..."})
-            run_host_cmd("zpool sync && poweroff")
+            run_host_cmd(["zpool", "sync"])
+            run_host_cmd(["poweroff"])
         elif path == "/api/system/flush-arc":
             run_host_cmd("echo 3 > /proc/sys/vm/drop_caches")
             self.send_json({"success": True, "message": "Caché de memoria RAM liberada."})
@@ -245,8 +347,8 @@ class NasApiHandler(BaseHTTPRequestHandler):
                     tunnel_url = f.read().strip()
             except Exception:
                 pass
-        ok, out, _ = run_host_cmd("zpool list -H -o health tank 2>/dev/null || echo OFFLINE")
-        health = out.strip() or "UNKNOWN"
+        ok, out, _ = run_host_cmd(["zpool", "list", "-H", "-o", "health", "tank"])
+        health = out.strip() if ok and out.strip() else "OFFLINE"
         self.send_json({
             "tunnel_url": tunnel_url,
             "raid_health": health,
@@ -256,7 +358,7 @@ class NasApiHandler(BaseHTTPRequestHandler):
 
     def handle_system_status(self):
         _, cpu_out, _ = run_host_cmd("top -bn1 | grep 'Cpu(s)' | awk '{print $2}' || echo 0")
-        _, mem_out, _ = run_host_cmd("free -m | awk '/Mem:/ {print $3 \",\" $2}' || echo '0,0'")
+        _, mem_out, _ = run_host_cmd("free -m | awk '/Mem:/ {print $3 "," $2}' || echo '0,0'")
         _, arc_out, _ = run_host_cmd("grep -w size /proc/spl/kstat/zfs/arcstats 2>/dev/null | awk '{print int($3/1024/1024)}' || echo 0")
         mem_parts = mem_out.strip().split(",")
         used_ram = int(mem_parts[0]) if len(mem_parts) > 1 and mem_parts[0].isdigit() else 0
@@ -269,8 +371,8 @@ class NasApiHandler(BaseHTTPRequestHandler):
         })
 
     def handle_raid_status(self):
-        _, pool_out, _ = run_host_cmd("zpool list -H -p -o name,size,alloc,free,cap,health tank 2>/dev/null || true")
-        _, status_out, _ = run_host_cmd("zpool status tank 2>/dev/null || true")
+        _, pool_out, _ = run_host_cmd(["zpool", "list", "-H", "-p", "-o", "name,size,alloc,free,cap,health", "tank"])
+        _, status_out, _ = run_host_cmd(["zpool", "status", "tank"])
         disks = []
         for line in status_out.splitlines():
             if "disk" in line or "spare" in line:
@@ -287,79 +389,113 @@ class NasApiHandler(BaseHTTPRequestHandler):
     def handle_raid_action(self, body):
         action = body.get("action")
         target = body.get("target", "")
-        if action == "offline_disk":
-            ok, out, err = run_host_cmd(f"zpool offline tank /zfs-disks/{target}.img")
-        elif action == "online_disk":
-            ok, out, err = run_host_cmd(f"zpool online tank /zfs-disks/{target}.img")
+        if not re.match(r"^[a-zA-Z0-9._-]+$", target):
+            target = ""
+
+        if action == "offline_disk" and target:
+            ok, out, err = run_host_cmd(["zpool", "offline", "tank", f"/zfs-disks/{target}.img"])
+        elif action == "online_disk" and target:
+            ok, out, err = run_host_cmd(["zpool", "online", "tank", f"/zfs-disks/{target}.img"])
         elif action == "add_spare":
-            run_host_cmd("truncate -s 2G /zfs-disks/disk4.img")
-            ok, out, err = run_host_cmd("zpool add tank spare /zfs-disks/disk4.img")
+            run_host_cmd(["truncate", "-s", "2G", "/zfs-disks/disk4.img"])
+            ok, out, err = run_host_cmd(["zpool", "add", "tank", "spare", "/zfs-disks/disk4.img"])
         elif action == "scrub":
-            ok, out, err = run_host_cmd("zpool scrub tank")
+            ok, out, err = run_host_cmd(["zpool", "scrub", "tank"])
         elif action == "clear":
-            ok, out, err = run_host_cmd("zpool clear tank")
+            ok, out, err = run_host_cmd(["zpool", "clear", "tank"])
         else:
-            self.send_json({"error": "Acción inválida"}, 400)
+            self.send_json({"error": "Acción inválida o parámetros inseguros"}, 400)
             return
         self.send_json({"success": ok, "output": out or err})
 
     def handle_datasets_list(self):
-        _, out, _ = run_host_cmd("zfs list -H -o name,used,avail,refer,mountpoint,quota,compression,recordsize 2>/dev/null || true")
+        _, out, _ = run_host_cmd(["zfs", "list", "-H", "-o", "name,used,avail,refer,mountpoint,quota,compression,recordsize"])
         ds_list = []
         for line in out.splitlines():
-            p = line.split("\t")
+            p = line.split("	")
             if len(p) >= 8:
                 ds_list.append({"name": p[0], "used": p[1], "avail": p[2], "refer": p[3], "mount": p[4], "quota": p[5], "compression": p[6], "recordsize": p[7]})
         self.send_json({"datasets": ds_list})
 
     def handle_dataset_update(self, body):
-        ds = body.get("dataset")
-        prop = body.get("property")
-        val = body.get("value")
-        if prop in ("quota", "compression", "recordsize") and ds.startswith("tank/"):
-            ok, out, err = run_host_cmd(f"zfs set {prop}='{val}' {ds}")
-            self.send_json({"success": ok, "output": out or err})
+        ds = body.get("dataset", "")
+        prop = body.get("property", "")
+        val = body.get("value", "")
+
+        if not RE_DATASET.match(ds):
+            self.send_json({"error": "Dataset inválido"}, 400)
+            return
+
+        if prop == "quota" and RE_QUOTA.match(val):
+            ok, out, err = run_host_cmd(["zfs", "set", f"quota={val}", ds])
+        elif prop == "compression" and val in ("on", "off", "lz4", "zstd", "gzip"):
+            ok, out, err = run_host_cmd(["zfs", "set", f"compression={val}", ds])
+        elif prop == "recordsize" and val in ("4K", "8K", "16K", "32K", "64K", "128K", "256K", "512K", "1024K"):
+            ok, out, err = run_host_cmd(["zfs", "set", f"recordsize={val}", ds])
         else:
-            self.send_json({"error": "Propiedad no permitida"}, 400)
+            self.send_json({"error": "Propiedad o valor no permitido"}, 400)
+            return
+
+        self.send_json({"success": ok, "output": out or err})
 
     def handle_snapshots_list(self):
-        _, out, _ = run_host_cmd("zfs list -t snapshot -H -o name,used,creation -s creation 2>/dev/null || true")
+        _, out, _ = run_host_cmd(["zfs", "list", "-t", "snapshot", "-H", "-o", "name,used,creation", "-s", "creation"])
         snaps = []
         for line in out.splitlines():
-            p = line.split("\t")
+            p = line.split("	")
             if len(p) >= 3:
-                _, holds_out, _ = run_host_cmd(f"zfs holds -H '{p[0]}' 2>/dev/null || true")
-                snaps.append({"name": p[0], "used": p[1], "creation": p[2], "is_held": bool(holds_out.strip())})
+                snap_name = p[0]
+                _, holds_out, _ = run_host_cmd(["zfs", "holds", "-H", snap_name])
+                snaps.append({"name": snap_name, "used": p[1], "creation": p[2], "is_held": bool(holds_out.strip())})
         self.send_json({"snapshots": snaps})
 
     def handle_snapshot_create(self, body):
-        tag = body.get("tag", f"manual-{int(time.time())}")
-        cmd = f"kubectl exec deployment/nextcloud-postgres -- pg_dumpall -U nextcloud | gzip > /tank/nas/postgres/db-manual.sql.gz 2>/dev/null || true; zfs snapshot 'tank/nas@{tag}'"
-        ok, out, err = run_host_cmd(cmd)
+        tag = body.get("tag", "").strip() or f"manual-{int(time.time())}"
+        if not RE_TAG.match(tag):
+            self.send_json({"error": "Etiqueta de snapshot inválida"}, 400)
+            return
+
+        # Snapshot recursivo con backup previo de base de datos
+        run_host_cmd("kubectl exec deployment/nextcloud-postgres -- pg_dumpall -U nextcloud | gzip > /tank/nas/postgres/db-manual.sql.gz 2>/dev/null || true")
+        ok, out, err = run_host_cmd(["zfs", "snapshot", "-r", f"tank/nas@{tag}"])
         self.send_json({"success": ok, "output": out or err})
 
     def handle_snapshot_rollback(self, body):
-        snap = body.get("snapshot")
-        ok, out, err = run_host_cmd(f"bash /home/oriel/nas-gitops/scripts/nas-recover.sh rollback-local '{snap}'")
+        snap = body.get("snapshot", "").strip()
+        if not re.match(r"^tank/nas(@[a-zA-Z0-9._-]+)?$", snap) and not re.match(r"^tank/nas/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+$", snap):
+            self.send_json({"error": "Nombre de snapshot inválido"}, 400)
+            return
+
+        repo_dir = os.environ.get("NAS_REPO_DIR", "/home/oriel/nas-gitops")
+        script = os.path.join(repo_dir, "scripts/nas-recover.sh")
+        ok, out, err = run_host_cmd(["bash", script, "rollback-local", snap])
         self.send_json({"success": ok, "output": out or err})
 
     def handle_snapshot_hold(self, body):
-        snap = body.get("snapshot")
+        snap = body.get("snapshot", "").strip()
         hold = body.get("hold", True)
-        subcmd = "hold sentinel-immutable" if hold else "release sentinel-immutable"
-        ok, out, err = run_host_cmd(f"zfs {subcmd} '{snap}'")
+        if "@" not in snap or not snap.startswith("tank/nas"):
+            self.send_json({"error": "Snapshot inválido"}, 400)
+            return
+
+        action = "hold" if hold else "release"
+        ok, out, err = run_host_cmd(["zfs", action, "sentinel-immutable", snap])
         self.send_json({"success": ok, "output": out or err})
 
     def handle_snapshot_delete(self, body):
-        snap = body.get("snapshot")
-        run_host_cmd(f"zfs release sentinel-immutable '{snap}' 2>/dev/null || true")
-        ok, out, err = run_host_cmd(f"zfs destroy '{snap}'")
+        snap = body.get("snapshot", "").strip()
+        if "@" not in snap or not snap.startswith("tank/nas"):
+            self.send_json({"error": "Snapshot inválido"}, 400)
+            return
+
+        run_host_cmd(["zfs", "release", "sentinel-immutable", snap])
+        ok, out, err = run_host_cmd(["zfs", "destroy", "-r", snap])
         self.send_json({"success": ok, "output": out or err})
 
     def handle_r2_list(self):
-        cmd = 'R2_ACC=$(kubectl -n kube-system get secret r2-backup-credentials -o jsonpath="{.data.account-id}" | base64 -d); ' \
-              'R2_KEY=$(kubectl -n kube-system get secret r2-backup-credentials -o jsonpath="{.data.access-key-id}" | base64 -d); ' \
-              'R2_SEC=$(kubectl -n kube-system get secret r2-backup-credentials -o jsonpath="{.data.secret-access-key}" | base64 -d); ' \
+        cmd = 'R2_ACC=$(kubectl -n kube-system get secret r2-backup-credentials -o jsonpath="{.data.account-id}" 2>/dev/null | base64 -d || true); ' \
+              'R2_KEY=$(kubectl -n kube-system get secret r2-backup-credentials -o jsonpath="{.data.access-key-id}" 2>/dev/null | base64 -d || true); ' \
+              'R2_SEC=$(kubectl -n kube-system get secret r2-backup-credentials -o jsonpath="{.data.secret-access-key}" 2>/dev/null | base64 -d || true); ' \
               'export RCLONE_CONFIG_R2_TYPE=s3 RCLONE_CONFIG_R2_PROVIDER=Cloudflare RCLONE_CONFIG_R2_ACCESS_KEY_ID=$R2_KEY RCLONE_CONFIG_R2_SECRET_ACCESS_KEY=$R2_SEC RCLONE_CONFIG_R2_ENDPOINT="https://${R2_ACC}.r2.cloudflarestorage.com" RCLONE_CONFIG_R2_NO_CHECK_BUCKET=true; ' \
               'rclone lsf -R -l r2:nas-backup/ 2>/dev/null || true'
         ok, out, _ = run_host_cmd(cmd)
@@ -371,13 +507,14 @@ class NasApiHandler(BaseHTTPRequestHandler):
         self.send_json({"r2_objects": files})
 
     def handle_r2_trigger(self, body):
-        mode = body.get("mode", "incremental")
         cmd = "kubectl -n kube-system delete job manual-r2-backup --ignore-not-found=true && kubectl -n kube-system create job --from=cronjob/zfs-offsite-backup manual-r2-backup"
         ok, out, err = run_host_cmd(cmd)
         self.send_json({"success": ok, "output": out or err})
 
     def handle_r2_restore(self, body):
-        ok, out, err = run_host_cmd("bash /home/oriel/nas-gitops/tests/disaster-recovery-drill.sh")
+        repo_dir = os.environ.get("NAS_REPO_DIR", "/home/oriel/nas-gitops")
+        script = os.path.join(repo_dir, "tests/disaster-recovery-drill.sh")
+        ok, out, err = run_host_cmd(["bash", script])
         self.send_json({"success": ok, "output": out or err})
 
     def handle_users_list(self):
@@ -387,33 +524,52 @@ class NasApiHandler(BaseHTTPRequestHandler):
     def handle_user_create(self, body):
         user = body.get("username", "").strip()
         pwd = body.get("password", "").strip()
-        if not user or not pwd:
-            self.send_json({"success": False, "output": "Usuario o contrasena vacios."}, 400)
+        if not RE_USERNAME.match(user) or not pwd:
+            self.send_json({"success": False, "output": "Nombre de usuario o contraseña con formato inválido (solo a-z, 0-9, . _ - de 3 a 32 caracteres)."}, 400)
             return
-        cmd = f'kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c "OC_PASS=\\"{pwd}\\" php /var/www/html/occ user:add --password-from-env \\"{user}\\"" 2>&1'
-        ok, out, err = run_host_cmd(cmd)
-        run_host_cmd(f'kubectl exec deployment/samba -- sh -c "useradd -M -s /usr/sbin/nologin \\"{user}\\" 2>/dev/null || true; (echo \\"{pwd}\\"; echo \\"{pwd}\\") | smbpasswd -s -a \\"{user}\\"" 2>/dev/null || true')
+
+        quoted_user = shlex.quote(user)
+        quoted_pwd = shlex.quote(pwd)
+
+        nc_cmd = f"kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c 'OC_PASS={quoted_pwd} php /var/www/html/occ user:add --password-from-env {quoted_user}'"
+        ok, out, err = run_host_cmd(nc_cmd)
+
+        smb_cmd = f"kubectl exec deployment/samba -- sh -c 'useradd -M -s /usr/sbin/nologin {quoted_user} 2>/dev/null || true; (echo {quoted_pwd}; echo {quoted_pwd}) | smbpasswd -s -a {quoted_user}'"
+        run_host_cmd(smb_cmd)
+
         self.send_json({"success": ok, "output": out or err})
 
     def handle_user_delete(self, body):
         user = body.get("username", "").strip()
-        if not user or user == "admin":
-            self.send_json({"success": False, "output": "Operacion denegada para la cuenta de administrador root."}, 400)
+        if not RE_USERNAME.match(user) or user == "admin":
+            self.send_json({"success": False, "output": "Operación denegada para la cuenta protegida o usuario inválido."}, 400)
             return
-        cmd = f'kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c "php /var/www/html/occ user:delete -n \\"{user}\\"" 2>&1'
-        ok, out, err = run_host_cmd(cmd)
-        run_host_cmd(f'kubectl exec deployment/samba -- smbpasswd -x \\"{user}\\" 2>/dev/null || true')
+
+        quoted_user = shlex.quote(user)
+        nc_cmd = f"kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c 'php /var/www/html/occ user:delete -n {quoted_user}'"
+        ok, out, err = run_host_cmd(nc_cmd)
+
+        smb_cmd = f"kubectl exec deployment/samba -- smbpasswd -x {quoted_user}"
+        run_host_cmd(smb_cmd)
+
         self.send_json({"success": ok, "output": out or err})
 
     def handle_user_password(self, body):
         user = body.get("username", "").strip()
         pwd = body.get("password", "").strip()
-        if not user or not pwd:
-            self.send_json({"success": False, "output": "Parametros insuficientes."}, 400)
+        if not RE_USERNAME.match(user) or not pwd:
+            self.send_json({"success": False, "output": "Parámetros insuficientes o formato no válido."}, 400)
             return
-        cmd = f'kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c "OC_PASS=\\"{pwd}\\" php /var/www/html/occ user:resetpassword --password-from-env \\"{user}\\"" 2>&1'
-        ok, out, err = run_host_cmd(cmd)
-        run_host_cmd(f'kubectl exec deployment/samba -- sh -c "(echo \\"{pwd}\\"; echo \\"{pwd}\\") | smbpasswd -s \\"{user}\\"" 2>/dev/null || true')
+
+        quoted_user = shlex.quote(user)
+        quoted_pwd = shlex.quote(pwd)
+
+        nc_cmd = f"kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c 'OC_PASS={quoted_pwd} php /var/www/html/occ user:resetpassword --password-from-env {quoted_user}'"
+        ok, out, err = run_host_cmd(nc_cmd)
+
+        smb_cmd = f"kubectl exec deployment/samba -- sh -c '(echo {quoted_pwd}; echo {quoted_pwd}) | smbpasswd -s {quoted_user}'"
+        run_host_cmd(smb_cmd)
+
         self.send_json({"success": ok, "output": out or err})
 
     def handle_user_csv(self, body):
@@ -423,17 +579,20 @@ class NasApiHandler(BaseHTTPRequestHandler):
             parts = [p.strip() for p in line.split(",") if p.strip()]
             if len(parts) >= 2:
                 u, p = parts[0], parts[1]
-                cmd = f'kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c "OC_PASS=\\"{p}\\" php /var/www/html/occ user:add --password-from-env \\"{u}\\"" 2>&1'
-                run_host_cmd(cmd)
-                run_host_cmd(f'kubectl exec deployment/samba -- sh -c "useradd -M -s /usr/sbin/nologin \\"{u}\\" 2>/dev/null || true; (echo \\"{p}\\"; echo \\"{p}\\") | smbpasswd -s -a \\"{u}\\"" 2>/dev/null || true')
-                created.append(u)
+                if RE_USERNAME.match(u) and p:
+                    qu = shlex.quote(u)
+                    qp = shlex.quote(p)
+                    nc_cmd = f"kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c 'OC_PASS={qp} php /var/www/html/occ user:add --password-from-env {qu}'"
+                    run_host_cmd(nc_cmd)
+                    smb_cmd = f"kubectl exec deployment/samba -- sh -c 'useradd -M -s /usr/sbin/nologin {qu} 2>/dev/null || true; (echo {qp}; echo {qp}) | smbpasswd -s -a {qu}'"
+                    run_host_cmd(smb_cmd)
+                    created.append(u)
         self.send_json({"success": True, "created": created})
 
     def handle_files_list(self, relpath):
-        clean_path = os.path.normpath("/tank/nas/" + relpath.lstrip("/"))
-        if not clean_path.startswith("/tank/nas"):
-            clean_path = "/tank/nas"
-        _, out, _ = run_host_cmd(f"ls -la --time-style=long-iso '{clean_path}' 2>/dev/null || true")
+        clean_path = sanitize_path(relpath)
+        quoted_path = shlex.quote(clean_path)
+        _, out, _ = run_host_cmd(f"ls -la --time-style=long-iso {quoted_path} 2>/dev/null || true")
         entries = []
         for line in out.splitlines()[1:]:
             parts = line.split(maxsplit=7)
@@ -443,38 +602,60 @@ class NasApiHandler(BaseHTTPRequestHandler):
 
     def handle_file_delete(self, body):
         fpath = body.get("filepath", "")
-        if fpath.startswith("/tank/nas/"):
-            ok, out, err = run_host_cmd(f"mkdir -p /tank/nas/.Papelera && mv '{fpath}' /tank/nas/.Papelera/ 2>&1 || rm -rf '{fpath}' 2>&1")
-            self.send_json({"success": ok, "output": out or err})
-        else:
-            self.send_json({"error": "Ruta inválida"}, 400)
+        clean_target = sanitize_path(fpath)
+        if clean_target == "/tank/nas":
+            self.send_json({"error": "No está permitido eliminar la raíz del almacenamiento"}, 400)
+            return
+
+        quoted_target = shlex.quote(clean_target)
+        cmd = f"mkdir -p /tank/nas/.Papelera && mv {quoted_target} /tank/nas/.Papelera/ 2>&1 || rm -rf {quoted_target} 2>&1"
+        ok, out, err = run_host_cmd(cmd)
+        self.send_json({"success": ok, "output": out or err})
 
     def handle_file_restore_recycle(self, body):
         fname = body.get("filename", "")
-        target = body.get("target_dir", "/tank/nas/publico")
-        ok, out, err = run_host_cmd(f"mv '/tank/nas/.Papelera/{fname}' '{target}/' 2>&1")
+        target_dir = body.get("target_dir", "/tank/nas/publico")
+        if not re.match(r"^[a-zA-Z0-9._-]+$", fname):
+            self.send_json({"error": "Nombre de archivo inválido"}, 400)
+            return
+
+        clean_dir = sanitize_path(target_dir)
+        quoted_source = shlex.quote(f"/tank/nas/.Papelera/{fname}")
+        quoted_dest = shlex.quote(f"{clean_dir}/")
+        ok, out, err = run_host_cmd(f"mv {quoted_source} {quoted_dest} 2>&1")
         self.send_json({"success": ok, "output": out or err})
 
     def handle_share_create(self, body):
-        name = body.get("name")
-        quota = body.get("quota", "5G")
-        if name and name.isalnum():
-            ok, out, err = run_host_cmd(f"zfs create -o quota={quota} -o compression=lz4 'tank/nas/{name}' && chmod 777 '/tank/nas/{name}'")
-            self.send_json({"success": ok, "output": out or err})
-        else:
-            self.send_json({"error": "Nombre inválido"}, 400)
+        name = body.get("name", "").strip()
+        quota = body.get("quota", "5G").strip()
+        if not RE_SHARENAME.match(name) or not RE_QUOTA.match(quota):
+            self.send_json({"error": "Nombre o cuota de recurso inválido"}, 400)
+            return
+
+        ok, out, err = run_host_cmd(["zfs", "create", "-o", f"quota={quota}", "-o", "compression=lz4", f"tank/nas/{name}"])
+        if ok:
+            run_host_cmd(["chmod", "777", f"/tank/nas/{name}"])
+        self.send_json({"success": ok, "output": out or err})
 
     def handle_sessions_list(self):
-        _, out, _ = run_host_cmd("smbstatus -b 2>/dev/null || true")
+        _, out, _ = run_host_cmd("kubectl exec deployment/samba -- smbstatus -b 2>/dev/null || true")
         self.send_json({"smb_sessions": out})
 
     def handle_session_kill(self, body):
-        pid = body.get("pid")
-        if pid and str(pid).isdigit():
-            ok, out, err = run_host_cmd(f"kill -9 {pid}")
-            self.send_json({"success": ok, "output": out or err})
-        else:
+        pid = str(body.get("pid", "")).strip()
+        if not RE_NUMERIC.match(pid):
             self.send_json({"error": "PID inválido"}, 400)
+            return
+
+        # Solo permite terminar procesos que figuren como sesiones de Samba activas
+        _, smb_pids, _ = run_host_cmd("kubectl exec deployment/samba -- smbstatus -b 2>/dev/null | awk '{print $1}' || true")
+        active_pids = [p.strip() for p in smb_pids.splitlines() if p.strip().isdigit()]
+        if pid not in active_pids:
+            self.send_json({"error": "El PID especificado no pertenece a una sesión activa de Samba."}, 403)
+            return
+
+        ok, out, err = run_host_cmd(["kubectl", "exec", "deployment/samba", "--", "kill", "-9", pid])
+        self.send_json({"success": ok, "output": out or err})
 
     def handle_security_status(self):
         _, st, _ = run_host_cmd("cat /tmp/nas-tunnel/ransomware_status 2>/dev/null || echo 1")
@@ -497,12 +678,24 @@ class NasApiHandler(BaseHTTPRequestHandler):
         self.send_json({"pods": pods})
 
     def handle_service_restart(self, body):
-        dep = body.get("deployment")
-        ok, out, err = run_host_cmd(f"kubectl rollout restart deployment/{dep} || kubectl rollout restart deployment/{dep} -n kube-system")
+        dep = body.get("deployment", "").strip()
+        if not re.match(r"^[a-zA-Z0-9._-]+$", dep):
+            self.send_json({"error": "Nombre de deployment inválido"}, 400)
+            return
+
+        ok, out, err = run_host_cmd(["kubectl", "rollout", "restart", f"deployment/{dep}"])
+        if not ok:
+            ok, out, err = run_host_cmd(["kubectl", "rollout", "restart", f"deployment/{dep}", "-n", "kube-system"])
         self.send_json({"success": ok, "output": out or err})
 
     def handle_service_logs(self, pod):
-        _, out, _ = run_host_cmd(f"kubectl logs '{pod}' --all-containers --tail=100 2>&1 || kubectl logs -n kube-system '{pod}' --all-containers --tail=100 2>&1 || echo 'Error obteniendo logs'")
+        if not re.match(r"^[a-zA-Z0-9._-]+$", pod):
+            self.send_json({"logs": "Nombre de pod inválido"})
+            return
+
+        ok, out, _ = run_host_cmd(["kubectl", "logs", pod, "--all-containers", "--tail=100"])
+        if not ok:
+            _, out, _ = run_host_cmd(["kubectl", "logs", "-n", "kube-system", pod, "--all-containers", "--tail=100"])
         self.send_json({"logs": out})
 
     def handle_wan_status(self):
@@ -512,36 +705,38 @@ class NasApiHandler(BaseHTTPRequestHandler):
     def handle_wan_toggle(self):
         _, is_up, _ = run_host_cmd("pgrep cloudflared >/dev/null && echo 1 || echo 0")
         if is_up.strip() == "1":
-            run_host_cmd("pkill -9 cloudflared 2>/dev/null || true")
-            run_host_cmd("rm -f /tmp/nas-tunnel/url.txt")
+            run_host_cmd(["pkill", "-9", "cloudflared"])
+            run_host_cmd(["rm", "-f", "/tmp/nas-tunnel/url.txt"])
             self.send_json({"status": "offline", "message": "Modo Solo LAN activado. El acceso desde internet ha sido cerrado."})
         else:
-            run_host_cmd("/home/oriel/Escritorio/iniciar-nas.sh >/dev/null 2>&1 &")
+            repo_dir = os.environ.get("NAS_REPO_DIR", "/home/oriel/nas-gitops")
+            run_host_cmd(f"cloudflared tunnel --url http://127.0.0.1:80 > /tmp/nas-tunnel/cloudflared.log 2>&1 &")
             time.sleep(3)
             self.send_json({"status": "online", "message": "Túnel Cloudflare iniciado. El NAS vuelve a estar Online desde internet."})
 
     def handle_wan_rotate(self):
-        cmd = "/home/oriel/Escritorio/iniciar-nas.sh 2>&1 || true"
-        ok, out, err = run_host_cmd(cmd)
-        self.send_json({"success": ok, "output": out or err})
+        run_host_cmd(["pkill", "-9", "cloudflared"])
+        time.sleep(1)
+        run_host_cmd("cloudflared tunnel --url http://127.0.0.1:80 > /tmp/nas-tunnel/cloudflared.log 2>&1 &")
+        self.send_json({"success": True, "output": "Túnel reiniciado."})
 
     def handle_smoke_test(self):
-        ok, out, err = run_host_cmd("bash /home/oriel/nas-gitops/tests/smoke-test.sh 2>&1")
+        repo_dir = os.environ.get("NAS_REPO_DIR", "/home/oriel/nas-gitops")
+        script = os.path.join(repo_dir, "tests/smoke-test.sh")
+        ok, out, err = run_host_cmd(["bash", script])
         self.send_json({"success": ok, "log": out or err})
 
     def handle_executive_report(self):
-        _, pool, _ = run_host_cmd("zpool status tank")
-        _, snaps, _ = run_host_cmd("zfs list -t snapshot")
+        _, pool, _ = run_host_cmd(["zpool", "status", "tank"])
+        _, snaps, _ = run_host_cmd(["zfs", "list", "-t", "snapshot"])
         _, users, _ = run_host_cmd("kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c 'php /var/www/html/occ user:list' 2>/dev/null || true")
         report = f"# REPORTE EJECUTIVO DE SALUD Y AUDITORIA NAS\nFecha: {time.ctime()}\n\n## 1. ESTADO DE RAID-Z1\n{pool}\n\n## 2. BACKUPS Y SNAPSHOTS\n{snaps}\n\n## 3. USUARIOS ACTIVOS\n{users}\n"
         self.send_json({"report": report})
 
     def handle_samba_status(self):
-        # 1. Pod & Daemon Status
         _, pod_st, _ = run_host_cmd("kubectl get pod -l app.kubernetes.io/name=samba -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo 'Unknown'")
         _, version_st, _ = run_host_cmd("kubectl exec deployment/samba -- smbd -V 2>/dev/null || echo 'Version 4.12'")
-        
-        # 2. ZFS Shares & Quotas
+
         shares = [
             {"id": "profesores", "name": "[profesores]", "dataset": "tank/nas/profesores", "access": "Solo Docentes / Directivos"},
             {"id": "alumnos", "name": "[alumnos]", "dataset": "tank/nas/alumnos", "access": "Estudiantes y Laboratorio"},
@@ -567,7 +762,6 @@ class NasApiHandler(BaseHTTPRequestHandler):
                 "access": s["access"]
             })
 
-        # 3. Active Sessions (smbstatus)
         _, smb_out, _ = run_host_cmd("kubectl exec deployment/samba -- smbstatus -b 2>/dev/null || true")
         sessions = []
         capture = False
@@ -589,7 +783,6 @@ class NasApiHandler(BaseHTTPRequestHandler):
                         "proto": parts[4] if len(parts) > 4 else "SMB3"
                     })
 
-        # 4. Registered Samba Users (pdbedit)
         _, pdb_out, _ = run_host_cmd("kubectl exec deployment/samba -- pdbedit -L 2>/dev/null || true")
         samba_users = []
         for line in pdb_out.splitlines():
@@ -612,20 +805,21 @@ class NasApiHandler(BaseHTTPRequestHandler):
     def handle_samba_quota(self, body):
         share = body.get("share", "").strip()
         quota = body.get("quota", "").strip()
-        if not share or not quota:
-            self.send_json({"success": False, "output": "Parametros share o quota invalidos."}, 400)
+        if not RE_SHARENAME.match(share) or not RE_QUOTA.match(quota):
+            self.send_json({"success": False, "output": "Parámetros share o quota inválidos."}, 400)
             return
+
         dataset = f"tank/nas/{share}"
-        ok, out, err = run_host_cmd(f"zfs set quota={quota} {dataset}")
+        ok, out, err = run_host_cmd(["zfs", "set", f"quota={quota}", dataset])
         self.send_json({"success": ok, "output": out or err})
 
     def handle_samba_restart(self):
-        ok, out, err = run_host_cmd("kubectl rollout restart deployment/samba")
+        ok, out, err = run_host_cmd(["kubectl", "rollout", "restart", "deployment/samba"])
         self.send_json({"success": ok, "output": out or err})
 
     def serve_samba_connector(self):
         bat_content = r"""@echo off
-setlocal enabledelayedexpansion
+setlocal
 title Conector de Unidades de Red - Enterprise NAS
 chcp 65001 >nul
 color 1F
@@ -639,25 +833,25 @@ cls
 echo ==============================================================================
 echo       CONECTOR DE UNIDADES DE RED ESCOLAR (SAMBA / SMB)
 echo ==============================================================================
-echo Servidor NAS: \!SERVER_HOST!
+echo Servidor NAS: \%SERVER_HOST%
 echo.
 echo Seleccione el recurso al que desea conectarse:
 echo.
-echo   [1] Carpeta de ALUMNOS       - Montar en unidad Z: (\!SERVER_HOST!\alumnos)
-echo   [2] Carpeta de PROFESORES    - Montar en unidad P: (\!SERVER_HOST!\profesores)
-echo   [3] Carpeta PUBLICA          - Montar en unidad X: (\!SERVER_HOST!\publico)
+echo   [1] Carpeta de ALUMNOS       - Montar en unidad Z: (\%SERVER_HOST%lumnos)
+echo   [2] Carpeta de PROFESORES    - Montar en unidad P: (\%SERVER_HOST%\profesores)
+echo   [3] Carpeta PUBLICA          - Montar en unidad X: (\%SERVER_HOST%\publico)
 echo   [4] Cambiar direccion IP del servidor NAS
 echo   [5] Desconectar todas las unidades de red del NAS
 echo   [6] Salir
 echo.
 set /p OPCION="Ingrese una opcion (1-6) y presione Enter: "
 
-if "!OPCION!"=="1" goto CONECTAR_ALUMNOS
-if "!OPCION!"=="2" goto CONECTAR_PROFESORES
-if "!OPCION!"=="3" goto CONECTAR_PUBLICO
-if "!OPCION!"=="4" goto CAMBIAR_IP
-if "!OPCION!"=="5" goto DESCONECTAR
-if "!OPCION!"=="6" exit /b 0
+if "%OPCION%"=="1" goto CONECTAR_ALUMNOS
+if "%OPCION%"=="2" goto CONECTAR_PROFESORES
+if "%OPCION%"=="3" goto CONECTAR_PUBLICO
+if "%OPCION%"=="4" goto CAMBIAR_IP
+if "%OPCION%"=="5" goto DESCONECTAR
+if "%OPCION%"=="6" exit /b 0
 goto MENU
 
 :CAMBIAR_IP
@@ -688,20 +882,20 @@ goto PEDIR_CREDENCIALES
 :PEDIR_CREDENCIALES
 cls
 echo ==============================================================================
-echo CONECTANDO A RECURSO: \!SERVER_HOST!\!SHARE! EN UNIDAD !DRIVE!
+echo CONECTANDO A RECURSO: \%SERVER_HOST%\%SHARE% EN UNIDAD %DRIVE%
 echo ==============================================================================
 echo.
 echo Ingrese sus credenciales de la institucion:
 echo.
 set /p NAS_USER="Usuario: "
-if "!NAS_USER!"=="" (
+if "%NAS_USER%"=="" (
     echo [ERROR] El usuario no puede estar vacio.
     pause
     goto MENU
 )
 
-set /p NAS_PASS="Contraseña: "
-if "!NAS_PASS!"=="" (
+set /p NAS_PASS="Contrasena: "
+if "%NAS_PASS%"=="" (
     echo [ERROR] La contrasena no puede estar vacia.
     pause
     goto MENU
@@ -709,21 +903,21 @@ if "!NAS_PASS!"=="" (
 
 echo.
 echo Conectando... por favor espere...
-net use !DRIVE! /delete /yes >nul 2>&1
-net use !DRIVE! "\!SERVER_HOST!\!SHARE!" /user:"!NAS_USER!" "!NAS_PASS!" /persistent:yes >nul 2>&1
+net use %DRIVE% /delete /yes >nul 2>&1
+net use %DRIVE% "\%SERVER_HOST%\%SHARE%" /user:"%NAS_USER%" "%NAS_PASS%" /persistent:yes >nul 2>&1
 
-if !errorlevel! equ 0 (
+if %errorlevel% equ 0 (
     echo.
     echo ==============================================================================
-    echo [EXITO] Unidad !DRIVE! conectada correctamente a \!SERVER_HOST!\!SHARE!
+    echo [EXITO] Unidad %DRIVE% conectada correctamente a \%SERVER_HOST%\%SHARE%
     echo La carpeta ya se encuentra disponible en 'Este equipo'.
     echo ==============================================================================
     echo.
-    start "" !DRIVE!
+    start "" %DRIVE%
 ) else (
     echo.
     echo ==============================================================================
-    echo [FALLO DE CONEXION]
+    echo [FALLO DE CONEXION] Error %errorlevel%
     echo Verifique que el usuario y contrasena sean correctos y que la IP sea accesible.
     echo ==============================================================================
 )

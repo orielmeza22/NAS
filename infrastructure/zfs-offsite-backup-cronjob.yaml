@@ -55,20 +55,20 @@ spec:
                 zfs list -t snapshot -o name -s creation -H | grep '^tank/nas@offsite-sync-' | tail -n 1 || true)
 
               echo "[INFO] Creando punto de corte inmutable: ${CURR_SNAP}..."
-              nsenter --target 1 --mount --uts --ipc --net --pid -- zfs snapshot "$CURR_SNAP"
+              nsenter --target 1 --mount --uts --ipc --net --pid -- zfs snapshot -r "$CURR_SNAP"
 
               if [ "$DAY_OF_WEEK" = "7" ] || [ -z "$PREV_SNAP" ]; then
                 REMOTE_OBJECT="r2:${BUCKET}/weekly/tank-full-${DATE_TAG}.zfs.enc"
                 echo "[INFO] Ejecutando FULL BACKUP SEMANAL: ${CURR_SNAP} -> ${REMOTE_OBJECT}"
                 nsenter --target 1 --mount --uts --ipc --net --pid -- sh -c \
-                  'zfs send -c "$1" | openssl enc -aes-256-cbc -salt -pbkdf2 -pass "pass:$2"' \
+                  'zfs send -c -R "$1" | openssl enc -aes-256-cbc -salt -pbkdf2 -pass "pass:$2"' \
                   -- "$CURR_SNAP" "$BACKUP_ENCRYPTION_KEY" | \
                   rclone rcat "$REMOTE_OBJECT"
               else
                 REMOTE_OBJECT="r2:${BUCKET}/incremental/tank-inc-${DATE_TAG}.zfs.enc"
                 echo "[INFO] Ejecutando BACKUP INCREMENTAL DIARIO: ${PREV_SNAP} -> ${CURR_SNAP} (${REMOTE_OBJECT})"
                 nsenter --target 1 --mount --uts --ipc --net --pid -- sh -c \
-                  'zfs send -c -i "$1" "$2" | openssl enc -aes-256-cbc -salt -pbkdf2 -pass "pass:$3"' \
+                  'zfs send -c -R -i "$1" "$2" | openssl enc -aes-256-cbc -salt -pbkdf2 -pass "pass:$3"' \
                   -- "$PREV_SNAP" "$CURR_SNAP" "$BACKUP_ENCRYPTION_KEY" | \
                   rclone rcat "$REMOTE_OBJECT"
               fi
