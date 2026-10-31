@@ -71,19 +71,21 @@ spec:
                   fi
                 done
 
-                # 2. Escaneo en tiempo real de firmas de Ransomware en todo /tank/nas
-                DETECTED_FILES=$(find /tank-nas -maxdepth 4 -type f \( \
+                # 2. Escaneo en tiempo real de firmas de Ransomware en todo /tank/nas (excluyendo .quarantine)
+                DETECTED_FILES=$(find /tank-nas -maxdepth 4 -not -path '*/.quarantine/*' -type f \( \
                   -name "*.encrypted" -o -name "*.locked" -o -name "*.crypto" -o \
                   -name "*.wannacry" -o -name "*.lockbit" -o -name "*.ryuk" -o \
-                  -name "*.akira" -o -name "*.conti" -o -iname "*DECRYPT*" -o \
-                  -iname "*RESTORE_FILES*" \) 2>/dev/null || true)
+                  -name "*.akira" -o -name "*.conti" -o -iname "*readme*decrypt*" -o \
+                  -iname "*how*to*decrypt*" -o -iname "*decrypt*note*" -o -iname "*restore_files*.txt" \) 2>/dev/null || true)
 
                 if [ -n "$DETECTED_FILES" ]; then
                   THREAT_FOUND=1
                   while IFS= read -r badfile; do
-                    if [ -n "$badfile" ]; then
+                    if [ -n "$badfile" ] && [ -f "$badfile" ]; then
                       echo "[BLOQUEADO] Amenaza Ransomware detectada: $badfile" >> /tmp/nas-tunnel/ransomware_events.log
-                      mv "$badfile" /tank-nas/.quarantine/ 2>/dev/null || rm -f "$badfile" 2>/dev/null || true
+                      # Mover a cuarentena con sufijo timestamp único preservando evidencia sin borrar datos con rm
+                      target_name="/tank-nas/.quarantine/$(basename "$badfile").$(date +%s%N)"
+                      mv "$badfile" "$target_name" 2>/dev/null || true
                       CNT=$(cat /tmp/nas-tunnel/ransomware_threats_blocked 2>/dev/null || echo 0)
                       echo $((CNT + 1)) > /tmp/nas-tunnel/ransomware_threats_blocked
                     fi
@@ -97,11 +99,20 @@ spec:
                   echo "1" > /tmp/nas-tunnel/ransomware_status
                 fi
 
-                # 4. Asegurar Inmutabilidad (zfs hold) en snapshots recientes
+                # 4. Asegurar Inmutabilidad (zfs hold) en snapshots recientes y liberar los que envejecen
                 nsenter --target 1 --mount --uts --ipc --net --pid -- sh -c '
-                  zfs list -t snapshot -o name -H 2>/dev/null | tail -n 5 | while read -r snap; do
+                  LAST_SNAPS=$(zfs list -t snapshot -o name -H 2>/dev/null | tail -n 5)
+                  echo "$LAST_SNAPS" | while read -r snap; do
+                    [ -n "$snap" ] || continue
                     if ! zfs holds "$snap" 2>/dev/null | grep -q "sentinel-immutable"; then
                       zfs hold sentinel-immutable "$snap" 2>/dev/null || true
+                    fi
+                  done
+                  # Liberar candado en snapshots antiguos para no bloquear rotación/limpieza
+                  zfs list -t snapshot -o name -H 2>/dev/null | head -n -5 | while read -r oldsnap; do
+                    [ -n "$oldsnap" ] || continue
+                    if zfs holds "$oldsnap" 2>/dev/null | grep -q "sentinel-immutable"; then
+                      zfs release sentinel-immutable "$oldsnap" 2>/dev/null || true
                     fi
                   done
                 ' 2>/dev/null || true

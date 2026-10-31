@@ -466,7 +466,7 @@ data:
                 return
 
             # Snapshot recursivo con backup previo de base de datos
-            run_host_cmd("kubectl exec deployment/nextcloud-postgres -- pg_dumpall -U nextcloud | gzip > /tank/nas/postgres/db-manual.sql.gz 2>/dev/null || true")
+            run_host_cmd("kubectl exec deployment/nextcloud-postgres -- sh -c 'pg_dumpall -U \"$POSTGRES_USER\"' | gzip > /tank/nas/postgres/db-manual.sql.gz 2>/dev/null || true")
             ok, out, err = run_host_cmd(["zfs", "snapshot", "-r", f"tank/nas@{tag}"])
             self.send_json({"success": ok, "output": out or err})
 

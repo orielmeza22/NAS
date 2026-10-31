@@ -56,7 +56,14 @@ spec:
                         rm -rf "${mnt}.mig"
                       fi
                     else
-                      zfs set "quota=${quota_val}" "recordsize=${rec_size}" compression=lz4 atime=off "$ds"
+                      current_quota=$(zfs get -H -o value quota "$ds" 2>/dev/null || echo "none")
+                      if [ "$current_quota" = "none" ] || [ -z "$current_quota" ]; then
+                        echo "[INFO] Asignando cuota por defecto ($quota_val) a $ds..."
+                        zfs set "quota=${quota_val}" "$ds"
+                      else
+                        echo "[INFO] Respetando cuota existente configurada ($current_quota) en $ds."
+                      fi
+                      zfs set "recordsize=${rec_size}" compression=lz4 atime=off "$ds"
                     fi
                   }
 

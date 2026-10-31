@@ -78,9 +78,46 @@ case "$CMD" in
 
   restore-cloud)
     TARGET_DS="${2:-tank/nas}"
-    info "Iniciando recuperación Bare-Metal desde Cloudflare R2 hacia $TARGET_DS..."
-    bash "$(dirname "$0")/../tests/disaster-recovery-drill.sh"
-    pass "Recuperación desde la nube verificada e integrada."
+    REMOTE_FILE="${3:-}"
+    info "Iniciando recuperación Bare-Metal real desde Cloudflare R2 hacia dataset: $TARGET_DS..."
+
+    if ! kubectl -n kube-system get secret r2-backup-credentials >/dev/null 2>&1; then
+      fail "Secreto r2-backup-credentials ausente en el clúster (kube-system)."
+    fi
+
+    R2_ACCOUNT_ID=$(kubectl -n kube-system get secret r2-backup-credentials -o jsonpath='{.data.account-id}' | base64 -d)
+    R2_ACCESS_KEY_ID=$(kubectl -n kube-system get secret r2-backup-credentials -o jsonpath='{.data.access-key-id}' | base64 -d)
+    R2_SECRET_ACCESS_KEY=$(kubectl -n kube-system get secret r2-backup-credentials -o jsonpath='{.data.secret-access-key}' | base64 -d)
+    BACKUP_ENCRYPTION_KEY=$(kubectl -n kube-system get secret r2-backup-credentials -o jsonpath='{.data.encryption-key}' | base64 -d)
+
+    export RCLONE_CONFIG_R2_TYPE="s3"
+    export RCLONE_CONFIG_R2_PROVIDER="Cloudflare"
+    export RCLONE_CONFIG_R2_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID"
+    export RCLONE_CONFIG_R2_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
+    export RCLONE_CONFIG_R2_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+    export RCLONE_CONFIG_R2_NO_CHECK_BUCKET="true"
+
+    if [ -z "$REMOTE_FILE" ]; then
+      info "Buscando snapshot más reciente en Cloudflare R2..."
+      REMOTE_FILE=$(rclone lsf -R r2:nas-backup/weekly/ 2>/dev/null | sed 's|^|weekly/|' | tail -n 1 || true)
+      if [ -z "$REMOTE_FILE" ]; then
+        REMOTE_FILE=$(rclone lsf -R r2:nas-backup/incremental/ 2>/dev/null | sed 's|^|incremental/|' | tail -n 1 || true)
+      fi
+      if [ -z "$REMOTE_FILE" ]; then
+        REMOTE_FILE=$(rclone lsf -R r2:nas-backup/daily/ 2>/dev/null | sed 's|^|daily/|' | tail -n 1 || true)
+      fi
+    fi
+
+    if [ -z "$REMOTE_FILE" ]; then
+      fail "No se encontraron copias cifradas en el bucket r2:nas-backup"
+    fi
+
+    info "Descargando y descifrando en streaming: r2:nas-backup/${REMOTE_FILE} hacia ${TARGET_DS}..."
+    export BACKUP_ENCRYPTION_KEY
+    rclone cat "r2:nas-backup/${REMOTE_FILE}" |       openssl enc -d -aes-256-cbc -salt -pbkdf2 -pass env:BACKUP_ENCRYPTION_KEY |       sudo zfs receive -F "$TARGET_DS"
+
+    pass "Dataset ZFS restaurado exitosamente desde la nube."
+    sudo zfs list "$TARGET_DS"
     ;;
 
   *)

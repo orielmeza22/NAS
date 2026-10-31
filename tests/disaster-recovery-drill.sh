@@ -70,10 +70,10 @@ spec:
                 exit 1
               fi
               echo "[INFO] Restaurando objeto remoto: r2:nas-backup/${LATEST_OBJ}"
+              export BACKUP_ENCRYPTION_KEY
               rclone cat "r2:nas-backup/${LATEST_OBJ}" | \
-                nsenter --target 1 --mount --uts --ipc --net --pid -- sh -c \
-                'openssl enc -d -aes-256-cbc -pbkdf2 -pass "pass:$1" | zfs receive -F tank/dr-verify' \
-                -- "$BACKUP_ENCRYPTION_KEY"
+                nsenter --target 1 --mount --uts --ipc --net --pid -- env BACKUP_ENCRYPTION_KEY="$BACKUP_ENCRYPTION_KEY" sh -c \
+                'openssl enc -d -aes-256-cbc -salt -pbkdf2 -pass env:BACKUP_ENCRYPTION_KEY | zfs receive -F tank/dr-verify'
           env:
             - name: R2_ACCOUNT_ID
               valueFrom:

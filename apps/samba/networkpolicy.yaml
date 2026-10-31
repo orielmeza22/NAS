@@ -14,10 +14,16 @@ spec:
     - Ingress
     - Egress
   ingress:
-    # Allow SMB and NetBIOS traffic from authorized networks/clients
+    # Allow SMB and NetBIOS traffic from authorized private networks and local clients (RFC1918 + loopback)
     - from:
         - ipBlock:
-            cidr: 0.0.0.0/0
+            cidr: 10.0.0.0/8
+        - ipBlock:
+            cidr: 172.16.0.0/12
+        - ipBlock:
+            cidr: 192.168.0.0/16
+        - ipBlock:
+            cidr: 127.0.0.0/8
       ports:
         - protocol: TCP
           port: 445

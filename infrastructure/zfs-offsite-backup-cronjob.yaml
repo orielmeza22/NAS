@@ -60,16 +60,18 @@ spec:
               if [ "$DAY_OF_WEEK" = "7" ] || [ -z "$PREV_SNAP" ]; then
                 REMOTE_OBJECT="r2:${BUCKET}/weekly/tank-full-${DATE_TAG}.zfs.enc"
                 echo "[INFO] Ejecutando FULL BACKUP SEMANAL: ${CURR_SNAP} -> ${REMOTE_OBJECT}"
-                nsenter --target 1 --mount --uts --ipc --net --pid -- sh -c \
-                  'zfs send -c -R "$1" | openssl enc -aes-256-cbc -salt -pbkdf2 -pass "pass:$2"' \
-                  -- "$CURR_SNAP" "$BACKUP_ENCRYPTION_KEY" | \
+                export BACKUP_ENCRYPTION_KEY
+                nsenter --target 1 --mount --uts --ipc --net --pid -- env BACKUP_ENCRYPTION_KEY="$BACKUP_ENCRYPTION_KEY" sh -c \
+                  'zfs send -c -R "$1" | openssl enc -aes-256-cbc -salt -pbkdf2 -pass env:BACKUP_ENCRYPTION_KEY' \
+                  -- "$CURR_SNAP" | \
                   rclone rcat "$REMOTE_OBJECT"
               else
                 REMOTE_OBJECT="r2:${BUCKET}/incremental/tank-inc-${DATE_TAG}.zfs.enc"
                 echo "[INFO] Ejecutando BACKUP INCREMENTAL DIARIO: ${PREV_SNAP} -> ${CURR_SNAP} (${REMOTE_OBJECT})"
-                nsenter --target 1 --mount --uts --ipc --net --pid -- sh -c \
-                  'zfs send -c -R -i "$1" "$2" | openssl enc -aes-256-cbc -salt -pbkdf2 -pass "pass:$3"' \
-                  -- "$PREV_SNAP" "$CURR_SNAP" "$BACKUP_ENCRYPTION_KEY" | \
+                export BACKUP_ENCRYPTION_KEY
+                nsenter --target 1 --mount --uts --ipc --net --pid -- env BACKUP_ENCRYPTION_KEY="$BACKUP_ENCRYPTION_KEY" sh -c \
+                  'zfs send -c -R -i "$1" "$2" | openssl enc -aes-256-cbc -salt -pbkdf2 -pass env:BACKUP_ENCRYPTION_KEY' \
+                  -- "$PREV_SNAP" "$CURR_SNAP" | \
                   rclone rcat "$REMOTE_OBJECT"
               fi
 
