@@ -515,7 +515,7 @@ $ </div>
           body: JSON.stringify({action: action, params: params || {}})
         });
         const data = await res.json();
-        if (!isSilent) showToast('Accion ' + action + (data.success ? ' completada' : ' fallo'));
+        if (!isSilent) showToast(data && data.success ? '✓ Accion ' + action + ' completada' : '✗ ' + action + ': ' + ((data && (data.error || (data.data && data.data.output))) || 'Fallo'));
         return data;
       } catch (err) {
         if (!isSilent) showToast('Error de conexion: ' + err.message);

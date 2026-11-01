@@ -28,13 +28,17 @@ RE_PODNAME = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
 RE_NAMESPACE = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
 RE_DEV_PATH = re.compile(r"^/dev/(sd[a-z][0-9]?|vd[a-z][0-9]?|nvme[0-9]n[0-9](p[0-9])?|disk/by-id/[a-zA-Z0-9._-]+)$")
 
-def run_cmd(cmd_list, timeout=15):
+def run_cmd(cmd_list, timeout=20, input_data=None):
     # If running inside container with hostPID, nsenter into host namespace 1
+    processed_cmd = list(cmd_list)
+    if processed_cmd and processed_cmd[0] == "kubectl":
+        processed_cmd = ["env", "KUBECONFIG=/etc/rancher/k3s/k3s.yaml", "/usr/local/bin/kubectl"] + processed_cmd[1:]
+
     if os.path.exists("/proc/1/ns/mnt"):
-        full_cmd = ["nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid", "--"] + cmd_list
+        full_cmd = ["nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid", "--"] + processed_cmd
     else:
-        full_cmd = cmd_list
-    return subprocess.run(full_cmd, capture_output=True, text=True, timeout=timeout)
+        full_cmd = processed_cmd
+    return subprocess.run(full_cmd, input=input_data, capture_output=True, text=True, timeout=timeout)
 
 def audit_log(user, action, params, success, message=""):
     entry = {
@@ -93,7 +97,7 @@ def action_zfs_scrub(params):
         res = run_cmd(["zpool", "status", "tank"], timeout=10)
         return res.returncode == 0, {"output": res.stdout}
     cmd = ["zpool", "scrub", "-s", "tank"] if subaction == "stop" else ["zpool", "scrub", "tank"]
-    res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+    res = run_cmd(cmd, timeout=10)
     return res.returncode == 0, {"action": subaction, "output": res.stdout}
 
 def action_storage_smart_status(params):
@@ -111,7 +115,7 @@ def action_system_power(params):
     command = params.get("command", "")
     if command not in ("reboot", "poweroff"):
         return False, {"error": "Invalid power command"}
-    res = subprocess.run(["systemctl", command], capture_output=True, text=True, timeout=5)
+    res = run_cmd(["systemctl", command], timeout=10)
     return res.returncode == 0, {"status": f"Initiated {command}"}
 
 def action_system_status(params):
