@@ -507,7 +507,7 @@ $ </div>
     }
 
     // Backend Execution
-    async function execCmd(action, params) {
+    async function execCmd(action, params, isSilent) {
       try {
         const res = await fetch('/api/agent/action', {
           method: 'POST',
@@ -515,17 +515,17 @@ $ </div>
           body: JSON.stringify({action: action, params: params || {}})
         });
         const data = await res.json();
-        showToast('Acción ' + action + (data.success ? ' completada con éxito' : ' falló'));
+        if (!isSilent) showToast('Accion ' + action + (data.success ? ' completada' : ' fallo'));
         return data;
       } catch (err) {
-        showToast('Error de conexión: ' + err.message);
+        if (!isSilent) showToast('Error de conexion: ' + err.message);
       }
     }
 
     // Telemetry Polling (Every 3 seconds)
     async function pollTelemetry() {
       try {
-        const res = await execCmd('system.status', {});
+        const res = await execCmd('system.status', {}, true);
         if (res && res.data) {
           const l = res.data.loadavg || [0, 0, 0];
           document.getElementById('dash-cpu-load').innerText = l[0].toFixed(2) + ', ' + l[1].toFixed(2) + ', ' + l[2].toFixed(2);
@@ -539,7 +539,7 @@ $ </div>
           }
         }
 
-        const zfsRes = await execCmd('zfs.pool.status', {});
+        const zfsRes = await execCmd('zfs.pool.status', {}, true);
         if (zfsRes && zfsRes.data && zfsRes.data.stdout) {
           document.getElementById('dash-zpool-output').innerText = zfsRes.data.stdout;
           const isOk = zfsRes.data.stdout.includes('state: ONLINE');

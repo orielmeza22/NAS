@@ -43,6 +43,9 @@ spec:
           mountPath: /app-config
         - name: tunnel-volume
           mountPath: /tmp/nas-tunnel
+        - name: tls-volume
+          mountPath: /tmp/nas-tls
+          readOnly: true
         startupProbe:
           httpGet:
             path: /api/public/status
@@ -84,3 +87,11 @@ spec:
         hostPath:
           path: /tmp/nas-tunnel
           type: DirectoryOrCreate
+      - name: tls-volume
+        secret:
+          secretName: portal-tls-secret
+          items:
+          - key: tls.crt
+            path: portal.crt
+          - key: tls.key
+            path: portal.key
