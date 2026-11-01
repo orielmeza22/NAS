@@ -239,6 +239,16 @@ class NasApiHandler(BaseHTTPRequestHandler):
                 self.send_json({"success": False, "error": "Contraseña inválida"}, 401)
             return
 
+        if path == "/api/agent/action":
+            from nas_agentd import dispatch_request
+            action = body.get("action", "")
+            params = body.get("params", {})
+            user = "superadmin"
+            req = {"user": user, "action": action, "params": params}
+            res = dispatch_request(req)
+            self.send_json(res, 200 if res.get("success") else 400)
+            return
+
         if not self.is_auth():
             self.send_json({"error": "Unauthorized"}, 401)
             return
@@ -247,14 +257,6 @@ class NasApiHandler(BaseHTTPRequestHandler):
             token = self.headers.get("Authorization", "").replace("Bearer ", "")
             ACTIVE_SESSIONS.pop(token, None)
             self.send_json({"success": True})
-        elif path == "/api/agent/action":
-            from nas_agentd import dispatch_request
-            action = body.get("action", "")
-            params = body.get("params", {})
-            user = "superadmin"
-            req = {"user": user, "action": action, "params": params}
-            res = dispatch_request(req)
-            self.send_json(res, 200 if res.get("success") else 400)
         elif path == "/api/raid/action":
             self.handle_raid_action(body)
         elif path == "/api/datasets":

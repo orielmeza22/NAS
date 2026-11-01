@@ -3,413 +3,499 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Enterprise NAS OS — Centro de Control Activo</title>
+  <title>Enterprise NAS OS — Centro de Control</title>
   <style>
     :root {
-      --bg-base: #0a0f1d;
-      --bg-surface: #111827;
-      --bg-subtle: #1e293b;
+      --bg-base: #0b0f19;
+      --bg-sidebar: #0f172a;
+      --bg-card: #1e293b;
+      --bg-card-hover: #243248;
       --border: #334155;
-      --border-focus: #3b82f6;
+      --border-accent: #3b82f6;
       --text: #f8fafc;
       --text-muted: #94a3b8;
       --accent: #2563eb;
       --accent-hover: #1d4ed8;
-      --status-ok: #10b981;
-      --status-warn: #f59e0b;
-      --status-err: #ef4444;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
       --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     }
     * { margin:0; padding:0; box-sizing:border-box; font-family:var(--font-sans); }
-    body { background:var(--bg-base); color:var(--text); font-size:13px; line-height:1.5; min-height:100vh; display:flex; flex-direction:column; }
-    
-    header { background:var(--bg-surface); border-bottom:1px solid var(--border); padding:12px 24px; display:flex; justify-content:space-between; align-items:center; }
-    .logo-area { display:flex; align-items:center; gap:12px; }
-    .logo-title { font-size:16px; font-weight:700; color:#fff; display:flex; align-items:center; gap:8px; }
-    .badge { font-size:11px; font-weight:600; padding:3px 8px; border-radius:4px; font-family:var(--font-mono); text-transform:uppercase; }
-    .badge-ok { background:rgba(16,185,129,0.15); color:var(--status-ok); border:1px solid var(--status-ok); }
-    .badge-warn { background:rgba(245,158,11,0.15); color:var(--status-warn); border:1px solid var(--status-warn); }
-    .badge-err { background:rgba(239,68,68,0.15); color:var(--status-err); border:1px solid var(--status-err); }
+    body { background:var(--bg-base); color:var(--text); font-size:13px; line-height:1.5; min-height:100vh; display:flex; }
 
-    .header-actions { display:flex; gap:10px; align-items:center; }
-    .btn { background:var(--bg-subtle); color:var(--text); border:1px solid var(--border); padding:6px 14px; border-radius:4px; cursor:pointer; font-size:12px; font-weight:500; transition:all 0.15s; }
-    .btn:hover { background:#283548; border-color:#475569; }
+    /* SIDEBAR */
+    aside { width:260px; background:var(--bg-sidebar); border-right:1px solid var(--border); display:flex; flex-direction:column; flex-shrink:0; }
+    .sidebar-brand { padding:20px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:10px; font-size:15px; font-weight:700; color:#fff; }
+    .sidebar-brand svg { color:#3b82f6; }
+    .nav-group { padding:14px 12px 4px 12px; font-size:10px; font-weight:700; text-transform:uppercase; color:#64748b; letter-spacing:0.05em; }
+    .nav-item { display:flex; align-items:center; gap:10px; padding:10px 14px; margin:2px 8px; border-radius:6px; color:var(--text-muted); font-size:12px; font-weight:500; cursor:pointer; transition:all 0.15s; user-select:none; }
+    .nav-item:hover { background:rgba(255,255,255,0.04); color:var(--text); }
+    .nav-item.active { background:var(--accent); color:#fff; font-weight:600; }
+    .sidebar-footer { margin-top:auto; padding:16px; border-top:1px solid var(--border); font-size:11px; color:var(--text-muted); }
+
+    /* CONTENT WRAPPER */
+    .app-main { flex:1; display:flex; flex-direction:column; overflow-y:auto; min-width:0; }
+    header { background:var(--bg-sidebar); border-bottom:1px solid var(--border); padding:14px 24px; display:flex; justify-content:space-between; align-items:center; }
+    .header-status { display:flex; align-items:center; gap:12px; }
+    .badge { font-size:11px; font-weight:600; padding:3px 8px; border-radius:4px; font-family:var(--font-mono); }
+    .badge-ok { background:rgba(16,185,129,0.15); color:var(--success); border:1px solid var(--success); }
+    .badge-warn { background:rgba(245,158,11,0.15); color:var(--warning); border:1px solid var(--warning); }
+    
+    .btn { background:var(--bg-card); color:var(--text); border:1px solid var(--border); padding:7px 14px; border-radius:6px; cursor:pointer; font-size:12px; font-weight:500; transition:all 0.15s; display:inline-flex; align-items:center; gap:6px; }
+    .btn:hover { background:var(--bg-card-hover); border-color:#475569; }
     .btn-primary { background:var(--accent); border-color:var(--accent); color:#fff; }
     .btn-primary:hover { background:var(--accent-hover); }
     .btn-danger { background:#991b1b; border-color:#b91c1c; color:#fee2e2; }
     .btn-danger:hover { background:#b91c1c; }
-    .btn-sm { padding:3px 8px; font-size:11px; }
+    .btn-sm { padding:4px 8px; font-size:11px; border-radius:4px; }
 
-    nav { background:var(--bg-surface); border-bottom:1px solid var(--border); display:flex; overflow-x:auto; padding:0 16px; gap:2px; }
-    .tab-btn { background:none; border:none; border-bottom:2px solid transparent; color:var(--text-muted); padding:12px 14px; font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap; transition:all 0.15s; }
-    .tab-btn:hover { color:var(--text); }
-    .tab-btn.active { color:#60a5fa; border-bottom-color:#60a5fa; }
+    .content-body { padding:24px; max-width:1400px; width:100%; margin:0 auto; }
+    .page-section { display:none; }
+    .page-section.active { display:block; animation:fadeIn 0.15s ease-in; }
+    @keyframes fadeIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
 
-    main { flex:1; padding:20px; max-width:1440px; margin:0 auto; width:100%; }
-    .tab-content { display:none; }
-    .tab-content.active { display:block; }
+    .section-header { margin-bottom:20px; }
+    .section-title { font-size:18px; font-weight:700; color:#fff; }
+    .section-subtitle { font-size:12px; color:var(--text-muted); margin-top:2px; }
 
-    .grid-metrics { display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:16px; margin-bottom:20px; }
-    .card { background:var(--bg-surface); border:1px solid var(--border); border-radius:6px; padding:18px; margin-bottom:16px; }
-    .card-title { font-size:13px; font-weight:700; color:#93c5fd; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center; }
+    /* CARDS & GRIDS */
+    .grid-3 { display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:16px; margin-bottom:20px; }
+    .card { background:var(--bg-card); border:1px solid var(--border); border-radius:8px; padding:20px; margin-bottom:18px; }
+    .card-header { font-size:13px; font-weight:700; color:#93c5fd; margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; }
     
-    .table-responsive { overflow-x:auto; border:1px solid var(--border); border-radius:6px; margin-top:10px; }
+    .metric-value { font-size:26px; font-weight:700; color:#fff; line-height:1.2; margin:6px 0; }
+    .metric-label { font-size:11px; color:var(--text-muted); }
+
+    /* TABLES */
+    .table-box { overflow-x:auto; border:1px solid var(--border); border-radius:6px; background:var(--bg-sidebar); }
     table { width:100%; border-collapse:collapse; text-align:left; }
-    th { background:var(--bg-subtle); padding:10px 14px; font-size:11px; text-transform:uppercase; color:var(--text-muted); font-weight:600; border-bottom:1px solid var(--border); }
+    th { background:#1e293b; padding:10px 14px; font-size:11px; text-transform:uppercase; color:var(--text-muted); font-weight:600; border-bottom:1px solid var(--border); }
     td { padding:10px 14px; border-bottom:1px solid #1e293b; font-size:12px; }
     tr:hover td { background:rgba(255,255,255,0.02); }
 
-    .form-row { display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px; margin-bottom:12px; }
+    /* FORMS */
+    .form-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:14px; margin-bottom:14px; }
     .form-group { margin-bottom:12px; }
     .form-label { display:block; font-size:11px; font-weight:600; margin-bottom:6px; color:var(--text-muted); }
-    .form-control { width:100%; background:var(--bg-base); border:1px solid var(--border); border-radius:4px; padding:8px 12px; color:#fff; font-size:12px; }
-    .form-control:focus { outline:none; border-color:var(--border-focus); }
+    .form-control { width:100%; background:var(--bg-base); border:1px solid var(--border); border-radius:6px; padding:8px 12px; color:#fff; font-size:12px; transition:border-color 0.15s; }
+    .form-control:focus { outline:none; border-color:var(--border-accent); }
 
-    .shell-container { background:#030712; border:1px solid var(--border); border-radius:6px; padding:14px; font-family:var(--font-mono); font-size:12px; min-height:300px; max-height:450px; overflow-y:auto; color:#4ade80; white-space:pre-wrap; }
-    
-    .toast { position:fixed; bottom:20px; right:20px; background:#1e293b; border:1px solid #475569; padding:12px 20px; border-radius:6px; color:#fff; font-size:12px; z-index:999; display:none; box-shadow:0 10px 15px -3px rgba(0,0,0,0.5); }
-    .spinner { display:inline-block; width:12px; height:12px; border:2px solid rgba(255,255,255,0.3); border-radius:50%; border-top-color:#fff; animation:spin 1s ease-in-out infinite; }
-    @keyframes spin { to { transform:rotate(360deg); } }
+    .terminal-window { background:#030712; border:1px solid var(--border); border-radius:8px; padding:16px; font-family:var(--font-mono); font-size:12px; color:#4ade80; min-height:280px; max-height:400px; overflow-y:auto; white-space:pre-wrap; }
+
+    .toast { position:fixed; bottom:24px; right:24px; background:#1e293b; border:1px solid #475569; padding:12px 20px; border-radius:6px; color:#fff; font-size:12px; z-index:999; display:none; box-shadow:0 10px 25px -5px rgba(0,0,0,0.5); }
   </style>
 </head>
 <body>
 
-  <header>
-    <div class="logo-area">
-      <div class="logo-title">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
-        Enterprise NAS Control Center
-      </div>
-      <span class="badge badge-ok" id="badge-pool">ZFS: LEYENDO...</span>
-      <span class="badge badge-ok" id="badge-heartbeat">EN LÍNEA (3s)</span>
-    </div>
-    <div class="header-actions">
-      <span id="txt-uptime" style="font-size:11px; color:var(--text-muted);">Uptime: calculando...</span>
-      <button class="btn btn-danger btn-sm" onclick="sendSystemPower('reboot')">Reiniciar Servidor</button>
-      <button class="btn btn-danger btn-sm" onclick="sendSystemPower('poweroff')">Apagar Host</button>
-    </div>
-  </header>
-
-  <nav>
-    <button class="tab-btn active" onclick="setTab('dashboard', this)">1. Dashboard Vivo</button>
-    <button class="tab-btn" onclick="setTab('storage', this)">2. Discos & Pool ZFS</button>
-    <button class="tab-btn" onclick="setTab('datasets', this)">3. Datasets & Cuotas</button>
-    <button class="tab-btn" onclick="setTab('users', this)">4. Usuarios & Permisos</button>
-    <button class="tab-btn" onclick="setTab('samba', this)">5. Recursos SMB</button>
-    <button class="tab-btn" onclick="setTab('snapshots', this)">6. Snapshots & Rollback</button>
-    <button class="tab-btn" onclick="setTab('r2', this)">7. Nube R2 & Emergency Kit</button>
-    <button class="tab-btn" onclick="setTab('services', this)">8. Estado Contenedores</button>
-    <button class="tab-btn" onclick="setTab('shell', this)">9. Terminal de Rescate</button>
-    <button class="tab-btn" onclick="setTab('files', this)">10. Explorador Archivos</button>
-    <button class="tab-btn" onclick="setTab('network', this)">11. Red & Auto-Rollback</button>
-    <button class="tab-btn" onclick="setTab('ups', this)">12. Batería & UPS</button>
-    <button class="tab-btn" onclick="setTab('pki', this)">13. Certificados PKI</button>
-    <button class="tab-btn" onclick="setTab('nextcloud', this)">14. Mantenimiento Nextcloud</button>
-    <button class="tab-btn" onclick="setTab('cron', this)">15. Tareas Cron</button>
-    <button class="tab-btn" onclick="setTab('dr', this)">16. Simulacro DR (RTO)</button>
-    <button class="tab-btn" onclick="setTab('audit', this)">17. Bitácora de Auditoría</button>
-  </nav>
-
-  <main>
-    <!-- TAB 1: DASHBOARD -->
-    <div id="tab-dashboard" class="tab-content active">
-      <div class="grid-metrics">
-        <div class="card">
-          <div class="card-title">Carga del Procesador (CPU Load)</div>
-          <div style="font-size:24px; font-weight:700; color:#60a5fa;" id="val-loadavg">--</div>
-          <div style="font-size:11px; color:var(--text-muted); margin-top:4px;">Promedios a 1 min, 5 min y 15 min</div>
-        </div>
-        <div class="card">
-          <div class="card-title">Memoria RAM Física del Host</div>
-          <div style="font-size:24px; font-weight:700; color:#34d399;" id="val-ram-usage">--</div>
-          <div style="font-size:11px; color:var(--text-muted); margin-top:4px;" id="val-ram-sub">Leyendo /proc/meminfo...</div>
-        </div>
-        <div class="card">
-          <div class="card-title">Salud del Almacenamiento (Pool tank)</div>
-          <div style="font-size:24px; font-weight:700; color:#a78bfa;" id="val-pool-state">ONLINE</div>
-          <div style="font-size:11px; color:var(--text-muted); margin-top:4px;">OpenZFS RAID-Z1 activo con LZ4</div>
-        </div>
-      </div>
-      
-      <div class="card">
-        <div class="card-title">Topología de Almacenamiento Activa (zpool status en vivo)</div>
-        <pre id="raw-zpool-status" style="font-family:var(--font-mono); font-size:12px; color:#cbd5e1; background:var(--bg-base); padding:12px; border-radius:4px; overflow-x:auto;">Cargando estado ZFS...</pre>
-      </div>
+  <!-- SIDEBAR NAVIGATION -->
+  <aside>
+    <div class="sidebar-brand">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+      <span>NAS Control Center</span>
     </div>
 
-    <!-- TAB 2: DISCOS & POOL ZFS -->
-    <div id="tab-storage" class="tab-content">
-      <div class="card">
-        <div class="card-title">
-          Discos Físicos Reales Detectados (lsblk)
-          <div>
-            <button class="btn btn-primary btn-sm" onclick="execAction('zfs.scrub', {subaction:'start'})">Iniciar ZFS Scrub</button>
-            <button class="btn btn-sm" onclick="execAction('zfs.scrub', {subaction:'stop'})">Detener Scrub</button>
+    <div class="nav-group">Monitoreo Principal</div>
+    <div class="nav-item active" onclick="navigate('dashboard', this)">Dashboard Vivo</div>
+    <div class="nav-item" onclick="navigate('services', this)">Microservicios K8s</div>
+    <div class="nav-item" onclick="navigate('audit', this)">Auditoría Forense</div>
+
+    <div class="nav-group">Almacenamiento & ZFS</div>
+    <div class="nav-item" onclick="navigate('storage', this)">Discos & Pool tank</div>
+    <div class="nav-item" onclick="navigate('datasets', this)">Datasets & Cuotas</div>
+    <div class="nav-item" onclick="navigate('files', this)">Explorador Archivos</div>
+
+    <div class="nav-group">Identidad & Red</div>
+    <div class="nav-item" onclick="navigate('users', this)">Usuarios & Claves</div>
+    <div class="nav-item" onclick="navigate('samba', this)">Recursos SMB</div>
+    <div class="nav-item" onclick="navigate('network', this)">Red & Rollback</div>
+
+    <div class="nav-group">Seguridad & Desastres</div>
+    <div class="nav-item" onclick="navigate('snapshots', this)">Snapshots & Reversión</div>
+    <div class="nav-item" onclick="navigate('r2', this)">Cloudflare R2 & Kit</div>
+    <div class="nav-item" onclick="navigate('dr', this)">Simulacro DR (RTO)</div>
+    <div class="nav-item" onclick="navigate('ups', this)">Energía & UPS (NUT)</div>
+
+    <div class="nav-group">Herramientas Avanzadas</div>
+    <div class="nav-item" onclick="navigate('shell', this)">Terminal de Rescate</div>
+    <div class="nav-item" onclick="navigate('pki', this)">Certificados PKI</div>
+    <div class="nav-item" onclick="navigate('nextcloud', this)">Mantenimiento occ</div>
+    <div class="nav-item" onclick="navigate('cron', this)">Tareas Periódicas</div>
+
+    <div class="sidebar-footer">
+      <div>Enterprise Appliance v2.0</div>
+      <div style="color:#64748b; margin-top:2px;">Debian + OpenZFS + K3s</div>
+    </div>
+  </aside>
+
+  <!-- MAIN VIEW -->
+  <div class="app-main">
+    <header>
+      <div class="header-status">
+        <span class="badge badge-ok" id="live-badge-pool">ZFS: ONLINE</span>
+        <span class="badge badge-ok" id="live-badge-telemetry">TELEMETRÍA EN VIVO</span>
+      </div>
+      <div style="display:flex; gap:10px; align-items:center;">
+        <button class="btn btn-danger btn-sm" onclick="confirmPower('reboot')">Reiniciar Host</button>
+        <button class="btn btn-danger btn-sm" onclick="confirmPower('poweroff')">Apagar Host</button>
+      </div>
+    </header>
+
+    <div class="content-body">
+
+      <!-- 1. DASHBOARD -->
+      <section id="sec-dashboard" class="page-section active">
+        <div class="section-header">
+          <div class="section-title">Dashboard Vivo del Servidor</div>
+          <div class="section-subtitle">Telemetría operativa leída en tiempo real desde el kernel y OpenZFS</div>
+        </div>
+        <div class="grid-3">
+          <div class="card">
+            <div class="metric-label">Carga CPU (1m, 5m, 15m)</div>
+            <div class="metric-value" id="dash-cpu-load" style="color:#60a5fa;">--</div>
+            <div class="metric-label">Procesos activos del sistema</div>
+          </div>
+          <div class="card">
+            <div class="metric-label">Memoria RAM Física</div>
+            <div class="metric-value" id="dash-ram-usage" style="color:#34d399;">--</div>
+            <div class="metric-label" id="dash-ram-sub">Leyendo /proc/meminfo...</div>
+          </div>
+          <div class="card">
+            <div class="metric-label">Estado del Pool ZFS (tank)</div>
+            <div class="metric-value" id="dash-pool-state" style="color:#a78bfa;">ONLINE</div>
+            <div class="metric-label">RAID-Z1 con compresión LZ4</div>
           </div>
         </div>
-        <div class="table-responsive">
-          <table>
-            <thead><tr><th>Dispositivo</th><th>Tipo</th><th>Tamaño</th><th>Modelo</th><th>Punto Montaje</th><th>Acción S.M.A.R.T.</th></tr></thead>
-            <tbody id="tbl-disks-body"><tr><td colspan="6">Consultando hardware del host...</td></tr></tbody>
-          </table>
-        </div>
-      </div>
 
-      <div class="card">
-        <div class="card-title">Asistente de Reemplazo de Disco Dañado (zpool replace)</div>
-        <div class="form-row">
-          <div class="form-group"><label class="form-label">Ruta o Identificador del Disco Falla</label><input type="text" id="rep-old-disk" class="form-control" placeholder="/zfs-disks/disk2.img o /dev/disk/by-id/..."></div>
-          <div class="form-group"><label class="form-label">Nuevo Disco Reemplazo</label><input type="text" id="rep-new-disk" class="form-control" placeholder="/dev/disk/by-id/... o nuevo path"></div>
-        </div>
-        <button class="btn btn-primary" onclick="replaceDisk()">Ejecutar Reemplazo de Disco y Reconstrucción</button>
-      </div>
-    </div>
-
-    <!-- TAB 3: DATASETS & CUOTAS -->
-    <div id="tab-datasets" class="tab-content">
-      <div class="card">
-        <div class="card-title">Gestión Granular de Datasets ZFS</div>
-        <div class="table-responsive">
-          <table>
-            <thead><tr><th>Dataset</th><th>Espacio Usado</th><th>Disponible</th><th>Cuota Asignada</th><th>Acción</th></tr></thead>
-            <tbody id="tbl-datasets-body">
-              <tr><td><code>tank/nas/alumnos</code></td><td id="ds-alumnos-used">--</td><td id="ds-alumnos-avail">--</td><td><input type="text" id="input-quota-alumnos" class="form-control" style="width:100px;" value="10G"></td><td><button class="btn btn-primary btn-sm" onclick="saveQuota('tank/nas/alumnos', 'input-quota-alumnos')">Guardar Cuota</button></td></tr>
-              <tr><td><code>tank/nas/profesores</code></td><td id="ds-prof-used">--</td><td id="ds-prof-avail">--</td><td><input type="text" id="input-quota-prof" class="form-control" style="width:100px;" value="100G"></td><td><button class="btn btn-primary btn-sm" onclick="saveQuota('tank/nas/profesores', 'input-quota-prof')">Guardar Cuota</button></td></tr>
-              <tr><td><code>tank/nas/publico</code></td><td id="ds-pub-used">--</td><td id="ds-pub-avail">--</td><td><input type="text" id="input-quota-pub" class="form-control" style="width:100px;" value="50G"></td><td><button class="btn btn-primary btn-sm" onclick="saveQuota('tank/nas/publico', 'input-quota-pub')">Guardar Cuota</button></td></tr>
-              <tr><td><code>tank/nas/nextcloud</code></td><td id="ds-nc-used">--</td><td id="ds-nc-avail">--</td><td><input type="text" id="input-quota-nc" class="form-control" style="width:100px;" value="500G"></td><td><button class="btn btn-primary btn-sm" onclick="saveQuota('tank/nas/nextcloud', 'input-quota-nc')">Guardar Cuota</button></td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-
-    <!-- TAB 4: USUARIOS -->
-    <div id="tab-users" class="tab-content">
-      <div class="card">
-        <div class="card-title">Alta de Usuario con Sincronización Automática (Samba + Nextcloud)</div>
-        <div class="form-row">
-          <div class="form-group"><label class="form-label">Nombre de Usuario (ej. alumno.perez)</label><input type="text" id="u-name" class="form-control"></div>
-          <div class="form-group"><label class="form-label">Nombre Completo Visible</label><input type="text" id="u-display" class="form-control"></div>
-          <div class="form-group"><label class="form-label">Contraseña</label><input type="password" id="u-pass" class="form-control"></div>
-          <div class="form-group"><label class="form-label">Grupo Institucional</label>
-            <select id="u-group" class="form-control">
-              <option value="alumnos">Alumnos (Acceso limitado a [mi-espacio])</option>
-              <option value="profesores">Profesores (Acceso a [profesores] y buzón)</option>
-              <option value="directivos">Directivos (Acceso total)</option>
-            </select>
-          </div>
-        </div>
-        <button class="btn btn-primary" onclick="submitCreateUser()">Crear y Sincronizar en Samba y Nextcloud</button>
-      </div>
-
-      <div class="card">
-        <div class="card-title">Reseteo Rápido de Contraseña de Usuario</div>
-        <div class="form-row">
-          <div class="form-group"><label class="form-label">Usuario</label><input type="text" id="reset-u-name" class="form-control"></div>
-          <div class="form-group"><label class="form-label">Nueva Contraseña</label><input type="password" id="reset-u-pass" class="form-control"></div>
-        </div>
-        <button class="btn btn-primary" onclick="submitResetPassword()">Actualizar Contraseña</button>
-      </div>
-    </div>
-
-    <!-- TAB 5: SAMBA SHARES -->
-    <div id="tab-samba" class="tab-content">
-      <div class="card">
-        <div class="card-title">Recursos Compartidos de Red (SMB/CIFS) Activos</div>
-        <div class="table-responsive">
-          <table>
-            <thead><tr><th>Recurso</th><th>Ruta en Almacenamiento</th><th>Permisos y Aislamiento</th><th>Papelera Red</th><th>Estado</th></tr></thead>
-            <tbody>
-              <tr><td><code>[mi-espacio]</code></td><td>/samba/alumnos/%U</td><td>Aislamiento Privado por Alumno (Máscara 0700)</td><td>Habilitada</td><td><span class="badge badge-ok">ACTIVO</span></td></tr>
-              <tr><td><code>[entregas]</code></td><td>/samba/alumnos/entregas</td><td>Buzón de Tareas (Escritura Alumnos / Lectura Docentes)</td><td>Deshabilitada</td><td><span class="badge badge-ok">ACTIVO</span></td></tr>
-              <tr><td><code>[profesores]</code></td><td>/samba/profesores</td><td>Exclusivo Docentes y Administradores</td><td>Habilitada</td><td><span class="badge badge-ok">ACTIVO</span></td></tr>
-              <tr><td><code>[publico]</code></td><td>/samba/publico</td><td>Lectura Todos los Miembros de la Escuela</td><td>Deshabilitada</td><td><span class="badge badge-ok">ACTIVO</span></td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-
-    <!-- TAB 6: SNAPSHOTS & ROLLBACK -->
-    <div id="tab-snapshots" class="tab-content">
-      <div class="card">
-        <div class="card-title">
-          Catálogo Real de Snapshots OpenZFS
-          <div>
-            <input type="text" id="snap-create-tag" placeholder="Nombre nuevo snapshot..." class="form-control" style="display:inline-block; width:200px; padding:4px 8px; font-size:11px;">
-            <button class="btn btn-primary btn-sm" onclick="submitCreateSnap()">Crear Snapshot Atómico</button>
-          </div>
-        </div>
-        <div class="table-responsive">
-          <table>
-            <thead><tr><th>Dataset @ Snapshot Tag</th><th>Espacio Referenciado</th><th>Acción</th></tr></thead>
-            <tbody id="tbl-snapshots-body"><tr><td colspan="3">Cargando snapshots del sistema...</td></tr></tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-
-    <!-- TAB 7: R2 & EMERGENCY KIT -->
-    <div id="tab-r2" class="tab-content">
-      <div class="grid-metrics">
         <div class="card">
-          <div class="card-title">Respaldo Offsite en Cloudflare R2 (WORM)</div>
-          <p style="color:var(--text-muted); font-size:12px; margin-bottom:12px;">Copia externa inmutable con cifrado AES-256-CBC PBKDF2 y Object Lock de 30 días.</p>
-          <button class="btn btn-primary" onclick="execAction('backup.r2.trigger', {})">Disparar Respaldo R2 Ahora</button>
+          <div class="card-header">Topología OpenZFS (Salida en vivo de zpool status)</div>
+          <pre id="dash-zpool-output" style="font-family:var(--font-mono); font-size:12px; color:#cbd5e1; background:var(--bg-base); padding:14px; border-radius:6px; overflow-x:auto;">Consultando pool tank...</pre>
+        </div>
+      </section>
+
+      <!-- 2. STORAGE -->
+      <section id="sec-storage" class="page-section">
+        <div class="section-header">
+          <div class="section-title">Discos Físicos & Pool ZFS</div>
+          <div class="section-subtitle">Detección de hardware en vivo mediante lsblk y control de mantenimiento</div>
         </div>
         <div class="card">
-          <div class="card-title">Emergency Kit de Rescate Bare-Metal</div>
-          <p style="color:var(--text-muted); font-size:12px; margin-bottom:12px;">Genera y descarga el paquete cifrado con las claves maestras de ZFS, Sealed Secrets y configuración.</p>
-          <button class="btn btn-primary" onclick="execAction('backup.export_emergency_kit', {})">Generar & Exportar Emergency Kit</button>
+          <div class="card-header">
+            <span>Discos Físicos Detectados en el Host</span>
+            <div>
+              <button class="btn btn-primary btn-sm" onclick="execCmd('zfs.scrub', {subaction:'start'})">Iniciar Scrub</button>
+              <button class="btn btn-sm" onclick="execCmd('zfs.scrub', {subaction:'stop'})">Detener Scrub</button>
+            </div>
+          </div>
+          <div class="table-box">
+            <table>
+              <thead><tr><th>Dispositivo</th><th>Tipo</th><th>Tamaño</th><th>Modelo</th><th>Montaje</th><th>Diagnóstico</th></tr></thead>
+              <tbody id="tbl-disks"><tr><td colspan="6">Leyendo dispositivos de bloques...</td></tr></tbody>
+            </table>
+          </div>
         </div>
-      </div>
-    </div>
 
-    <!-- TAB 8: MICROSERVICIOS -->
-    <div id="tab-services" class="tab-content">
-      <div class="card">
-        <div class="card-title">Estado de Contenedores en Vivo (Kubernetes Pods)</div>
-        <div class="table-responsive">
-          <table>
-            <thead><tr><th>Servicio</th><th>Namespace</th><th>Estado</th><th>Reinicio</th></tr></thead>
-            <tbody>
-              <tr><td><code>nextcloud</code> (Web / Cloud)</td><td>default</td><td><span class="badge badge-ok">1/1 RUNNING</span></td><td><button class="btn btn-sm" onclick="execAction('services.restart', {service:'nextcloud', namespace:'default'})">Reiniciar</button></td></tr>
-              <tr><td><code>samba</code> (Servidor de Archivos)</td><td>default</td><td><span class="badge badge-ok">1/1 RUNNING</span></td><td><button class="btn btn-sm" onclick="execAction('services.restart', {service:'samba', namespace:'default'})">Reiniciar</button></td></tr>
-              <tr><td><code>nextcloud-postgres</code> (Base de Datos)</td><td>default</td><td><span class="badge badge-ok">1/1 RUNNING</span></td><td><button class="btn btn-sm" onclick="execAction('services.restart', {service:'nextcloud-postgres', namespace:'default'})">Reiniciar</button></td></tr>
-              <tr><td><code>ransomware-sentinel</code> (Escudo Anti-Ransomware)</td><td>kube-system</td><td><span class="badge badge-ok">1/1 RUNNING</span></td><td><button class="btn btn-sm" onclick="execAction('services.restart', {service:'ransomware-sentinel', namespace:'kube-system'})">Reiniciar</button></td></tr>
-            </tbody>
-          </table>
+        <div class="card">
+          <div class="card-header">Reemplazo Asistido de Disco Dañado</div>
+          <div class="form-grid">
+            <div class="form-group"><label class="form-label">Disco a Reemplazar (ej. /zfs-disks/disk2.img)</label><input type="text" id="in-rep-old" class="form-control"></div>
+            <div class="form-group"><label class="form-label">Nuevo Disco Físico (ej. /dev/disk/by-id/...)</label><input type="text" id="in-rep-new" class="form-control"></div>
+          </div>
+          <button class="btn btn-primary" onclick="execDiskReplace()">Ejecutar zpool replace y Reconstrucción</button>
         </div>
-      </div>
-    </div>
+      </section>
 
-    <!-- TAB 9: WEB SHELL -->
-    <div id="tab-shell" class="tab-content">
-      <div class="card">
-        <div class="card-title">Terminal de Rescate Web (Auditada en tiempo real)</div>
-        <div style="display:flex; gap:8px; margin-bottom:12px;">
-          <input type="text" id="term-input" class="form-control" placeholder="Escriba un comando (ej. zpool status, lsblk, df -h, uptime)..." onkeydown="if(event.key==='Enter') submitShellCommand()">
-          <button class="btn btn-primary" onclick="submitShellCommand()">Ejecutar</button>
+      <!-- 3. DATASETS -->
+      <section id="sec-datasets" class="page-section">
+        <div class="section-header">
+          <div class="section-title">Datasets OpenZFS & Límites de Cuotas</div>
+          <div class="section-subtitle">Configuración granular del almacenamiento por departamento o rol</div>
         </div>
-        <div class="shell-container" id="term-output"># Terminal de rescate inicializada.
+        <div class="card">
+          <div class="table-box">
+            <table>
+              <thead><tr><th>Dataset</th><th>Descripción</th><th>Cuota Asignada</th><th>Acción</th></tr></thead>
+              <tbody>
+                <tr><td><code>tank/nas/alumnos</code></td><td>Espacio de trabajo y carpetas personales de alumnos</td><td><input type="text" id="q-alumnos" class="form-control" style="width:120px;" value="10G"></td><td><button class="btn btn-primary btn-sm" onclick="saveQuota('tank/nas/alumnos', 'q-alumnos')">Actualizar Cuota</button></td></tr>
+                <tr><td><code>tank/nas/profesores</code></td><td>Carpetas de planificación y material docente</td><td><input type="text" id="q-profesores" class="form-control" style="width:120px;" value="100G"></td><td><button class="btn btn-primary btn-sm" onclick="saveQuota('tank/nas/profesores', 'q-profesores')">Actualizar Cuota</button></td></tr>
+                <tr><td><code>tank/nas/publico</code></td><td>Recursos y normativas compartidas institucionales</td><td><input type="text" id="q-publico" class="form-control" style="width:120px;" value="50G"></td><td><button class="btn btn-primary btn-sm" onclick="saveQuota('tank/nas/publico', 'q-publico')">Actualizar Cuota</button></td></tr>
+                <tr><td><code>tank/nas/nextcloud</code></td><td>Almacenamiento transaccional de Nextcloud Hub</td><td><input type="text" id="q-nextcloud" class="form-control" style="width:120px;" value="500G"></td><td><button class="btn btn-primary btn-sm" onclick="saveQuota('tank/nas/nextcloud', 'q-nextcloud')">Actualizar Cuota</button></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- 4. USUARIOS -->
+      <section id="sec-users" class="page-section">
+        <div class="section-header">
+          <div class="section-title">Identidad & Usuarios Escolares</div>
+          <div class="section-subtitle">Alta y reseteo sincronizado automáticamente en Samba y Nextcloud</div>
+        </div>
+        <div class="card">
+          <div class="card-header">Alta de Nuevo Usuario</div>
+          <div class="form-grid">
+            <div class="form-group"><label class="form-label">Usuario (ej. docente.garcia)</label><input type="text" id="usr-name" class="form-control"></div>
+            <div class="form-group"><label class="form-label">Nombre Completo</label><input type="text" id="usr-disp" class="form-control"></div>
+            <div class="form-group"><label class="form-label">Contraseña</label><input type="password" id="usr-pass" class="form-control"></div>
+            <div class="form-group"><label class="form-label">Grupo</label>
+              <select id="usr-group" class="form-control">
+                <option value="alumnos">Alumnos</option>
+                <option value="profesores">Profesores</option>
+                <option value="directivos">Directivos</option>
+              </select>
+            </div>
+          </div>
+          <button class="btn btn-primary" onclick="createUserSubmit()">Crear y Sincronizar Cuenta</button>
+        </div>
+
+        <div class="card">
+          <div class="card-header">Reseteo Rápido de Contraseña Olvidada</div>
+          <div class="form-grid">
+            <div class="form-group"><label class="form-label">Nombre de Usuario</label><input type="text" id="rst-name" class="form-control"></div>
+            <div class="form-group"><label class="form-label">Nueva Contraseña</label><input type="password" id="rst-pass" class="form-control"></div>
+          </div>
+          <button class="btn btn-primary" onclick="resetUserSubmit()">Guardar Nueva Contraseña</button>
+        </div>
+      </section>
+
+      <!-- 5. SAMBA -->
+      <section id="sec-samba" class="page-section">
+        <div class="section-header">
+          <div class="section-title">Recursos Compartidos de Red (Samba SMB)</div>
+          <div class="section-subtitle">Shares institucionales con aislamiento de alumnos y papelera de reciclaje</div>
+        </div>
+        <div class="card">
+          <div class="table-box">
+            <table>
+              <thead><tr><th>Recurso</th><th>Ruta en Almacenamiento</th><th>Permisos & Aislamiento</th><th>Papelera Red</th><th>Estado</th></tr></thead>
+              <tbody>
+                <tr><td><code>[mi-espacio]</code></td><td>/samba/alumnos/%U</td><td>Aislamiento Privado por Alumno (Máscara 0700)</td><td>Habilitada (.recycle)</td><td><span class="badge badge-ok">ACTIVO</span></td></tr>
+                <tr><td><code>[entregas]</code></td><td>/samba/alumnos/entregas</td><td>Buzón de Tareas (Escritura Alumnos / Lectura Docentes)</td><td>Deshabilitada</td><td><span class="badge badge-ok">ACTIVO</span></td></tr>
+                <tr><td><code>[profesores]</code></td><td>/samba/profesores</td><td>Exclusivo Docentes y Administradores</td><td>Habilitada (.recycle)</td><td><span class="badge badge-ok">ACTIVO</span></td></tr>
+                <tr><td><code>[publico]</code></td><td>/samba/publico</td><td>Lectura Todos los Miembros de la Escuela</td><td>Deshabilitada</td><td><span class="badge badge-ok">ACTIVO</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- 6. SNAPSHOTS -->
+      <section id="sec-snapshots" class="page-section">
+        <div class="section-header">
+          <div class="section-title">Snapshots OpenZFS & Reversión Coordinada</div>
+          <div class="section-subtitle">Puntos de restauración atómicos para mitigar corrupción o ataques de ransomware</div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <span>Crear Snapshot Atómico Inmediato</span>
+          </div>
+          <div style="display:flex; gap:10px; margin-bottom:14px;">
+            <input type="text" id="new-snap-tag" class="form-control" placeholder="Etiqueta (ej. pre-actualizacion)..." style="max-width:300px;">
+            <button class="btn btn-primary" onclick="createSnapSubmit()">Crear Snapshot</button>
+          </div>
+          <div class="table-box">
+            <table>
+              <thead><tr><th>Snapshot Tag</th><th>Espacio Referenciado</th><th>Acción</th></tr></thead>
+              <tbody id="tbl-snapshots"><tr><td colspan="3">Cargando snapshots...</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- 7. R2 & EMERGENCY KIT -->
+      <section id="sec-r2" class="page-section">
+        <div class="section-header">
+          <div class="section-title">Respaldo Offsite en Cloudflare R2 & Kit de Emergencia</div>
+          <div class="section-subtitle">Cumplimiento 3-2-1 con inmutabilidad WORM y claves maestras para recuperación total</div>
+        </div>
+        <div class="grid-3">
+          <div class="card">
+            <div class="card-header">Copia Externa Cloudflare R2 (WORM)</div>
+            <p style="color:var(--text-muted); font-size:12px; margin-bottom:14px;">Streaming directo cifrado con AES-256-CBC PBKDF2 y Object Lock por 30 días.</p>
+            <button class="btn btn-primary" onclick="execCmd('backup.r2.trigger', {})">Disparar Backup a la Nube Ahora</button>
+          </div>
+          <div class="card">
+            <div class="card-header">Emergency Kit de Rescate Bare-Metal</div>
+            <p style="color:var(--text-muted); font-size:12px; margin-bottom:14px;">Descargue el archivo .tar.enc con las claves de cifrado, Sealed Secrets y configuración.</p>
+            <button class="btn btn-primary" onclick="execCmd('backup.export_emergency_kit', {})">Exportar Emergency Kit</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 8. SERVICIOS -->
+      <section id="sec-services" class="page-section">
+        <div class="section-header">
+          <div class="section-title">Estado de Microservicios Orquestados</div>
+          <div class="section-subtitle">Monitoreo de disponibilidad de los contenedores K3s del appliance</div>
+        </div>
+        <div class="card">
+          <div class="table-box">
+            <table>
+              <thead><tr><th>Servicio</th><th>Namespace</th><th>Estado</th><th>Reinicio Controlado</th></tr></thead>
+              <tbody>
+                <tr><td><code>nextcloud</code> (Cloud & WebDAV)</td><td>default</td><td><span class="badge badge-ok">1/1 RUNNING</span></td><td><button class="btn btn-sm" onclick="execCmd('services.restart', {service:'nextcloud', namespace:'default'})">Reiniciar</button></td></tr>
+                <tr><td><code>samba</code> (Servidor SMB/CIFS)</td><td>default</td><td><span class="badge badge-ok">1/1 RUNNING</span></td><td><button class="btn btn-sm" onclick="execCmd('services.restart', {service:'samba', namespace:'default'})">Reiniciar</button></td></tr>
+                <tr><td><code>nextcloud-postgres</code> (PostgreSQL 16)</td><td>default</td><td><span class="badge badge-ok">1/1 RUNNING</span></td><td><button class="btn btn-sm" onclick="execCmd('services.restart', {service:'nextcloud-postgres', namespace:'default'})">Reiniciar</button></td></tr>
+                <tr><td><code>ransomware-sentinel</code> (Escudo Honeypot)</td><td>kube-system</td><td><span class="badge badge-ok">1/1 RUNNING</span></td><td><button class="btn btn-sm" onclick="execCmd('services.restart', {service:'ransomware-sentinel', namespace:'kube-system'})">Reiniciar</button></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- 9. WEB SHELL -->
+      <section id="sec-shell" class="page-section">
+        <div class="section-header">
+          <div class="section-title">Terminal de Rescate Web</div>
+          <div class="section-subtitle">Consola de mantenimiento directo con auditoría inmutable en tiempo real</div>
+        </div>
+        <div class="card">
+          <div style="display:flex; gap:10px; margin-bottom:12px;">
+            <input type="text" id="sh-input" class="form-control" placeholder="Escriba un comando (ej. zpool status, lsblk, df -h, uptime)..." onkeydown="if(event.key==='Enter') runShell()">
+            <button class="btn btn-primary" onclick="runShell()">Ejecutar</button>
+          </div>
+          <div class="terminal-window" id="sh-output"># Terminal de rescate inicializada.
 # Todas las acciones se registran con firma inmutable en /var/log/nas-agentd-audit.log
 $ </div>
-      </div>
-    </div>
+        </div>
+      </section>
 
-    <!-- TAB 10: EXPLORADOR ARCHIVOS -->
-    <div id="tab-files" class="tab-content">
-      <div class="card">
-        <div class="card-title">
-          Explorador de Almacenamiento ZFS
-          <div>
-            <button class="btn btn-sm" onclick="loadFiles('/tank/nas')">Ir a Raíz (/tank/nas)</button>
-            <button class="btn btn-sm" onclick="loadFiles('/tank/nas/.recycle')">Papelera (.recycle)</button>
+      <!-- 10. EXPLORADOR ARCHIVOS -->
+      <section id="sec-files" class="page-section">
+        <div class="section-header">
+          <div class="section-title">Explorador de Almacenamiento ZFS</div>
+          <div class="section-subtitle">Navegación en vivo por datasets institucionales y papelera de red</div>
+        </div>
+        <div class="card">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+            <div style="font-family:var(--font-mono); font-size:12px;">Ruta actual: <strong id="cur-dir-path">/tank/nas</strong></div>
+            <div>
+              <button class="btn btn-sm" onclick="loadDirectory('/tank/nas')">Raíz (/tank/nas)</button>
+              <button class="btn btn-sm" onclick="loadDirectory('/tank/nas/.recycle')">Papelera (.recycle)</button>
+            </div>
+          </div>
+          <div class="table-box">
+            <table>
+              <thead><tr><th>Nombre</th><th>Tipo</th><th>Tamaño</th><th>Modificado</th><th>Navegar</th></tr></thead>
+              <tbody id="tbl-files"><tr><td colspan="5">Cargando directorio...</td></tr></tbody>
+            </table>
           </div>
         </div>
-        <div style="margin-bottom:8px; font-weight:600; font-family:var(--font-mono);">Ruta: <span id="txt-current-path">/tank/nas</span></div>
-        <div class="table-responsive">
-          <table>
-            <thead><tr><th>Nombre</th><th>Tipo</th><th>Tamaño</th><th>Modificado</th><th>Navegar</th></tr></thead>
-            <tbody id="tbl-files-body"><tr><td colspan="5">Cargando directorio...</td></tr></tbody>
-          </table>
+      </section>
+
+      <!-- 11. RED -->
+      <section id="sec-network" class="page-section">
+        <div class="section-header">
+          <div class="section-title">Configuración de Red & Auto-Rollback</div>
+          <div class="section-subtitle">Ventana de seguridad de 60 segundos para evitar pérdida de acceso al servidor</div>
         </div>
-      </div>
-    </div>
-
-    <!-- TAB 11: RED -->
-    <div id="tab-network" class="tab-content">
-      <div class="card">
-        <div class="card-title">Configuración de Red con Auto-Rollback Anti-Bloqueo (60s)</div>
-        <p style="color:var(--text-muted); font-size:12px; margin-bottom:12px;">Si aplicas una IP o Gateway erróneo, el sistema revertirá automáticamente a los 60 segundos para evitar pérdida de acceso al servidor.</p>
-        <div class="form-row">
-          <div class="form-group"><label class="form-label">Dirección IP Estática (CIDR)</label><input type="text" id="net-ip-in" class="form-control" value="192.168.1.100/24"></div>
-          <div class="form-group"><label class="form-label">Gateway (Puerta de Enlace)</label><input type="text" id="net-gw-in" class="form-control" value="192.168.1.1"></div>
+        <div class="card">
+          <div class="form-grid">
+            <div class="form-group"><label class="form-label">Dirección IP Estática (CIDR)</label><input type="text" id="net-ip" class="form-control" value="192.168.1.100/24"></div>
+            <div class="form-group"><label class="form-label">Puerta de Enlace (Gateway)</label><input type="text" id="net-gw" class="form-control" value="192.168.1.1"></div>
+          </div>
+          <button class="btn btn-primary" onclick="execCmd('network.apply', {ip:document.getElementById('net-ip').value, gateway:document.getElementById('net-gw').value})">Aplicar con Ventana de Prueba (60s)</button>
+          <button class="btn btn-primary" style="background:#059669; border-color:#059669; margin-left:8px;" onclick="execCmd('network.confirm', {})">Confirmar Definitivamente</button>
         </div>
-        <button class="btn btn-primary" onclick="execAction('network.apply', {ip:document.getElementById('net-ip-in').value, gateway:document.getElementById('net-gw-in').value})">Probar Configuración (Ventana de 60s)</button>
-        <button class="btn btn-primary" style="background:#059669; border-color:#059669; margin-left:8px;" onclick="execAction('network.confirm', {})">Confirmar Definitivamente</button>
-      </div>
-    </div>
+      </section>
 
-    <!-- TAB 12: UPS -->
-    <div id="tab-ups" class="tab-content">
-      <div class="card">
-        <div class="card-title">Telemetría de Energía & SAI / UPS (NUT Client)</div>
-        <div style="font-size:14px; margin-bottom:8px;">Estado Batería: <strong style="color:#34d399;" id="ups-charge-val">100% (Online)</strong></div>
-        <div style="font-size:14px; margin-bottom:8px;">Voltaje de Red: <strong>228.6 V AC</strong></div>
-        <div style="font-size:14px; margin-bottom:8px;">Autonomía Estimada: <strong>48 minutos</strong></div>
-        <div style="font-size:12px; color:var(--text-muted); margin-top:12px;">En caso de corte eléctrico prolongado, el demonio ejecutará un apagado seguro del RAID al llegar al 15% de batería.</div>
-      </div>
-    </div>
-
-    <!-- TAB 13: PKI -->
-    <div id="tab-pki" class="tab-content">
-      <div class="card">
-        <div class="card-title">Autoridad Certificadora (CA) Institucional Interna</div>
-        <p style="color:var(--text-muted); font-size:12px; margin-bottom:12px;">Genera un certificado raíz seguro para eliminar advertencias en los navegadores de las computadoras del colegio.</p>
-        <button class="btn btn-primary" onclick="execAction('pki.generate_ca', {})">Generar / Renovar CA Raíz Institucional</button>
-      </div>
-    </div>
-
-    <!-- TAB 14: NEXTCLOUD -->
-    <div id="tab-nextcloud" class="tab-content">
-      <div class="card">
-        <div class="card-title">Mantenimiento y Sincronización de Nextcloud & PostgreSQL</div>
-        <div style="display:flex; gap:10px;">
-          <button class="btn btn-primary" onclick="execAction('occ.files_scan', {})">Escanear y Re-indexar Archivos (occ files:scan --all)</button>
-          <button class="btn" onclick="execAction('postgres.vacuum', {})">Ejecutar VACUUM ANALYZE en PostgreSQL 16</button>
+      <!-- 12. UPS -->
+      <section id="sec-ups" class="page-section">
+        <div class="section-header">
+          <div class="section-title">Energía & Monitoreo de SAI / UPS (NUT)</div>
+          <div class="section-subtitle">Protección contra cortes abruptos de luz y apagado ordenado del RAID</div>
         </div>
-      </div>
-    </div>
-
-    <!-- TAB 15: CRON -->
-    <div id="tab-cron" class="tab-content">
-      <div class="card">
-        <div class="card-title">CronJobs y Tareas Periódicas Programadas</div>
-        <div class="table-responsive">
-          <table>
-            <thead><tr><th>Nombre de Tarea</th><th>Frecuencia</th><th>Acción Inmediata</th></tr></thead>
-            <tbody>
-              <tr><td><code>zfs-snapshot</code></td><td>Cada 1 hora</td><td><button class="btn btn-sm" onclick="execAction('zfs.snapshot.create', {tag:'manual-'+Date.now()})">Lanzar Snapshot Ahora</button></td></tr>
-              <tr><td><code>zfs-offsite-backup</code></td><td>Diario a las 02:00</td><td><button class="btn btn-sm" onclick="execAction('backup.r2.trigger', {})">Lanzar Respaldo R2 Ahora</button></td></tr>
-              <tr><td><code>zfs-scrub</code></td><td>Mensual (Día 1 a las 03:00)</td><td><button class="btn btn-sm" onclick="execAction('zfs.scrub', {subaction:'start'})">Lanzar Scrub Ahora</button></td></tr>
-            </tbody>
-          </table>
+        <div class="card">
+          <div class="metric-label">Carga de Batería</div>
+          <div class="metric-value" style="color:#34d399;">100% (Online)</div>
+          <div style="font-size:12px; color:var(--text-muted); margin-top:10px;">Autonomía estimada: 48 minutos. Voltaje: 228.4 V AC.</div>
         </div>
-      </div>
-    </div>
+      </section>
 
-    <!-- TAB 16: DR DRILL -->
-    <div id="tab-dr" class="tab-content">
-      <div class="card">
-        <div class="card-title">Simulacro de Recuperación ante Desastres (DR Drill)</div>
-        <p style="color:var(--text-muted); font-size:12px; margin-bottom:12px;">Ejecuta el simulacro de recuperación real, valida integridad criptográfica y cronometra el RTO real del sistema.</p>
-        <button class="btn btn-primary" onclick="runDrillReal()">Ejecutar Simulacro Completo de DR</button>
-        <div id="dr-drill-status" style="margin-top:14px; font-weight:600;"></div>
-      </div>
-    </div>
-
-    <!-- TAB 17: AUDITORIA -->
-    <div id="tab-audit" class="tab-content">
-      <div class="card">
-        <div class="card-title">Registro Forense de Auditoría (Append-Only)</div>
-        <div style="font-family:var(--font-mono); font-size:12px; color:#94a3b8; background:var(--bg-base); padding:12px; border-radius:4px; max-height:300px; overflow-y:auto;" id="box-audit-log">
-          [AUDIT] Monitoreo activo. Todos los eventos de control se firman en /var/log/nas-agentd-audit.log
+      <!-- 13. PKI -->
+      <section id="sec-pki" class="page-section">
+        <div class="section-header">
+          <div class="section-title">Certificados TLS & Autoridad Certificadora (PKI)</div>
+          <div class="section-subtitle">Eliminación de advertencias de 'Sitio No Seguro' en la red escolar</div>
         </div>
-      </div>
-    </div>
+        <div class="card">
+          <p style="color:var(--text-muted); font-size:12px; margin-bottom:14px;">Genere una CA Raíz Institucional para distribuir e instalar en los navegadores de las aulas.</p>
+          <button class="btn btn-primary" onclick="execCmd('pki.generate_ca', {})">Generar / Renovar CA Raíz</button>
+        </div>
+      </section>
 
-  </main>
+      <!-- 14. NEXTCLOUD -->
+      <section id="sec-nextcloud" class="page-section">
+        <div class="section-header">
+          <div class="section-title">Mantenimiento de Nextcloud & PostgreSQL</div>
+          <div class="section-subtitle">Comandos de optimización y re-escaneo de archivos en 1 clic</div>
+        </div>
+        <div class="card">
+          <div style="display:flex; gap:10px;">
+            <button class="btn btn-primary" onclick="execCmd('occ.files_scan', {})">Re-indexar Archivos (occ files:scan --all)</button>
+            <button class="btn" onclick="execCmd('postgres.vacuum', {})">Ejecutar VACUUM ANALYZE en PostgreSQL</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 15. CRON -->
+      <section id="sec-cron" class="page-section">
+        <div class="section-header">
+          <div class="section-title">Tareas Automáticas Programadas (CronJobs)</div>
+          <div class="section-subtitle">Disparo manual y visualización de frecuencias de respaldo y mantenimiento</div>
+        </div>
+        <div class="card">
+          <div class="table-box">
+            <table>
+              <thead><tr><th>Tarea</th><th>Frecuencia</th><th>Disparo Inmediato</th></tr></thead>
+              <tbody>
+                <tr><td><code>zfs-snapshot</code></td><td>Cada 1 hora</td><td><button class="btn btn-sm" onclick="execCmd('zfs.snapshot.create', {tag:'manual-'+Date.now()})">Lanzar Ahora</button></td></tr>
+                <tr><td><code>zfs-offsite-backup</code></td><td>Diario a las 02:00</td><td><button class="btn btn-sm" onclick="execCmd('backup.r2.trigger', {})">Lanzar Ahora</button></td></tr>
+                <tr><td><code>zfs-scrub</code></td><td>Mensual (Día 1 a las 03:00)</td><td><button class="btn btn-sm" onclick="execCmd('zfs.scrub', {subaction:'start'})">Lanzar Ahora</button></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- 16. DR DRILL -->
+      <section id="sec-dr" class="page-section">
+        <div class="section-header">
+          <div class="section-title">Simulacro de Contingencia (DR Drill & RTO Real)</div>
+          <div class="section-subtitle">Validación práctica y cronometrada de la recuperación ante desastres</div>
+        </div>
+        <div class="card">
+          <p style="color:var(--text-muted); font-size:12px; margin-bottom:14px;">Ejecuta un ciclo de recuperación real sobre un dataset aislado y valida las sumas SHA-256.</p>
+          <button class="btn btn-primary" onclick="runDrillTest()">Iniciar Simulacro DR</button>
+          <div id="dr-result-box" style="margin-top:14px; font-weight:600; color:#34d399;"></div>
+        </div>
+      </section>
+
+      <!-- 17. AUDITORIA -->
+      <section id="sec-audit" class="page-section">
+        <div class="section-header">
+          <div class="section-title">Bitácora Forense de Auditoría</div>
+          <div class="section-subtitle">Registro append-only en /var/log/nas-agentd-audit.log</div>
+        </div>
+        <div class="card">
+          <div class="terminal-window" style="color:#94a3b8;" id="audit-log-view">[AUDIT] Sistema en línea. Todas las llamadas administrativas quedan firmadas.</div>
+        </div>
+      </section>
+
+    </div>
+  </div>
 
   <div id="toast" class="toast"></div>
 
   <script>
-    function setTab(name, btn) {
-      document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-      document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
-      const t = document.getElementById('tab-' + name);
-      if (t) t.classList.add('active');
+    // Tab Navigation
+    function navigate(secId, btn) {
+      document.querySelectorAll('.page-section').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+      const target = document.getElementById('sec-' + secId);
+      if (target) target.classList.add('active');
       if (btn) btn.classList.add('active');
     }
 
@@ -420,179 +506,140 @@ $ </div>
       setTimeout(() => { el.style.display = 'none'; }, 4000);
     }
 
-    async function execAction(action, params = {}) {
+    // Backend Execution
+    async function execCmd(action, params) {
       try {
         const res = await fetch('/api/agent/action', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({action, params})
+          body: JSON.stringify({action: action, params: params || {}})
         });
         const data = await res.json();
-        showToast('Acción ' + action + (data.success ? ' ejecutada con éxito' : ' falló: ' + (data.error || '')));
+        showToast('Acción ' + action + (data.success ? ' completada con éxito' : ' falló'));
         return data;
       } catch (err) {
         showToast('Error de conexión: ' + err.message);
       }
     }
 
-    // Live Heartbeat Polling
-    async function updateSystemTelemetry() {
+    // Telemetry Polling (Every 3 seconds)
+    async function pollTelemetry() {
       try {
-        // System CPU & RAM
-        const sysRes = await fetch('/api/agent/action', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({action: 'system.status', params: {}})
-        });
-        const sysData = await sysRes.json();
-        if (sysData && sysData.data) {
-          const l = sysData.data.loadavg || [0, 0, 0];
-          document.getElementById('val-loadavg').innerText = l[0].toFixed(2) + ', ' + l[1].toFixed(2) + ', ' + l[2].toFixed(2);
-          
-          if (sysData.data.mem) {
-            const totalKb = parseInt(sysData.data.mem.MemTotal || '0');
-            const availKb = parseInt(sysData.data.mem.MemAvailable || '0');
-            const usedKb = totalKb - availKb;
-            const totalGb = (totalKb / 1024 / 1024).toFixed(1);
-            const usedGb = (usedKb / 1024 / 1024).toFixed(1);
-            const pct = Math.round((usedKb / totalKb) * 100);
-            document.getElementById('val-ram-usage').innerText = usedGb + ' GB / ' + totalGb + ' GB (' + pct + '%)';
-            document.getElementById('val-ram-sub').innerText = 'Libre: ' + (availKb / 1024 / 1024).toFixed(1) + ' GB';
+        const res = await execCmd('system.status', {});
+        if (res && res.data) {
+          const l = res.data.loadavg || [0, 0, 0];
+          document.getElementById('dash-cpu-load').innerText = l[0].toFixed(2) + ', ' + l[1].toFixed(2) + ', ' + l[2].toFixed(2);
+          if (res.data.mem) {
+            const tot = parseInt(res.data.mem.MemTotal || '0');
+            const avail = parseInt(res.data.mem.MemAvailable || '0');
+            const used = tot - avail;
+            const pct = Math.round((used / tot) * 100);
+            document.getElementById('dash-ram-usage').innerText = (used/1048576).toFixed(1) + ' GB (' + pct + '%)';
+            document.getElementById('dash-ram-sub').innerText = 'Total: ' + (tot/1048576).toFixed(1) + ' GB | Libre: ' + (avail/1048576).toFixed(1) + ' GB';
           }
         }
 
-        // ZFS Status
-        const zfsRes = await fetch('/api/agent/action', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({action: 'zfs.pool.status', params: {}})
-        });
-        const zfsData = await zfsRes.json();
-        if (zfsData && zfsData.data && zfsData.data.stdout) {
-          document.getElementById('raw-zpool-status').innerText = zfsData.data.stdout;
-          const isOnline = zfsData.data.stdout.includes('state: ONLINE');
-          document.getElementById('badge-pool').innerText = isOnline ? 'ZFS: ONLINE' : 'ZFS: DEGRADED';
-          document.getElementById('badge-pool').className = isOnline ? 'badge badge-ok' : 'badge badge-err';
+        const zfsRes = await execCmd('zfs.pool.status', {});
+        if (zfsRes && zfsRes.data && zfsRes.data.stdout) {
+          document.getElementById('dash-zpool-output').innerText = zfsRes.data.stdout;
+          const isOk = zfsRes.data.stdout.includes('state: ONLINE');
+          document.getElementById('live-badge-pool').innerText = isOk ? 'ZFS: ONLINE' : 'ZFS: DEGRADED';
+          document.getElementById('live-badge-pool').className = isOk ? 'badge badge-ok' : 'badge badge-warn';
+          document.getElementById('dash-pool-state').innerText = isOk ? 'ONLINE' : 'DEGRADED';
         }
       } catch (e) {}
     }
 
     // Load Disks via lsblk
-    async function loadDisks() {
-      const res = await fetch('/api/agent/action', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({action: 'storage.disks.list', params: {}})
-      });
-      const data = await res.json();
-      const tbody = document.getElementById('tbl-disks-body');
-      if (data && data.data && data.data.blockdevices) {
+    async function loadDisksView() {
+      const res = await execCmd('storage.disks.list', {});
+      const tbody = document.getElementById('tbl-disks');
+      if (res && res.data && res.data.blockdevices) {
         tbody.innerHTML = '';
-        data.data.blockdevices.forEach(d => {
+        res.data.blockdevices.forEach(d => {
           const tr = document.createElement('tr');
-          tr.innerHTML = `
-            <td><code>/dev/${d.name}</code></td>
-            <td>${d.type}</td>
-            <td>${d.size}</td>
-            <td>${d.model || 'Standard Storage'}</td>
-            <td>${d.mountpoint || '--'}</td>
-            <td><button class="btn btn-sm" onclick="execAction('storage.smart.test', {device:'/dev/${d.name}', type:'short'})">Test SMART</button></td>
-          `;
+          tr.innerHTML = '<td><code>/dev/' + d.name + '</code></td><td>' + d.type + '</td><td>' + d.size + '</td><td>' + (d.model || 'Standard Device') + '</td><td>' + (d.mountpoint || '--') + '</td><td><button class="btn btn-sm" onclick="execCmd(\'storage.smart.test\', {device:\'/dev/' + d.name + '\', type:\'short\'})">Test SMART</button></td>';
           tbody.appendChild(tr);
         });
       }
     }
 
-    // Load Files in Directory
-    async function loadFiles(path) {
-      document.getElementById('txt-current-path').innerText = path;
-      const res = await fetch('/api/agent/action', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({action: 'files.list_all', params: {path}})
-      });
-      const data = await res.json();
-      const tbody = document.getElementById('tbl-files-body');
+    // Load Files
+    async function loadDirectory(path) {
+      document.getElementById('cur-dir-path').innerText = path;
+      const res = await execCmd('files.list_all', {path: path});
+      const tbody = document.getElementById('tbl-files');
       tbody.innerHTML = '';
-      if (data && data.data && data.data.items) {
-        data.data.items.forEach(it => {
+      if (res && res.data && res.data.items) {
+        res.data.items.forEach(it => {
           const tr = document.createElement('tr');
-          const isDir = it.is_dir;
-          tr.innerHTML = `
-            <td><code>${it.name}</code></td>
-            <td>${isDir ? 'Carpeta' : 'Archivo'}</td>
-            <td>${isDir ? '--' : (it.size / 1024).toFixed(1) + ' KB'}</td>
-            <td>${new Date(it.mtime * 1000).toLocaleString()}</td>
-            <td>${isDir ? `<button class="btn btn-sm" onclick="loadFiles('${path}/${it.name}')">Abrir</button>` : '--'}</td>
-          `;
+          const isD = it.is_dir;
+          tr.innerHTML = '<td><code>' + it.name + '</code></td><td>' + (isD ? 'Carpeta' : 'Archivo') + '</td><td>' + (isD ? '--' : (it.size/1024).toFixed(1) + ' KB') + '</td><td>' + new Date(it.mtime * 1000).toLocaleString() + '</td><td>' + (isD ? '<button class="btn btn-sm" onclick="loadDirectory(\'' + path + '/' + it.name + '\')">Abrir</button>' : '--') + '</td>';
           tbody.appendChild(tr);
         });
       }
     }
 
-    async function submitCreateUser() {
-      const u = document.getElementById('u-name').value;
-      const disp = document.getElementById('u-display').value || u;
-      const pass = document.getElementById('u-pass').value;
-      const grp = document.getElementById('u-group').value;
-      if (!u || !pass) return alert('Ingrese usuario y contraseña');
-      showToast('Creando usuario en Samba y Nextcloud...');
-      await execAction('users.sync_nextcloud', {username:u, display_name:disp, password:pass, group:grp});
+    async function createUserSubmit() {
+      const u = document.getElementById('usr-name').value;
+      const d = document.getElementById('usr-disp').value || u;
+      const p = document.getElementById('usr-pass').value;
+      const g = document.getElementById('usr-group').value;
+      if (!u || !p) return alert('Complete usuario y clave');
+      showToast('Sincronizando cuenta en Nextcloud y Samba...');
+      await execCmd('users.sync_nextcloud', {username:u, display_name:d, password:p, group:g});
     }
 
-    async function submitResetPassword() {
-      const u = document.getElementById('reset-u-name').value;
-      const p = document.getElementById('reset-u-pass').value;
-      if (!u || !p) return alert('Ingrese usuario y nueva clave');
-      await execAction('users.reset_password', {username:u, password:p});
+    async function resetUserSubmit() {
+      const u = document.getElementById('rst-name').value;
+      const p = document.getElementById('rst-pass').value;
+      if (!u || !p) return alert('Complete usuario y nueva clave');
+      await execCmd('users.reset_password', {username:u, password:p});
     }
 
     async function saveQuota(dataset, inputId) {
-      const quota = document.getElementById(inputId).value;
-      await execAction('zfs.quota.set', {dataset, quota});
+      const q = document.getElementById(inputId).value;
+      await execCmd('zfs.quota.set', {dataset: dataset, quota: q});
     }
 
-    async function submitCreateSnap() {
-      const tag = document.getElementById('snap-create-tag').value || 'snap-' + Date.now();
-      await execAction('zfs.snapshot.create', {dataset:'tank/nas', tag});
+    async function createSnapSubmit() {
+      const tag = document.getElementById('new-snap-tag').value || 'snap-' + Date.now();
+      await execCmd('zfs.snapshot.create', {dataset:'tank/nas', tag: tag});
     }
 
-    async function submitShellCommand() {
-      const input = document.getElementById('term-input');
+    async function runShell() {
+      const input = document.getElementById('sh-input');
       const cmd = input.value.trim();
       if (!cmd) return;
       input.value = '';
-      const outBox = document.getElementById('term-output');
-      outBox.innerText += '
-$ ' + cmd + '
-';
-      const res = await execAction('shell.exec', {cmd});
+      const box = document.getElementById('sh-output');
+      box.innerText += '\n$ ' + cmd + '\n';
+      const res = await execCmd('shell.exec', {cmd: cmd});
       if (res && res.data) {
-        outBox.innerText += res.data.stdout || res.data.stderr || '(Sin salida, código ' + res.data.exit_code + ')';
+        box.innerText += res.data.stdout || res.data.stderr || '(Salida vacía, código ' + res.data.exit_code + ')';
       }
-      outBox.scrollTop = outBox.scrollHeight;
+      box.scrollTop = box.scrollHeight;
     }
 
-    async function runDrillReal() {
-      document.getElementById('dr-drill-status').innerText = 'Ejecutando simulación de contingencia...';
-      const res = await execAction('dr.run_drill', {});
+    async function runDrillTest() {
+      document.getElementById('dr-result-box').innerText = 'Ejecutando simulación de contingencia...';
+      const res = await execCmd('dr.run_drill', {});
       if (res && res.data) {
-        document.getElementById('dr-drill-status').innerText = 'Simulacro finalizado. RTO Real: ' + res.data.rto_seconds + ' segundos. Checksums verificados.';
+        document.getElementById('dr-result-box').innerText = 'Simulacro exitoso. RTO Real medido: ' + res.data.rto_seconds + 's. Checksums SHA-256 validados.';
       }
     }
 
-    function sendSystemPower(action) {
-      if (confirm('¿Está absolutamente seguro de ' + (action === 'reboot' ? 'REINICIAR' : 'APAGAR') + ' el servidor NAS?')) {
-        execAction('system.power', {command: action});
+    function confirmPower(action) {
+      if (confirm('¿Está seguro de ' + (action === 'reboot' ? 'REINICIAR' : 'APAGAR') + ' el servidor NAS?')) {
+        execCmd('system.power', {command: action});
       }
     }
 
-    // Initialize & Poll
-    window.onload = () => {
-      updateSystemTelemetry();
-      loadDisks();
-      loadFiles('/tank/nas');
-      setInterval(updateSystemTelemetry, 3000);
+    window.onload = function() {
+      pollTelemetry();
+      loadDisksView();
+      loadDirectory('/tank/nas');
+      setInterval(pollTelemetry, 3000);
     };
   </script>
 </body>
