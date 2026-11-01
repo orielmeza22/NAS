@@ -219,24 +219,36 @@ class NasApiHandler(BaseHTTPRequestHandler):
         if path == "/api/auth/login":
             client_ip = self.get_client_ip()
             if not self.check_rate_limit(client_ip):
-                self.send_json({"success": False, "error": "Demasiados intentos fallidos. Bloqueo temporal por 15 minutos."}, 429)
+                self.send_json({"success": False, "error": "Demasiados intentos fallidos. Bloqueo temporal de seguridad por 15 minutos."}, 429)
                 return
 
-            password = body.get("password", "")
+            username = str(body.get("username", "")).strip().lower()
+            password = str(body.get("password", ""))
             real_admin_pass = get_admin_password()
             if not real_admin_pass:
-                self.send_json({"success": False, "error": "Servicio de autenticación no configurado (secret ausente)."}, 500)
+                self.send_json({"success": False, "error": "Servicio de autenticacion no configurado (credencial ausente)."}, 500)
                 return
 
-            if secrets.compare_digest(password, real_admin_pass):
+            if (username in ("admin", "directivo", "root", "") and secrets.compare_digest(password, real_admin_pass)):
                 token = secrets.token_urlsafe(32)
                 expiry = time.time() + SESSION_TTL_SECONDS
                 ACTIVE_SESSIONS[token] = expiry
                 self.reset_failed_logins(client_ip)
-                self.send_json({"success": True, "token": token})
+                self.send_json({
+                    "success": True,
+                    "token": token,
+                    "username": username or "admin",
+                    "role": "superadmin",
+                    "expires_in": SESSION_TTL_SECONDS
+                })
             else:
                 self.record_failed_login(client_ip)
-                self.send_json({"success": False, "error": "Contraseña inválida"}, 401)
+                self.send_json({"success": False, "error": "Usuario o contrasena de administrador incorrectos."}, 401)
+            return
+
+        # STRICT DEVSECOPS: Require valid session token for all actions and APIs
+        if not self.is_auth():
+            self.send_json({"success": False, "error": "No autorizado. Inicie sesion en el Centro de Control."}, 401)
             return
 
         if path == "/api/agent/action":
@@ -246,14 +258,10 @@ class NasApiHandler(BaseHTTPRequestHandler):
             from nas_agentd import dispatch_request
             action = body.get("action", "")
             params = body.get("params", {})
-            user = "superadmin"
+            user = "admin"
             req = {"user": user, "action": action, "params": params}
             res = dispatch_request(req)
             self.send_json(res, 200 if res.get("success") else 400)
-            return
-
-        if not self.is_auth():
-            self.send_json({"error": "Unauthorized"}, 401)
             return
 
         if path == "/api/auth/logout":
