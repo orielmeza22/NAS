@@ -117,6 +117,8 @@ def action_system_status(params):
     loadavg = os.getloadavg() if hasattr(os, "getloadavg") else (0, 0, 0)
     return True, {"loadavg": loadavg, "mem": mem_info}
 
+from modules_catalog import MODULE_HANDLERS
+
 ACTION_CATALOG = {
     "zfs.pool.status": action_zfs_pool_status,
     "zfs.snapshot.create": action_zfs_snapshot_create,
@@ -127,6 +129,8 @@ ACTION_CATALOG = {
     "system.power": action_system_power,
     "system.status": action_system_status,
 }
+# Merge all 17 modules into the active action catalog
+ACTION_CATALOG.update(MODULE_HANDLERS)
 
 def dispatch_request(req):
     user = req.get("user", "anonymous")
