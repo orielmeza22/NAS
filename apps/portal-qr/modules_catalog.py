@@ -148,18 +148,22 @@ useradd -M -s /sbin/nologin "$SMB_USER" 2>/dev/null || true
     res_smb = run_cmd(["kubectl", "exec", "-i", "-n", "default", "deployment/samba", "--", "sh"], input_data=script_smb, timeout=20)
 
     if res_nc.returncode != 0:
-        err_msg = (res_nc.stderr or res_nc.stdout or "Error al crear usuario en Nextcloud").strip()
-        # Si el usuario ya existe en Nextcloud, actualizar credenciales
-        if "already exists" in err_msg.lower():
+        full_out = f"{res_nc.stdout or ''} {res_nc.stderr or ''}"
+        # Si el usuario ya existe en Nextcloud, actualizar credenciales y display
+        if "already exists" in full_out.lower():
             script_nc_reset = f"""set -e
 export NC_USER={shlex.quote(user)}
 export OC_PASS={shlex.quote(pwd)}
+export NC_DISP={shlex.quote(display)}
+export NC_GROUP={shlex.quote(group)}
+su -m -s /bin/sh www-data -c 'php occ group:add "$NC_GROUP" 2>/dev/null || true'
+su -m -s /bin/sh www-data -c 'php occ group:adduser "$NC_GROUP" "$NC_USER" 2>/dev/null || true'
 su -m -s /bin/sh www-data -c 'OC_PASS="$OC_PASS" php occ user:resetpassword --password-from-env "$NC_USER"'
 """
             res_nc_reset = run_cmd(["kubectl", "exec", "-i", "-n", "default", "deployment/nextcloud", "--", "sh"], input_data=script_nc_reset, timeout=25)
             if res_nc_reset.returncode == 0:
-                return True, {"status": f"Usuario {user} ya existia; credenciales actualizadas exitosamente en Nextcloud y Samba."}
-        return False, {"error": f"Fallo Nextcloud: {err_msg}"}
+                return True, {"status": f"Usuario {user} ya existia; clave y grupos actualizados exitosamente en Nextcloud y Samba."}
+        return False, {"error": f"Fallo Nextcloud: {full_out.strip()}"}
 
     return True, {
         "status": f"Usuario {user} ({display}) sincronizado exitosamente en Nextcloud y Samba.",
@@ -189,7 +193,8 @@ export SMB_PASS={shlex.quote(pwd)}
     res_smb = run_cmd(["kubectl", "exec", "-i", "-n", "default", "deployment/samba", "--", "sh"], input_data=script_smb, timeout=20)
 
     if res_nc.returncode != 0:
-        return False, {"error": f"Fallo al resetear en Nextcloud: {res_nc.stderr or res_nc.stdout}"}
+        full_out = f"{res_nc.stdout or ''} {res_nc.stderr or ''}"
+        return False, {"error": f"Fallo al resetear en Nextcloud: {full_out.strip()}"}
 
     return True, {
         "status": f"Contrasena del usuario {user} actualizada con exito en Nextcloud y Samba.",
