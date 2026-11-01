@@ -48,14 +48,54 @@ case "$CMD" in
 
   rollback-local)
     SNAP_NAME="${2:-}"
+    FORCE_FLAG="${3:-}"
     if [ -z "$SNAP_NAME" ]; then
-      fail "Uso: $0 rollback-local <snapshot-name> (Ej: tank/nas@k8s-auto-20261030-1400)"
+      fail "Uso: $0 rollback-local <snapshot-name-o-tag> [--force|-y] (Ej: tank/nas@k8s-auto-20261030-1400)"
     fi
-    info "Ejecutando Rollback instantáneo a: $SNAP_NAME..."
-    # Si tiene candado sentinel-immutable, liberarlo temporalmente
-    sudo zfs release sentinel-immutable "$SNAP_NAME" 2>/dev/null || true
-    sudo zfs rollback -r "$SNAP_NAME"
-    pass "Rollback completado en <5 segundos. Estado del dataset revertido."
+
+    SNAP_TAG=$(echo "$SNAP_NAME" | awk -F'@' '{print $2}')
+    BASE_DS=$(echo "$SNAP_NAME" | awk -F'@' '{print $1}')
+
+    if [ -z "$SNAP_TAG" ]; then
+      SNAP_TAG="$SNAP_NAME"
+      BASE_DS="tank/nas"
+    fi
+
+    # Buscar todos los snapshots que compartan este tag para rollback recursivo coordinado
+    MATCHING_SNAPS=$(sudo zfs list -t snapshot -o name -H 2>/dev/null | grep -E "^${BASE_DS}(/.*)?@${SNAP_TAG}\$" || true)
+
+    if [ -z "$MATCHING_SNAPS" ]; then
+      fail "No se encontraron snapshots que coincidan con tag: @${SNAP_TAG} en ${BASE_DS}"
+    fi
+
+    warn "============================================================"
+    warn "  ⚠️  ADVERTENCIA DE REVERSIÓN COORDINADA OPENZFS"
+    warn "============================================================"
+    echo "Los siguientes snapshots y datasets asociados serán revertidos:"
+    echo "$MATCHING_SNAPS" | while read -r s; do echo "  - $s"; done
+    warn "Cualquier archivo o modificación posterior a este snapshot se perderá."
+    warn "============================================================"
+
+    if [ "$FORCE_FLAG" != "--force" ] && [ "$FORCE_FLAG" != "-y" ]; then
+      read -r -p "¿Está seguro de ejecutar este rollback? [y/N]: " CONFIRM
+      if [ "$CONFIRM" != "y" ] && [ "$CONFIRM" != "Y" ]; then
+        fail "Operación de rollback cancelada por el usuario."
+      fi
+    fi
+
+    echo "$MATCHING_SNAPS" | while read -r s; do
+      info "Revertiendo dataset: $s..."
+      sudo zfs release sentinel-immutable "$s" 2>/dev/null || true
+      sudo zfs rollback -r "$s"
+    done
+
+    # Si se revirtió PostgreSQL, reiniciar deployments para sincronizar conexiones
+    if kubectl get deployment nextcloud-postgres >/dev/null 2>&1; then
+      info "Reiniciando pods de Nextcloud y base de datos para consistencia transaccional..."
+      kubectl rollout restart deployment/nextcloud-postgres deployment/nextcloud 2>/dev/null || true
+    fi
+
+    pass "Rollback coordinado completado exitosamente. Datasets y base de datos sincronizados."
     ;;
 
   restore-file)

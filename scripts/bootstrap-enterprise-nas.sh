@@ -26,13 +26,13 @@ sudo apt-get install -y -qq zfsutils-linux openssl curl rclone jq smartmontools 
 
 info "2. Configurando pool OpenZFS (tank)..."
 if ! sudo zpool list tank >/dev/null 2>&1; then
-  if [ $# -ge 2 ]; then
-    info "Creando pool con discos físicos reales: $*"
+  if [ $# -ge 2 ] && [ "$1" != "--lab-mode" ]; then
+    info "Creando pool de producción con discos físicos reales: $*"
     sudo zpool create -f -o ashift=12 -O compression=lz4 -O atime=off \
       -O acltype=posixacl -O xattr=sa tank "$@"
-  else
-    warn "No se especificaron discos físicos. Creando pool sobre discos virtuales (/zfs-disks/disk*.img) para entorno de pruebas/VM."
-    warn "Para producción en servidor físico ejecute: $0 /dev/sdb /dev/sdc /dev/sdd"
+  elif [ "${1:-}" = "--lab-mode" ] || [ "${1:-}" = "--demo-virtual" ]; then
+    warn "MODO LABORATORIO / VM DETECTADO: Creando pool sobre discos virtuales (/zfs-disks/disk*.img)."
+    warn "ADVERTENCIA: Este modo NO provee redundancia física y es únicamente para pruebas/desarrollo."
     sudo mkdir -p /zfs-disks
     for i in 1 2 3; do
       if [ ! -f "/zfs-disks/disk${i}.img" ]; then
@@ -42,6 +42,18 @@ if ! sudo zpool list tank >/dev/null 2>&1; then
     sudo zpool create -f -o ashift=12 -O compression=lz4 -O atime=off \
       -O acltype=posixacl -O xattr=sa tank raidz1 \
       /zfs-disks/disk1.img /zfs-disks/disk2.img /zfs-disks/disk3.img
+  else
+    echo -e "${COLOR_RED}[ERROR FATAL] BLOQUEO DE SEGURIDAD OPERACIONAL:${COLOR_RESET}"
+    echo "No se especificaron discos físicos para el almacenamiento institucional."
+    echo "Para producción en servidor físico ejecute pasando los discos dedicados:"
+    echo "  sudo $0 /dev/sdb /dev/sdc /dev/sdd"
+    echo ""
+    echo "Discos detectados actualmente en el sistema:"
+    lsblk -d -o NAME,SIZE,MODEL,TRAN 2>/dev/null || true
+    echo ""
+    echo "Si desea probar en un entorno de laboratorio/VM sin discos físicos, ejecute:"
+    echo "  sudo $0 --lab-mode"
+    exit 1
   fi
   pass "Pool OpenZFS tank creado exitosamente."
 else
@@ -66,12 +78,14 @@ sudo zfs set logbias=latency tank/nas/postgres
 sudo mkdir -p /tank/nas/.samba-private /tank/nas/.Papelera
 pass "Datasets ZFS y optimizaciones de recordsize aplicadas."
 
-info "4. Verificando e instalando K3s..."
+info "4. Verificando e instalando K3s (Versión fijada v1.31.1+k3s1)..."
 if ! command -v k3s >/dev/null 2>&1; then
-  curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--write-kubeconfig-mode 644 --disable traefik" sh -
-  pass "K3s instalado."
+  export INSTALL_K3S_VERSION="v1.31.1+k3s1"
+  curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--write-kubeconfig-mode 600 --disable traefik" sh -
+  pass "K3s instalado con permisos seguros (kubeconfig 0600 exclusivo root)."
 else
-  pass "K3s ya instalado."
+  sudo chmod 600 /etc/rancher/k3s/k3s.yaml 2>/dev/null || true
+  pass "K3s ya instalado. Permisos de /etc/rancher/k3s/k3s.yaml endurecidos a 0600."
 fi
 
 # Esperar a que el nodo esté Ready
@@ -145,3 +159,7 @@ pass "============================================================"
 warn "PASO OBLIGATORIO DE RESILIENCIA (EMERGENCY KIT):"
 warn "Ejecute inmediatamente para respaldar la clave de Sealed Secrets fuera del host:"
 warn "  sudo bash ${REPO_DIR}/scripts/export-master-keys.sh /media/pendrive_cifrado"
+warn ""
+warn "HIGIENE OPERACIONAL:"
+warn "Una vez transferidas las credenciales al gestor institucional, elimine el archivo:"
+warn "  sudo rm -f ${CREDS_FILE}"

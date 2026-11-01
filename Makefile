@@ -42,12 +42,12 @@ list-backups:
 	bash scripts/nas-recover.sh list
 
 rollback-latest:
-	@LATEST_SNAP=$$(sudo zfs list -t snapshot -o name -s creation -H | tail -n 1); \
-	if [ -n "$$LATEST_SNAP" ]; then \
-		echo "Revirtiendo a $$LATEST_SNAP..."; \
-		bash scripts/nas-recover.sh rollback-local "$$LATEST_SNAP"; \
+	@LATEST_TAG=$$(sudo zfs list -t snapshot -o name -s creation -H | grep '^tank/nas@' | tail -n 1 | awk -F'@' '{print $$2}'); \
+	if [ -n "$$LATEST_TAG" ]; then \
+		echo "Último snapshot base detectado: tag @$$LATEST_TAG"; \
+		bash scripts/nas-recover.sh rollback-local "tank/nas@$$LATEST_TAG"; \
 	else \
-		echo "No se encontraron snapshots."; \
+		echo "No se encontraron snapshots base de tank/nas."; \
 	fi
 
 bootstrap:

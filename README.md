@@ -38,7 +38,7 @@ flowchart TB
     subgraph Internet["Red WAN / Internet"]
         Users["👥 Usuarios Escolares\n(Alumnos / Docentes)"]
         CF["☁️ Cloudflare Zero Trust\n(Túnel mTLS / Sin puertos WAN)"]
-        R2["🪣 Cloudflare R2\n(Respaldo 3-2-1 Cifrado con age)"]
+        R2["🪣 Cloudflare R2\n(Respaldo 3-2-1 Cifrado con AES-256-CBC PBKDF2)"]
     end
 
     subgraph Host["Servidor Bare Metal — Linux LTS"]
@@ -107,7 +107,7 @@ flowchart TB
 | **Métricas** | Prometheus + ZFS Exporter | v2.54+ / v2.3+ | Recolección de telemetría de CPU, RAM, I/O de disco y estado del pool ZFS/ARC. |
 | **Dashboards** | Grafana | v11+ | Paneles visuales NOC de observabilidad, alertas y estado de subsistemas. |
 | **Acceso Seguro** | Cloudflare Zero Trust | cloudflared | Túnel mTLS cifrado sin requerir IP pública fija ni apertura de puertos perimetrales. |
-| **Backup Offsite** | Cloudflare R2 | S3 API | Respaldo 3-2-1 externo mediante streams incrementales ZFS cifrados en origen con `age`. |
+| **Backup Offsite** | Cloudflare R2 | S3 API | Respaldo 3-2-1 externo mediante streams incrementales ZFS cifrados en origen con `OpenSSL AES-256-CBC (PBKDF2)`. |
 | **Cliente Windows** | Conector 1-Click | Batch (.bat) | Script público interactivo para montaje instantáneo de unidades (`Z:`, `P:`, `X:`). |
 
 ---
@@ -130,7 +130,7 @@ flowchart TB
 | **ADR-012** | **PostgreSQL 16 + Redis 7 para Nextcloud** | Desacoplamiento de la base interna (SQLite) hacia PostgreSQL 16 y Redis 7 para soportar alta concurrencia de alumnos y bloqueo transaccional de archivos. |
 | **ADR-013** | **ThreadedHTTPServer y Resiliencia en Sondas K3s** | Arquitectura multihilo en el backend del Portal QR (`server.py`) y relajación de sondas K8s (`timeoutSeconds: 5`, `failureThreshold: 5`) para evitar caídas en picos de I/O. |
 | **ADR-014** | **Escudo Anti-Ransomware Reactivo (Sentinel)** | Detección automatizada de anomalías en archivos trampa (`.canary_honeypot.docx`) con reversión automática a snapshots limpios y congelamiento mediante `zfs hold`. |
-| **ADR-015** | **Estrategia de Backup 3-2-1 a Cloudflare R2** | Exportación de snapshots incrementales ZFS cifrados en origen con el estándar criptográfico moderno `age` hacia almacenamiento de objetos S3 fuera del centro de datos. |
+| **ADR-015** | **Estrategia de Backup 3-2-1 a Cloudflare R2** | Exportación de snapshots incrementales ZFS cifrados en origen con el estándar criptográfico OpenSSL AES-256-CBC (PBKDF2) hacia almacenamiento de objetos S3 fuera del centro de datos. |
 | **ADR-016** | **Aprovisionamiento Unificado y Conector 1-Click** | Creación simultánea de identidades en Nextcloud (`occ`) y Samba (`smbpasswd`), acompañada de un script `.bat` autodescargable que mapea unidades de red sin usar la terminal. |
 
 ---
@@ -390,7 +390,7 @@ sudo zfs rollback tank/nas@nombre-del-snapshot
 
 ### Estrategia de Respaldo 3-2-1 a Cloudflare R2
 
-El cronjob `infrastructure/zfs-offsite-backup-cronjob.yaml` toma snapshots incrementales de los datasets de datos, los comprime y cifra en caliente con **`age`** y los envía mediante API S3 al bucket de **Cloudflare R2**:
+El cronjob `infrastructure/zfs-offsite-backup-cronjob.yaml` toma snapshots incrementales de los datasets de datos, los comprime y cifra en caliente con **`OpenSSL AES-256-CBC (PBKDF2)`** y los envía mediante API S3 al bucket de **Cloudflare R2**:
 
 ```bash
 # Ejecutar respaldo manual fuera de sitio
@@ -443,3 +443,12 @@ Ingeniería / Infraestructura Cloud & Almacenamiento
 - Repositorio del Proyecto: [github.com/orielmeza22/NAS](https://github.com/orielmeza22/NAS)
 
 Este proyecto se distribuye bajo la licencia **MIT**. Consulte el archivo [LICENSE](LICENSE) para más detalles.
+
+
+---
+
+### Inmutabilidad Offsite y Protección Anti-Ransomware en la Nube (Object Lock WORM)
+
+Para garantizar la protección de la copia 3-2-1 frente a un atacante que obtenga privilegios `root` en el host:
+1. **Cloudflare R2 Object Lock:** Habilite la retención inmutable (WORM) en el bucket `nas-backup` con una ventana mínima de 30 días en modo `Compliance`.
+2. **API Token con Permisos Acotados:** Configure el token en `r2-backup-credentials` con permisos de solo lectura y escritura de objetos (`PutObject`, `GetObject`), sin permisos de eliminación (`DeleteObject`).

@@ -50,15 +50,24 @@ El archivo generado (`nas-emergency-kit-YYYYMMDD.tar.gz`) debe ser almacenado en
    bash scripts/nas-recover.sh restore-file tank/nas@k8s-auto-20261030-1400 profesores/planillas/notas.xlsx /tank/nas/profesores/planillas/notas.xlsx
    ```
 
-### Escenario C: Fallo y Reemplazo de Disco RAID-Z1
-1. Comprobar estado en la pestaña **Almacenamiento RAID** de la Web GUI o mediante `zpool status tank`.
-2. Si el disco `disk2` está en estado `FAULTED`:
-   - En servidor físico: cambiar el disco dañado.
-   - En la consola web o terminal:
-     ```bash
-     sudo zpool replace tank /zfs-disks/disk2.img /zfs-disks/disk2_nuevo.img
-     ```
-   - El sistema inicia el proceso de **Resilver** automático restaurando la redundancia.
+### Escenario C: Fallo y Reemplazo de Disco en Hardware Físico (RAID-Z1 / Mirrors)
+1. Comprobar estado del pool y localizar el disco defectuoso mediante `zpool status tank`.
+2. Identificar el identificador persistente de hardware (`by-id` o número de serie):
+   ```bash
+   lsblk -o NAME,SIZE,MODEL,SERIAL
+   ls -la /dev/disk/by-id/
+   ```
+3. Sustituir físicamente el disco dañado en el chasis por la nueva unidad.
+4. Ejecutar el reemplazo en OpenZFS utilizando identificadores persistentes:
+   ```bash
+   # Reemplazo en servidor físico con identificador único de hardware:
+   sudo zpool replace tank /dev/disk/by-id/ata-DISCO_DAÑADO /dev/disk/by-id/ata-DISCO_NUEVO
+   ```
+   *(Para entornos virtuales de prueba con archivos .img: `sudo zpool replace tank /zfs-disks/disk2.img /zfs-disks/disk2_nuevo.img`).*
+5. El sistema inicia el proceso de **Resilver** en background. Supervisar el progreso mediante:
+   ```bash
+   watch -n 2 sudo zpool status tank
+   ```
 
 ### Escenario D: Reconstrucción en Hardware Nuevo (Cloudflare R2 Restore)
 1. **Aprovisionar el sistema operativo base** (Ubuntu Server / Debian) en el nuevo servidor.
@@ -85,3 +94,15 @@ El archivo generado (`nas-emergency-kit-YYYYMMDD.tar.gz`) debe ser almacenado en
    ```bash
    sudo bash tests/smoke-test.sh
    ```
+
+---
+
+## 4. Inmutabilidad Offsite y Protección WORM (Cloudflare R2 Object Lock)
+
+> [!IMPORTANT]
+> **Defensa en Profundidad contra Destrucción Remota:**
+> Si un atacante compromete el servidor local con privilegios `root`, las credenciales de backup almacenadas en el clúster podrían ser utilizadas para ejecutar `rclone delete` sobre el bucket remoto.
+>
+> Para neutralizar este vector en producción institucional:
+> 1. **Activar Object Lock (WORM):** En la configuración del bucket Cloudflare R2, habilite **Object Lock** con modo de retención `Compliance` durante un mínimo de 30 días. Bajo este modo, ni siquiera el usuario root ni las credenciales de la API pueden borrar o sobreescribir un archivo antes de que expire el período.
+> 2. **Principio de Mínimo Privilegio en Tokens API:** El API Token de Cloudflare configurado en el clúster (`r2-backup-credentials`) debe tener permisos exclusivos de **`Object Read & Write`** (`PutObject`, `GetObject`), denegando expresamente permisos de administración de bucket o eliminación masiva (`DeleteBucket`).
