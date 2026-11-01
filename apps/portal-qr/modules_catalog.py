@@ -217,7 +217,7 @@ def act_pki_generate_ca(p):
     key = os.path.join(ca_dir, "ca.key")
     if not os.path.exists(crt):
         run_cmd([
-            "openssl", "req", "-x509", "-newkey", "rsa:4096", "-sha256", "-days", "3650",
+            "openssl", "req", "-x509", "-newkey", "rsa:2048", "-sha256", "-days", "3650",
             "-nodes", "-keyout", key, "-out", crt,
             "-subj", "/CN=Enterprise NAS Institutional Root CA/O=Colegio/C=AR"
         ])
