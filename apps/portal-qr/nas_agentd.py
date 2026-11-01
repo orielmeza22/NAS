@@ -28,6 +28,14 @@ RE_PODNAME = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
 RE_NAMESPACE = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
 RE_DEV_PATH = re.compile(r"^/dev/(sd[a-z][0-9]?|vd[a-z][0-9]?|nvme[0-9]n[0-9](p[0-9])?|disk/by-id/[a-zA-Z0-9._-]+)$")
 
+def run_cmd(cmd_list, timeout=15):
+    # If running inside container with hostPID, nsenter into host namespace 1
+    if os.path.exists("/proc/1/ns/mnt"):
+        full_cmd = ["nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid", "--"] + cmd_list
+    else:
+        full_cmd = cmd_list
+    return subprocess.run(full_cmd, capture_output=True, text=True, timeout=timeout)
+
 def audit_log(user, action, params, success, message=""):
     entry = {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -46,7 +54,7 @@ def audit_log(user, action, params, success, message=""):
 
 # Action Catalog Handlers (Typed, Safe Executables)
 def action_zfs_pool_status(params):
-    res = subprocess.run(["zpool", "status", "tank"], capture_output=True, text=True, timeout=10)
+    res = run_cmd(["zpool", "status", "tank"], timeout=10)
     return res.returncode == 0, {"stdout": res.stdout, "stderr": res.stderr}
 
 def action_zfs_snapshot_create(params):
@@ -57,7 +65,7 @@ def action_zfs_snapshot_create(params):
     if not RE_SNAP_TAG.match(tag):
         return False, {"error": "Invalid snapshot tag format"}
     snap_target = f"{dataset}@{tag}"
-    res = subprocess.run(["zfs", "snapshot", "-r", snap_target], capture_output=True, text=True, timeout=15)
+    res = run_cmd(["zfs", "snapshot", "-r", snap_target], timeout=15)
     return res.returncode == 0, {"snapshot": snap_target, "output": res.stdout}
 
 def action_zfs_snapshot_rollback(params):
@@ -66,7 +74,7 @@ def action_zfs_snapshot_rollback(params):
     if not RE_DATASET.match(dataset) or not RE_SNAP_TAG.match(tag):
         return False, {"error": "Invalid dataset or snapshot tag"}
     target = f"{dataset}@{tag}"
-    res = subprocess.run(["zfs", "rollback", "-r", target], capture_output=True, text=True, timeout=20)
+    res = run_cmd(["zfs", "rollback", "-r", target], timeout=20)
     return res.returncode == 0, {"target": target, "output": res.stdout}
 
 def action_zfs_set_quota(params):
@@ -74,7 +82,7 @@ def action_zfs_set_quota(params):
     quota = params.get("quota", "")
     if not RE_DATASET.match(dataset) or not RE_QUOTA.match(quota):
         return False, {"error": "Invalid dataset or quota specification"}
-    res = subprocess.run(["zfs", "set", f"quota={quota}", dataset], capture_output=True, text=True, timeout=10)
+    res = run_cmd(["zfs", "set", f"quota={quota}", dataset], timeout=10)
     return res.returncode == 0, {"dataset": dataset, "quota": quota}
 
 def action_zfs_scrub(params):
@@ -82,7 +90,7 @@ def action_zfs_scrub(params):
     if subaction not in ("start", "stop", "status"):
         return False, {"error": "Invalid scrub subaction"}
     if subaction == "status":
-        res = subprocess.run(["zpool", "status", "tank"], capture_output=True, text=True, timeout=10)
+        res = run_cmd(["zpool", "status", "tank"], timeout=10)
         return res.returncode == 0, {"output": res.stdout}
     cmd = ["zpool", "scrub", "-s", "tank"] if subaction == "stop" else ["zpool", "scrub", "tank"]
     res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
@@ -92,7 +100,7 @@ def action_storage_smart_status(params):
     device = params.get("device", "")
     if not RE_DEV_PATH.match(device):
         return False, {"error": "Invalid device path"}
-    res = subprocess.run(["smartctl", "-H", "-A", "-j", device], capture_output=True, text=True, timeout=15)
+    res = run_cmd(["smartctl", "-H", "-A", "-j", device], timeout=15)
     try:
         data = json.loads(res.stdout) if res.stdout else {"raw": res.stdout}
     except Exception:

@@ -23,6 +23,13 @@ RE_QUOTA = re.compile(r"^([0-9]+[KMGTkmgt]?|none)$")
 RE_DEV_PATH = re.compile(r"^/dev/(sd[a-z][0-9]?|vd[a-z][0-9]?|nvme[0-9]n[0-9](p[0-9])?|disk/by-id/[a-zA-Z0-9._-]+)$")
 RE_IP = re.compile(r"^([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?$")
 
+def run_cmd(cmd_list, timeout=15):
+    if os.path.exists("/proc/1/ns/mnt"):
+        full_cmd = ["nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid", "--"] + cmd_list
+    else:
+        full_cmd = cmd_list
+    return subprocess.run(full_cmd, capture_output=True, text=True, timeout=timeout)
+
 def audit_log(user, action, params, success, message=""):
     entry = {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -41,7 +48,7 @@ def audit_log(user, action, params, success, message=""):
 
 # --- M1: Storage, Disks & ZFS ---
 def act_storage_disks_list(p):
-    res = subprocess.run(["lsblk", "-J", "-o", "NAME,SIZE,TYPE,MOUNTPOINT,FSTYPE,MODEL,SERIAL"], capture_output=True, text=True)
+    res = run_cmd(["lsblk", "-J", "-o", "NAME,SIZE,TYPE,MOUNTPOINT,FSTYPE,MODEL,SERIAL"])
     try:
         data = json.loads(res.stdout)
     except Exception:
@@ -53,7 +60,7 @@ def act_storage_smart_test(p):
     ttype = p.get("type", "short")
     if not RE_DEV_PATH.match(dev) or ttype not in ("short", "long"):
         return False, {"error": "Invalid device or test type"}
-    res = subprocess.run(["smartctl", f"-t{ttype}", dev], capture_output=True, text=True)
+    res = run_cmd(["smartctl", f"-t{ttype}", dev])
     return res.returncode == 0, {"output": res.stdout}
 
 def act_zfs_pool_create(p):
