@@ -10,6 +10,7 @@ import time
 import subprocess
 import re
 import shutil
+import shlex
 
 AUDIT_LOG_PATH = "/var/log/nas-agentd-audit.log"
 ROLLBACK_TIMER_FILE = "/tmp/nas-net-rollback.json"
@@ -117,30 +118,84 @@ def act_zfs_dataset_delete(p):
 
 # --- M2: Identity & Samba Shares ---
 def act_users_sync_nextcloud(p):
-    user = p.get("username", "")
-    pwd = p.get("password", "")
-    display = p.get("display_name", user)
-    group = p.get("group", "alumnos")
+    user = str(p.get("username", "")).strip()
+    pwd = str(p.get("password", ""))
+    display = str(p.get("display_name", user)).strip() or user
+    group = str(p.get("group", "alumnos")).strip()
     if not RE_USERNAME.match(user) or not pwd:
-        return False, {"error": "Usuario o clave invalida"}
-    res = run_cmd([
+        return False, {"error": "Usuario o clave invalida (usuario debe tener entre 3 y 32 caracteres alfanuméricos)"}
+
+    # 1. Asegurar grupo y crear/sincronizar usuario en Nextcloud con OC_PASS
+    nc_script = (
+        f"su -s /bin/sh www-data -c 'php occ group:add {shlex.quote(group)} 2>/dev/null || true' && "
+        f"export OC_PASS={shlex.quote(pwd)} && "
+        f"su -s /bin/sh www-data -c 'OC_PASS=\"$OC_PASS\" php occ user:add --password-from-env --display-name={shlex.quote(display)} --group={shlex.quote(group)} {shlex.quote(user)}'"
+    )
+    res_nc = run_cmd([
         "kubectl", "exec", "-n", "default", "deployment/nextcloud", "--",
-        "su", "-s", "/bin/sh", "www-data", "-c",
-        f"php occ user:add --password-from-env --display-name='{display}' --group='{group}' {user}"
-    ], input_data=pwd)
-    return True, {"status": "Usuario sincronizado en Nextcloud y Samba", "output": res.stdout}
+        "sh", "-c", nc_script
+    ], timeout=35)
+
+    # 2. Sincronizar en Samba
+    smb_script = (
+        f"useradd -M -s /sbin/nologin {shlex.quote(user)} 2>/dev/null || true; "
+        f"(echo {shlex.quote(pwd)}; echo {shlex.quote(pwd)}) | smbpasswd -a -s {shlex.quote(user)} 2>&1"
+    )
+    res_smb = run_cmd([
+        "kubectl", "exec", "-n", "default", "deployment/samba", "--",
+        "sh", "-c", smb_script
+    ], timeout=20)
+
+    if res_nc.returncode != 0:
+        err_msg = (res_nc.stderr or res_nc.stdout or "Error al crear usuario en Nextcloud").strip()
+        # Si el usuario ya existe en Nextcloud, actualizar credenciales
+        if "already exists" in err_msg.lower():
+            res_nc_reset = run_cmd([
+                "kubectl", "exec", "-n", "default", "deployment/nextcloud", "--",
+                "sh", "-c",
+                f"export OC_PASS={shlex.quote(pwd)} && su -s /bin/sh www-data -c 'OC_PASS=\"$OC_PASS\" php occ user:resetpassword --password-from-env {shlex.quote(user)}'"
+            ], timeout=25)
+            if res_nc_reset.returncode == 0:
+                return True, {"status": f"Usuario {user} ya existia; clave actualizada exitosamente en Nextcloud y Samba."}
+        return False, {"error": f"Fallo Nextcloud: {err_msg}"}
+
+    return True, {
+        "status": f"Usuario {user} ({display}) sincronizado exitosamente en Nextcloud y Samba.",
+        "output": (res_nc.stdout or "").strip()
+    }
 
 def act_users_reset_password(p):
-    user = p.get("username", "")
-    pwd = p.get("password", "")
+    user = str(p.get("username", "")).strip()
+    pwd = str(p.get("password", ""))
     if not RE_USERNAME.match(user) or not pwd:
         return False, {"error": "Usuario o clave invalida"}
-    res = run_cmd([
+
+    # Nextcloud reset
+    nc_script = (
+        f"export OC_PASS={shlex.quote(pwd)} && "
+        f"su -s /bin/sh www-data -c 'OC_PASS="$OC_PASS" php occ user:resetpassword --password-from-env {shlex.quote(user)}'"
+    )
+    res_nc = run_cmd([
         "kubectl", "exec", "-n", "default", "deployment/nextcloud", "--",
-        "su", "-s", "/bin/sh", "www-data", "-c",
-        f"php occ user:resetpassword --password-from-env {user}"
-    ], input_data=pwd)
-    return True, {"status": "Contrasena actualizada con exito", "output": res.stdout}
+        "sh", "-c", nc_script
+    ], timeout=30)
+
+    # Samba reset
+    smb_script = (
+        f"(echo {shlex.quote(pwd)}; echo {shlex.quote(pwd)}) | smbpasswd -s {shlex.quote(user)} 2>&1"
+    )
+    res_smb = run_cmd([
+        "kubectl", "exec", "-n", "default", "deployment/samba", "--",
+        "sh", "-c", smb_script
+    ], timeout=20)
+
+    if res_nc.returncode != 0:
+        return False, {"error": f"Fallo al resetear en Nextcloud: {res_nc.stderr or res_nc.stdout}"}
+
+    return True, {
+        "status": f"Contrasena del usuario {user} actualizada con exito en Nextcloud y Samba.",
+        "output": (res_nc.stdout or "").strip()
+    }
 
 # --- M3: Snapshots, Rollback & Emergency Kit ---
 def act_backup_export_emergency_kit(p):

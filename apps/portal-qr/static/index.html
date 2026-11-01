@@ -515,7 +515,7 @@ $ </div>
           body: JSON.stringify({action: action, params: params || {}})
         });
         const data = await res.json();
-        if (!isSilent) showToast(data && data.success ? '✓ Accion ' + action + ' completada' : '✗ ' + action + ': ' + ((data && (data.error || (data.data && data.data.output))) || 'Fallo'));
+        if (!isSilent) showToast(data && data.success ? '✓ ' + ((data.data && data.data.status) || ('Accion ' + action + ' completada')) : '✗ ' + action + ': ' + ((data && (data.error || (data.data && (data.data.error || data.data.output)))) || 'Fallo'));
         return data;
       } catch (err) {
         if (!isSilent) showToast('Error de conexion: ' + err.message);
