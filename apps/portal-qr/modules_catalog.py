@@ -126,34 +126,42 @@ def act_users_sync_nextcloud(p):
         return False, {"error": "Usuario o clave invalida (usuario debe tener entre 3 y 32 caracteres alfanuméricos)"}
 
     # 1. Asegurar grupo y crear/sincronizar usuario en Nextcloud con OC_PASS
-    nc_script = (
-        f"su -s /bin/sh www-data -c 'php occ group:add {shlex.quote(group)} 2>/dev/null || true' && "
-        f"export OC_PASS={shlex.quote(pwd)} && "
-        f"su -s /bin/sh www-data -c 'OC_PASS=\"$OC_PASS\" php occ user:add --password-from-env --display-name={shlex.quote(display)} --group={shlex.quote(group)} {shlex.quote(user)}'"
+    escaped_user = shlex.quote(user)
+    escaped_display = shlex.quote(display)
+    escaped_group = shlex.quote(group)
+    escaped_pwd = shlex.quote(pwd)
+
+    nc_cmd_str = (
+        f"su -s /bin/sh www-data -c 'php occ group:add {escaped_group} 2>/dev/null || true' && "
+        f"export OC_PASS={escaped_pwd} && "
+        f"su -s /bin/sh www-data -c 'OC_PASS=\"$OC_PASS\" php occ user:add --password-from-env --display-name={escaped_display} --group={escaped_group} {escaped_user}'"
     )
     res_nc = run_cmd([
         "kubectl", "exec", "-n", "default", "deployment/nextcloud", "--",
-        "sh", "-c", nc_script
+        "sh", "-c", nc_cmd_str
     ], timeout=35)
 
     # 2. Sincronizar en Samba
-    smb_script = (
-        f"useradd -M -s /sbin/nologin {shlex.quote(user)} 2>/dev/null || true; "
-        f"(echo {shlex.quote(pwd)}; echo {shlex.quote(pwd)}) | smbpasswd -a -s {shlex.quote(user)} 2>&1"
+    smb_cmd_str = (
+        f"useradd -M -s /sbin/nologin {escaped_user} 2>/dev/null || true; "
+        f"(echo {escaped_pwd}; echo {escaped_pwd}) | smbpasswd -a -s {escaped_user} 2>&1"
     )
     res_smb = run_cmd([
         "kubectl", "exec", "-n", "default", "deployment/samba", "--",
-        "sh", "-c", smb_script
+        "sh", "-c", smb_cmd_str
     ], timeout=20)
 
     if res_nc.returncode != 0:
         err_msg = (res_nc.stderr or res_nc.stdout or "Error al crear usuario en Nextcloud").strip()
         # Si el usuario ya existe en Nextcloud, actualizar credenciales
         if "already exists" in err_msg.lower():
+            reset_cmd = (
+                f"export OC_PASS={escaped_pwd} && "
+                f"su -s /bin/sh www-data -c 'OC_PASS=\"$OC_PASS\" php occ user:resetpassword --password-from-env {escaped_user}'"
+            )
             res_nc_reset = run_cmd([
                 "kubectl", "exec", "-n", "default", "deployment/nextcloud", "--",
-                "sh", "-c",
-                f"export OC_PASS={shlex.quote(pwd)} && su -s /bin/sh www-data -c 'OC_PASS=\"$OC_PASS\" php occ user:resetpassword --password-from-env {shlex.quote(user)}'"
+                "sh", "-c", reset_cmd
             ], timeout=25)
             if res_nc_reset.returncode == 0:
                 return True, {"status": f"Usuario {user} ya existia; clave actualizada exitosamente en Nextcloud y Samba."}
@@ -170,23 +178,26 @@ def act_users_reset_password(p):
     if not RE_USERNAME.match(user) or not pwd:
         return False, {"error": "Usuario o clave invalida"}
 
+    escaped_user = shlex.quote(user)
+    escaped_pwd = shlex.quote(pwd)
+
     # Nextcloud reset
-    nc_script = (
-        f"export OC_PASS={shlex.quote(pwd)} && "
-        f"su -s /bin/sh www-data -c 'OC_PASS="$OC_PASS" php occ user:resetpassword --password-from-env {shlex.quote(user)}'"
+    nc_cmd_str = (
+        f"export OC_PASS={escaped_pwd} && "
+        f"su -s /bin/sh www-data -c 'OC_PASS=\"$OC_PASS\" php occ user:resetpassword --password-from-env {escaped_user}'"
     )
     res_nc = run_cmd([
         "kubectl", "exec", "-n", "default", "deployment/nextcloud", "--",
-        "sh", "-c", nc_script
+        "sh", "-c", nc_cmd_str
     ], timeout=30)
 
     # Samba reset
-    smb_script = (
-        f"(echo {shlex.quote(pwd)}; echo {shlex.quote(pwd)}) | smbpasswd -s {shlex.quote(user)} 2>&1"
+    smb_cmd_str = (
+        f"(echo {escaped_pwd}; echo {escaped_pwd}) | smbpasswd -s {escaped_user} 2>&1"
     )
     res_smb = run_cmd([
         "kubectl", "exec", "-n", "default", "deployment/samba", "--",
-        "sh", "-c", smb_script
+        "sh", "-c", smb_cmd_str
     ], timeout=20)
 
     if res_nc.returncode != 0:
