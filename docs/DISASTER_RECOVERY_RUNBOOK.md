@@ -7,11 +7,28 @@
 | **A. Ataque de Ransomware / Cifrado Masivo** | Virus en PC de alumno o profesor en LAN | $< 1\text{ hora}$ | $< 5\text{ segundos}$ | `nas-recover.sh rollback-local <snapshot>` o 1 clic en Web GUI |
 | **B. Borrado Accidental de Archivo Crítico** | Error humano de usuario en Samba/Nextcloud | Inmediato (desde Papelera o Snapshot) | $< 10\text{ segundos}$ | Explorador de Papelera Web o `nas-recover.sh restore-file` |
 | **C. Fallo Físico de 1 Disco en RAID-Z1** | Rotura de hardware mecánico/SSD | $0\text{ datos}$ (Tolerancia $N+1$) | Inmediato ($0\text{ downtime}$) + Resilver en background | `zpool replace tank /dev/disk_viejo /dev/disk_nuevo` o Web GUI |
-| **D. Catástrofe Total del Servidor (Bare-Metal)** | Incendio, robo o destrucción completa del hardware | $< 24\text{ horas}$ (Último backup R2) | $< 5\text{ minutos}$ en hardware nuevo | `bootstrap-enterprise-nas.sh` + `disaster-recovery-drill.sh` |
+| **D. Catástrofe Total del Servidor (Bare-Metal)** | Incendio, robo o destrucción completa del hardware | $< 24\text{ horas}$ (Último backup R2) | $15\text{ a }60\text{ minutos}$ (según ancho de banda de red) | `import-master-keys.sh` + `bootstrap` + `nas-recover.sh restore-cloud` |
 
 ---
 
-## 2. Procedimientos Operativos Paso a Paso
+## 2. Procedimiento Preventivo Obligatorio: Custodia del "Emergency Kit"
+
+> [!CAUTION]
+> **REGLA DE VIDA O MUERTE DEL SISTEMA:**
+> Si el servidor se destruye físicamente y no se cuenta con el **Emergency Kit** fuera del equipo, **los respaldos en Cloudflare R2 son ruido criptográfico 100% irrecuperable**. La clave privada maestra de Sealed Secrets y la clave de cifrado simétrico mueren con el host.
+
+### Generación Periódica del Kit de Rescate:
+Ejecutar inmediatamente tras la instalación o cambio de credenciales:
+```bash
+sudo bash scripts/export-master-keys.sh /media/pendrive_cifrado
+```
+El archivo generado (`nas-emergency-kit-YYYYMMDD.tar.gz`) debe ser almacenado en:
+1. Una unidad USB cifrada resguardada en la caja fuerte de la escuela.
+2. O en el gestor de contraseñas institucional (Bitwarden / KeePass).
+
+---
+
+## 3. Procedimientos Operativos Paso a Paso
 
 ### Escenario A: Ataque de Ransomware
 1. **Contención Inmediata:**
@@ -44,13 +61,27 @@
    - El sistema inicia el proceso de **Resilver** automático restaurando la redundancia.
 
 ### Escenario D: Reconstrucción en Hardware Nuevo (Cloudflare R2 Restore)
-1. En un servidor con Linux limpio, clonar el repositorio:
+1. **Aprovisionar el sistema operativo base** (Ubuntu Server / Debian) en el nuevo servidor.
+2. **Clonar el repositorio:**
    ```bash
    git clone https://github.com/orielmeza22/NAS.git /home/oriel/nas-gitops
    cd /home/oriel/nas-gitops
-   bash scripts/bootstrap-enterprise-nas.sh
    ```
-2. Restaurar el dataset completo desde Cloudflare R2:
+3. **Instalar el software base y configurar ZFS:**
    ```bash
-   bash tests/disaster-recovery-drill.sh
+   sudo bash scripts/bootstrap-enterprise-nas.sh /dev/sdb /dev/sdc /dev/sdd
+   ```
+4. **Reinyectar el Emergency Kit ANTES de sincronizar aplicaciones:**
+   ```bash
+   sudo bash scripts/import-master-keys.sh /ruta/al/nas-emergency-kit-YYYYMMDD.tar.gz
+   ```
+   *(Esto recarga la clave privada de Sealed Secrets y las credenciales de Cloudflare R2).*
+5. **Ejecutar la restauración real desde Cloudflare R2 hacia OpenZFS:**
+   ```bash
+   sudo bash scripts/nas-recover.sh restore-cloud tank/nas
+   ```
+   *(Descarga el flujo en streaming, descifra al vuelo con AES-256-CBC PBKDF2 y restaura la jerarquía completa de datasets).*
+6. **Verificar estado de salud y aplicaciones:**
+   ```bash
+   sudo bash tests/smoke-test.sh
    ```

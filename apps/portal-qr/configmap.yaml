@@ -23,6 +23,7 @@ data:
     import re
     import shlex
     import secrets
+    import ssl
     from http.server import HTTPServer, BaseHTTPRequestHandler
     from socketserver import ThreadingMixIn
 
@@ -955,7 +956,22 @@ data:
 
     if __name__ == "__main__":
         server = ThreadedHTTPServer(("0.0.0.0", PORT), NasApiHandler)
-        print(f"Enterprise NAS Control Center OS listening on port {PORT}...")
+        
+        cert_dir = "/tmp/nas-tls"
+        os.makedirs(cert_dir, exist_ok=True)
+        cert_file = os.path.join(cert_dir, "portal.crt")
+        key_file = os.path.join(cert_dir, "portal.key")
+        
+        if not (os.path.exists(cert_file) and os.path.exists(key_file)):
+            cmd = f'openssl req -x509 -newkey rsa:2048 -nodes -keyout "{key_file}" -out "{cert_file}" -days 730 -subj "/CN=nas.escuela.local"'
+            subprocess.run(cmd, shell=True, check=True)
+            os.chmod(key_file, 0o600)
+        
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(certfile=cert_file, keyfile=key_file)
+        server.socket = context.wrap_socket(server.socket, server_side=True)
+        
+        print(f"Enterprise NAS Control Center OS listening securely on https://0.0.0.0:{PORT}...")
         server.serve_forever()
   index.html: |
     <!DOCTYPE html>

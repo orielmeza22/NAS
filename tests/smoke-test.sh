@@ -36,9 +36,11 @@ else
 fi
 
 # 3. NAS Control Center Web (Portal)
-info "3. Verificando NAS Control Center OS (Web GUI y API REST)..."
+info "3. Verificando NAS Control Center OS (Web GUI y API REST con TLS/HTTPS)..."
 if kubectl get pods -l app.kubernetes.io/name=portal-qr --no-headers | grep -q "Running"; then
-  if curl -s http://localhost:30081/api/public/status | grep -q "raid_health"; then
+  if curl -s -k https://localhost:30081/api/public/status | grep -q "raid_health"; then
+    pass "NAS Control Center OS respondiendo en puerto 30081 con HTTPS cifrado y API activa."
+  elif curl -s http://localhost:30081/api/public/status | grep -q "raid_health"; then
     pass "NAS Control Center OS respondiendo en puerto 30081 con API activa."
   else
     warn "Pod activo pero la API /api/public/status aún está iniciando."

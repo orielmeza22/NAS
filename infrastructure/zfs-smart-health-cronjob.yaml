@@ -1,0 +1,80 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: zfs-smart-health
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: zfs-smart-health
+    app.kubernetes.io/component: hardware-monitoring
+    app.kubernetes.io/part-of: nas-platform
+spec:
+  schedule: "0 4 * * *" # Diario a las 04:00 AM
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: zfs-smart-health
+        spec:
+          hostPID: true
+          restartPolicy: OnFailure
+          containers:
+          - name: smart-checker
+            image: ubuntu:22.04
+            securityContext:
+              privileged: true
+            command: ["/bin/bash", "-c"]
+            args:
+            - |
+              set -u
+              echo "============================================================"
+              echo "[$(date -Iseconds)] INICIANDO AUDITORÍA PREVENTIVA S.M.A.R.T."
+              echo "============================================================"
+              
+              mkdir -p /tmp/nas-tunnel
+              REPORT="/tmp/nas-tunnel/smart_health_report.txt"
+              STATUS_FILE="/tmp/nas-tunnel/smart_status"
+              echo "AUDITORÍA S.M.A.R.T. — $(date -Iseconds)" > "$REPORT"
+              
+              # Ejecutar en el host para acceder a los dispositivos físicos /dev/sd*
+              nsenter --target 1 --mount --uts --ipc --net --pid -- bash -c '
+                if ! command -v smartctl >/dev/null 2>&1; then
+                  echo "[WARN] smartctl no está instalado en el host. Ejecute apt install smartmontools."
+                  exit 0
+                fi
+
+                ALL_HEALTHY=1
+                # Detectar discos asignados al pool tank
+                DISKS=$(zpool status tank 2>/dev/null | grep -E "(sd[a-z]|nvme[0-9]n[0-9]|vd[a-z])" | awk "{print \$1}" | tr -d "0-9" | sort -u || true)
+                
+                if [ -z "$DISKS" ]; then
+                  echo "[INFO] No se detectaron discos físicos dedicados (entorno virtual o loopback)."
+                  echo "OK_VIRTUAL" > /tmp/nas-tunnel/smart_status
+                  exit 0
+                fi
+
+                for d in $DISKS; do
+                  DEV="/dev/$d"
+                  if [ -b "$DEV" ]; then
+                    echo "--- Evaluando $DEV ---"
+                    SMART_OUT=$(smartctl -H "$DEV" 2>/dev/null || true)
+                    echo "$SMART_OUT"
+                    if echo "$SMART_OUT" | grep -q "FAILED"; then
+                      echo "[CRITICO] Falla física inminente detectada por S.M.A.R.T. en $DEV!" >> /tmp/nas-tunnel/ransomware_events.log
+                      ALL_HEALTHY=0
+                    fi
+                  fi
+                done
+
+                if [ "$ALL_HEALTHY" -eq 1 ]; then
+                  echo "HEALTHY" > /tmp/nas-tunnel/smart_status
+                  echo "[PASS] Todos los discos del pool pasaron el diagnóstico S.M.A.R.T."
+                else
+                  echo "DEGRADED" > /tmp/nas-tunnel/smart_status
+                  echo "[FAIL] Se detectaron discos con anomalías S.M.A.R.T."
+                fi
+              ' >> "$REPORT" 2>&1 || true
+
+              cat "$REPORT"

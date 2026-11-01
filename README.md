@@ -198,13 +198,24 @@ NAS/
 
 ### Prerrequisitos del Host
 
-| Componente | Requisito Mínimo | Recomendado |
+| Componente | Requisito Mínimo | Recomendado (Producción Escolar) |
 |---|---|---|
-| **CPU** | 2 cores x86_64 | 4+ cores x86_64 |
-| **RAM** | 4 GB | 8+ GB (permite mayor asignación de caché ZFS ARC) |
-| **Discos** | 2x Discos (Mirror o RAID-Z) | 1x SSD (SO) + 2x o más Discos de datos en ZFS |
+| **CPU** | 4 cores x86_64 | 8+ cores x86_64 |
+| **RAM** | 8 GB (mínimo absoluto) | 16 GB+ (permite caché ZFS ARC y concurrencia multi-aula) |
+| **Alimentación (UPS/SAI)** | **OBLIGATORIA** (con señalización USB/Red) | UPS Online Doble Conversión (con daemon `nut-client`) |
+| **Discos** | 3x Discos en RAID-Z1 o Mirrors | 1x NVMe (SO) + 3x o más Discos en ZFS (RAID-Z2 en discos >4TB) |
 | **Sistema Operativo** | Debian 12 / Ubuntu 22.04 LTS | Debian 12 / Ubuntu 24.04 LTS |
 | **Conectividad** | 1 Gbps LAN | 1 Gbps LAN + conexión a internet para túnel Zero Trust |
+
+> [!IMPORTANT]
+> **Desglose de Memoria RAM en Producción:**
+> Este sistema no puede operar en 4 GB de RAM bajo concurrencia. El dimensionamiento real requiere:
+> - **OpenZFS ARC:** 2.0 a 4.0 GB (50% de RAM asignado a caché de lectura/escritura).
+> - **Plano K3s + ArgoCD + CoreDNS:** ~1.8 GB.
+> - **Observabilidad (Prometheus Operator + Alertmanager + Grafana):** ~1.5 GB.
+> - **Nextcloud + PostgreSQL 16 + Redis 7:** ~1.5 GB.
+> - **Samba + Sentinel + Portal:** ~0.5 GB.
+> - **Margen dinámico para escrituras concurrentes:** 4.0 a 6.0 GB.
 
 ---
 
@@ -289,25 +300,43 @@ sudo kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-
 sudo kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d && echo ""
 ```
 
-### Paso 4 — Configuración Inicial de Secretos
+### Paso 4 — Configuración Inicial de Secretos (Criptográficamente Seguros)
+
+> [!WARNING]
+> Nunca use contraseñas por defecto ni de ejemplo en producción. Genere siempre claves criptográficas aleatorias:
 
 ```bash
+# Generar contraseñas criptográficas seguras
+NC_PASS=$(openssl rand -base64 16)
+PROF_PASS=$(openssl rand -base64 12)
+ALUM_PASS=$(openssl rand -base64 12)
+ADMIN_PASS=$(openssl rand -base64 16)
+GRAF_PASS=$(openssl rand -base64 16)
+
 # Credenciales maestras de Nextcloud
 sudo kubectl create secret generic nextcloud-admin-credentials \
   --from-literal=username=admin \
-  --from-literal=password='PasswordSegura2026!'
+  --from-literal=password="$NC_PASS"
 
 # Usuarios base de Samba (profesores, alumnos y administración técnica)
 sudo kubectl create secret generic samba-credentials \
-  --from-literal=user-profesores='profesor01;ProfesorPass2026!' \
-  --from-literal=user-alumnos='alumno01;AlumnoPass2026!' \
-  --from-literal=user-admin='admin.it;AdminItPass2026!'
+  --from-literal=user-profesores="profesor;$PROF_PASS" \
+  --from-literal=user-alumnos="alumno;$ALUM_PASS" \
+  --from-literal=user-admin="admin;$ADMIN_PASS"
 
 # Credenciales de monitoreo Grafana
 sudo kubectl create namespace monitoring
 sudo kubectl -n monitoring create secret generic grafana-admin-credentials \
   --from-literal=admin-user=admin \
-  --from-literal=admin-password='PasswordSegura2026!'
+  --from-literal=admin-password="$GRAF_PASS"
+
+echo "Guarde sus contraseñas en un gestor seguro (Bitwarden/KeePass)."
+```
+
+### Paso 4.1 — Resguardo Obligatorio del "Emergency Kit" de Claves
+Inmediatamente tras generar los secretos, exporte las claves maestras para recuperación ante catástrofe de hardware:
+```bash
+sudo bash scripts/export-master-keys.sh /media/pendrive_cifrado
 ```
 
 ### Paso 5 — Despliegue de la Plataforma (App-of-Apps)

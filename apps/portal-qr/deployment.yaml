@@ -29,7 +29,7 @@ spec:
         args:
           - |
             set -u
-            apk add --no-cache util-linux bash curl >/dev/null 2>&1 || true
+            apk add --no-cache util-linux bash curl openssl >/dev/null 2>&1 || true
             mkdir -p /usr/share/nginx/html /tmp/nas-tunnel
             cp /app-config/index.html /usr/share/nginx/html/index.html
             exec python3 /app-config/server.py
@@ -37,7 +37,7 @@ spec:
           privileged: true
         ports:
         - containerPort: 80
-          name: http
+          name: https
         volumeMounts:
         - name: app-volume
           mountPath: /app-config
@@ -47,6 +47,7 @@ spec:
           httpGet:
             path: /api/public/status
             port: 80
+            scheme: HTTPS
           initialDelaySeconds: 2
           periodSeconds: 2
           failureThreshold: 30
@@ -54,6 +55,7 @@ spec:
           httpGet:
             path: /api/public/status
             port: 80
+            scheme: HTTPS
           initialDelaySeconds: 10
           periodSeconds: 15
           timeoutSeconds: 5
@@ -62,6 +64,7 @@ spec:
           httpGet:
             path: /api/public/status
             port: 80
+            scheme: HTTPS
           initialDelaySeconds: 5
           periodSeconds: 10
           timeoutSeconds: 5

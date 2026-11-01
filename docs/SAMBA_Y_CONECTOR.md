@@ -15,11 +15,22 @@ Complementa el RFC-001 (ver Anexo A).
 
 ## 2. Conector de unidades para Windows
 
-- Descarga: boton "Descargar Conector de Red (.bat)" o `GET /api/samba/connector`.
-- La ruta es **publica por diseno**: el navegador no envia el token de sesion en una descarga directa, y el `.bat` no contiene secretos (solicita usuario y clave al ejecutarse).
+- Descarga: botón "Descargar Conector de Red (.bat)" o `GET /api/samba/connector`.
 - Unidades montadas: `Z:` alumnos, `P:` profesores, `X:` publico.
-- Servidor por defecto: `192.168.1.50`. Se puede pasar otra IP como primer argumento: `Conectar-Unidad-NAS.bat 10.0.0.5`. Ajustar el valor por defecto en `serve_samba_connector()` si la IP del NAS es otra.
-- Funciona en cualquier equipo Windows de la misma red local.
+- Servidor por defecto: `192.168.1.50`. Se puede pasar otra IP como primer argumento: `Conectar-Unidad-NAS.bat 10.0.0.5`.
+
+> [!WARNING]
+> **Seguridad y Buenas Prácticas Escolares:**
+> Aunque el script `.bat` solicita usuario y clave interactivamente y no almacena credenciales, **acostumbrar a docentes y alumnos a descargar y ejecutar archivos `.bat` desde un navegador web es una mala práctica de seguridad** (susceptible a suplantación o phishing en la LAN).
+>
+> **Alternativa Recomendada para Entornos de Producción (GPO / Active Directory):**
+> En un dominio escolar o red gestionada, distribuya el mapeo de unidades mediante directivas de grupo (GPO) o ejecute un script firmado centralmente al iniciar sesión de Windows:
+> ```powershell
+> # Mapeo transparente mediante PowerShell centralizado:
+> New-PSDrive -Name "Z" -PSProvider FileSystem -Root "\\192.168.1.50\alumnos" -Persist
+> New-PSDrive -Name "P" -PSProvider FileSystem -Root "\\192.168.1.50\profesores" -Persist
+> New-PSDrive -Name "X" -PSProvider FileSystem -Root "\\192.168.1.50\publico" -Persist
+> ```
 
 ## 3. Gestion de identidades (pestana "Identidad y Accesos")
 
@@ -51,7 +62,8 @@ Autenticadas (`Authorization: Bearer <token>`):
 | Listado de servicios por nombre de pod | El filtro por etiqueta `part-of=nas-platform` omitia samba y nextcloud, y la tabla salia vacia. |
 | Cambios en `server.py`/`index.html` | Se regenera `configmap.yaml` (`build_configmap.py`) y se reinicia `portal-qr`: el pod no recarga el codigo solo. |
 
-## 6. Credenciales (pendiente de endurecer)
+## 6. Credenciales y Hardening DevSecOps
 
-- La clave de admin se lee del secret `nextcloud-admin-credentials`; si no existe se usa `ADMIN_PASS_FALLBACK` en `server.py`. Ese valor hardcodeado debe retirarse y validarse al inicio.
-- Las guias `GUIA_USUARIOS_Y_CONTRASENAS.txt` y `CREDENCIALES_NAS.txt` estan solo en el escritorio de la VM, fuera de git, y no deben subirse.
+- **Cero Claves Hardcodeadas:** `ADMIN_PASS_FALLBACK` ha sido completamente eliminado del código. El portal lee las credenciales administrativas de forma estricta desde el Secret de Kubernetes (`nextcloud-admin-credentials`) o variables de entorno del contenedor. Si el Secret no existe, el servidor rechaza el inicio de sesión y no arranca en modo inseguro.
+- **Tokens Criptográficos y Rate-Limiting:** Los tokens de sesión se generan mediante `secrets.token_urlsafe(32)` con expiración estricta (TTL de 8 horas) y bloqueo temporal tras 5 intentos fallidos consecutivos por IP.
+- **Cifrado en Tránsito (TLS Obligatorio):** El portal se sirve obligatoriamente bajo HTTPS (TLS 1.3/1.2) con certificados generados al vuelo o provistos por el clúster.

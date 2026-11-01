@@ -22,7 +22,7 @@ echo "============================================================"
 
 info "1. Verificando dependencias del sistema operativo..."
 sudo apt-get update -qq
-sudo apt-get install -y -qq zfsutils-linux openssl curl rclone jq >/dev/null
+sudo apt-get install -y -qq zfsutils-linux openssl curl rclone jq smartmontools nut-client >/dev/null
 
 info "2. Configurando pool OpenZFS (tank)..."
 if ! sudo zpool list tank >/dev/null 2>&1; then
@@ -93,20 +93,46 @@ if ! kubectl -n kube-system get deployment sealed-secrets-controller >/dev/null 
   kubectl apply -f https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.27.3/controller.yaml
 fi
 
-info "6. Verificando Secretos Iniciales..."
+info "6. Verificando Secretos Iniciales con Contraseñas Criptográficas..."
+CREDS_FILE="/etc/nas-initial-credentials.txt"
+NC_PASS=""
 if ! kubectl get secret nextcloud-admin-credentials >/dev/null 2>&1; then
-  GEN_PASS=$(openssl rand -base64 16)
+  NC_PASS=$(openssl rand -base64 16)
   kubectl create secret generic nextcloud-admin-credentials \
     --from-literal=username=admin \
-    --from-literal=password="$GEN_PASS"
-  info "Secreto nextcloud-admin-credentials generado con contraseña aleatoria."
+    --from-literal=password="$NC_PASS"
+  info "Secreto nextcloud-admin-credentials generado con contraseña criptográfica."
 fi
 
 if ! kubectl get secret samba-credentials >/dev/null 2>&1; then
+  PASS_PROF=$(openssl rand -base64 12)
+  PASS_ALUM=$(openssl rand -base64 12)
+  PASS_ADMIN=$(openssl rand -base64 16)
   kubectl create secret generic samba-credentials \
-    --from-literal=user-profesores="profesor01;ProfesorPass2026!" \
-    --from-literal=user-alumnos="alumno01;AlumnoPass2026!" \
-    --from-literal=user-admin="admin.it;AdminItPass2026!"
+    --from-literal=user-profesores="profesor;${PASS_PROF}" \
+    --from-literal=user-alumnos="alumno;${PASS_ALUM}" \
+    --from-literal=user-admin="admin;${PASS_ADMIN}"
+  info "Secreto samba-credentials generado con credenciales aleatorias (sin defaults públicos)."
+
+  sudo bash -c "cat <<EOF > '$CREDS_FILE'
+================================================================================
+CREDENCIALES INICIALES DEL NAS (GENERADAS AUTOMÁTICAMENTE)
+Fecha: $(date -Iseconds)
+Host: $(hostname)
+================================================================================
+Nextcloud Web Console:
+  Usuario:    admin
+  Contraseña: ${NC_PASS:-[Configurada previamente]}
+
+Recursos Compartidos Samba (SMB):
+  Profesor:   profesor / ${PASS_PROF}
+  Alumno:     alumno   / ${PASS_ALUM}
+  Admin IT:   admin    / ${PASS_ADMIN}
+================================================================================
+ADVERTENCIA: Archivo restringido (chmod 600). Guárdelo en su gestor de contraseñas.
+EOF"
+  sudo chmod 600 "$CREDS_FILE"
+  info "Credenciales guardadas en $CREDS_FILE."
 fi
 
 info "7. Aplicando infraestructura GitOps (Root Application)..."
@@ -116,3 +142,6 @@ kubectl apply -f "${REPO_DIR}/infrastructure/root-application.yaml"
 pass "============================================================"
 pass "  ✅ PLATAFORMA NAS ENTERPRISE INICIALIZADA EXITOSAMENTE    "
 pass "============================================================"
+warn "PASO OBLIGATORIO DE RESILIENCIA (EMERGENCY KIT):"
+warn "Ejecute inmediatamente para respaldar la clave de Sealed Secrets fuera del host:"
+warn "  sudo bash ${REPO_DIR}/scripts/export-master-keys.sh /media/pendrive_cifrado"
