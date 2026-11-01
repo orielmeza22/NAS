@@ -240,6 +240,9 @@ class NasApiHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/agent/action":
+            import sys
+            if "/app-config" not in sys.path:
+                sys.path.insert(0, "/app-config")
             from nas_agentd import dispatch_request
             action = body.get("action", "")
             params = body.get("params", {})
