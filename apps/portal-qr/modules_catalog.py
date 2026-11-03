@@ -435,9 +435,84 @@ su -m -s /bin/sh www-data -c 'OC_PASS="$OC_PASS" php occ user:resetpassword --pa
             res_reset = run_cmd(["kubectl", "exec", "-i", "-n", "default", "deployment/nextcloud", "--", "sh"], input_data=script_nc_reset, timeout=25)
             if res_reset.returncode == 0:
                 return True, {"status": f"El usuario {user} ya existía. Sus credenciales y grupo fueron actualizados exitosamente."}
-        return False, {"error": f"Fallo al registrar en Nextcloud: {full_out.strip()}"}
+        
+        # Rollback compensation (Saga pattern): undo Samba & Linux user creation if Nextcloud fails
+        run_cmd(["kubectl", "exec", "-n", "default", "deployment/samba", "--", "sh", "-c", f"smbpasswd -x {shlex.quote(user)} 2>/dev/null; deluser {shlex.quote(user)} 2>/dev/null || true"])
+        return False, {"error": f"Fallo al registrar en Nextcloud: {full_out.strip()}. Se revirtieron los cambios en Samba."}
 
     return True, {"status": f"Usuario {user} ({display}) creado y sincronizado con éxito en Nextcloud y carpetas de red Samba."}
+
+def act_users_import_csv(p, progress_cb=None):
+    """
+    Importa masivamente usuarios escolares desde CSV o JSON con trazabilidad y reversión.
+    Formato CSV esperado: usuario,contrasena,nombre_completo,grupo
+    """
+    csv_raw = p.get("csv", "")
+    users_list = p.get("users", [])
+    
+    rows_to_process = []
+    if users_list and isinstance(users_list, list):
+        rows_to_process = users_list
+    elif csv_raw:
+        for line in csv_raw.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or line.lower().startswith("usuario,"):
+                continue
+            parts = [x.strip() for x in line.split(",")]
+            if len(parts) >= 2:
+                rows_to_process.append({
+                    "username": parts[0],
+                    "password": parts[1],
+                    "display_name": parts[2] if len(parts) > 2 else parts[0],
+                    "group": parts[3] if len(parts) > 3 else "alumnos"
+                })
+
+    if not rows_to_process:
+        return False, {"error": "No se encontraron filas válidas para importar. Formato: usuario,contraseña,nombre_completo,grupo"}
+
+    total = len(rows_to_process)
+    created = 0
+    failed = 0
+    errors = []
+
+    for idx, u in enumerate(rows_to_process):
+        u_name = str(u.get("username", "")).strip()
+        u_pass = str(u.get("password", "")).strip()
+        u_disp = str(u.get("display_name", u_name)).strip() or u_name
+        u_grp = str(u.get("group", "alumnos")).strip()
+
+        pct = int((idx / total) * 100)
+        if progress_cb:
+            progress_cb(pct, f"Procesando ({idx+1}/{total}): {u_name}", f"Iniciando alta de usuario: {u_name}...")
+
+        ok, res = act_users_sync_nextcloud({
+            "username": u_name,
+            "password": u_pass,
+            "display_name": u_disp,
+            "group": u_grp
+        })
+
+        if ok:
+            created += 1
+            if progress_cb:
+                progress_cb(pct, f"Creado ({idx+1}/{total}): {u_name}", f"✓ Usuario {u_name} sincronizado correctamente.")
+        else:
+            failed += 1
+            err_msg = res.get("error", "Error desconocido")
+            errors.append(f"{u_name}: {err_msg}")
+            if progress_cb:
+                progress_cb(pct, f"Fallo ({idx+1}/{total}): {u_name}", f"✗ Error en {u_name}: {err_msg}")
+
+    if progress_cb:
+        progress_cb(100, "Importación completada", f"Resumen: {created} creados, {failed} fallidos.")
+
+    return (created > 0 or total == 0), {
+        "total": total,
+        "created": created,
+        "failed": failed,
+        "errors": errors,
+        "status": f"Importación finalizada: {created} usuarios sincronizados, {failed} con errores."
+    }
 
 def act_users_reset_password(p):
     """Restablece la contrasena de un usuario en ambos servicios."""
@@ -747,9 +822,10 @@ MODULE_HANDLERS = {
     "files.delete": act_files_delete,
     "files.repair_permissions": act_files_repair_permissions,
 
-    # 7. Usuarios y Contrasenas
+    # 7. Usuarios y Contraseñas
     "users.list": act_users_list,
     "users.sync_nextcloud": act_users_sync_nextcloud,
+    "users.import_csv": act_users_import_csv,
     "users.reset_password": act_users_reset_password,
     "users.delete": act_users_delete,
     "users.toggle_status": act_users_toggle_status,

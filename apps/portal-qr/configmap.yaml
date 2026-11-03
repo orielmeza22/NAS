@@ -27,6 +27,10 @@ data:
     from http.server import HTTPServer, BaseHTTPRequestHandler
     from socketserver import ThreadingMixIn
     
+    # Persistent state storage and asynchronous job execution engine
+    import portal_state
+    from task_engine import GLOBAL_TASK_ENGINE
+    
     class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
         daemon_threads = True
     
@@ -34,10 +38,6 @@ data:
     SESSION_TTL_SECONDS = 28800  # 8 hours
     MAX_FAILED_LOGINS = 5
     LOCKOUT_SECONDS = 900  # 15 minutes
-    
-    # Security structures in memory
-    ACTIVE_SESSIONS = {}   # token -> expiry_timestamp
-    FAILED_LOGINS = {}     # ip -> [timestamps]
     
     # Strict validation regexes
     RE_USERNAME = re.compile(r"^[a-zA-Z0-9._-]{3,32}$")
@@ -106,32 +106,24 @@ data:
             return self.client_address[0]
     
         def check_rate_limit(self, ip):
-            now = time.time()
-            attempts = FAILED_LOGINS.get(ip, [])
-            valid_attempts = [t for t in attempts if now - t < LOCKOUT_SECONDS]
-            FAILED_LOGINS[ip] = valid_attempts
-            return len(valid_attempts) < MAX_FAILED_LOGINS
+            allowed, remaining = portal_state.check_rate_limit(ip, MAX_FAILED_LOGINS, LOCKOUT_SECONDS)
+            return allowed, remaining
     
         def record_failed_login(self, ip):
-            now = time.time()
-            attempts = FAILED_LOGINS.get(ip, [])
-            attempts.append(now)
-            FAILED_LOGINS[ip] = attempts
+            portal_state.record_failed_login(ip, MAX_FAILED_LOGINS, LOCKOUT_SECONDS)
     
         def reset_failed_logins(self, ip):
-            FAILED_LOGINS.pop(ip, None)
+            portal_state.reset_failed_logins(ip)
     
         def is_auth(self):
             auth_hdr = self.headers.get("Authorization", "")
             if auth_hdr.startswith("Bearer "):
                 token = auth_hdr.split(" ")[1]
-                now = time.time()
-                if token in ACTIVE_SESSIONS:
-                    expiry = ACTIVE_SESSIONS[token]
-                    if now < expiry:
-                        return True
-                    else:
-                        ACTIVE_SESSIONS.pop(token, None)
+                valid, username, role = portal_state.validate_session(token)
+                if valid:
+                    self.auth_user = username
+                    self.auth_role = role
+                    return True
             return False
     
         def send_json(self, data, status=200):
@@ -178,6 +170,23 @@ data:
     
             if not self.is_auth():
                 self.send_json({"error": "Unauthorized"}, 401)
+                return
+    
+            if path == "/api/tasks":
+                tasks = portal_state.list_tasks(limit=30)
+                self.send_json({"success": True, "tasks": tasks})
+                return
+            elif path.startswith("/api/tasks/"):
+                task_id = path.replace("/api/tasks/", "").strip()
+                task = portal_state.get_task(task_id)
+                if not task:
+                    self.send_json({"success": False, "error": "Tarea no encontrada"}, 404)
+                else:
+                    self.send_json({"success": True, "task": task})
+                return
+            elif path == "/api/audit/logs":
+                logs = portal_state.list_audit_events(limit=100)
+                self.send_json({"success": True, "logs": logs})
                 return
     
             if path == "/api/system/status":
@@ -228,8 +237,10 @@ data:
     
             if path == "/api/auth/login":
                 client_ip = self.get_client_ip()
-                if not self.check_rate_limit(client_ip):
-                    self.send_json({"success": False, "error": "Demasiados intentos fallidos. Bloqueo temporal de seguridad por 15 minutos."}, 429)
+                allowed, remaining = self.check_rate_limit(client_ip)
+                if not allowed:
+                    mins = max(1, int(remaining // 60))
+                    self.send_json({"success": False, "error": f"Demasiados intentos fallidos. Bloqueo temporal de seguridad por {mins} minutos."}, 429)
                     return
     
                 username = str(body.get("username", "")).strip().lower()
@@ -241,18 +252,20 @@ data:
     
                 if (username in ("admin", "directivo", "root", "") and secrets.compare_digest(password, real_admin_pass)):
                     token = secrets.token_urlsafe(32)
-                    expiry = time.time() + SESSION_TTL_SECONDS
-                    ACTIVE_SESSIONS[token] = expiry
+                    user_role = "superadmin"
+                    portal_state.create_session(token, username or "admin", user_role, client_ip, SESSION_TTL_SECONDS)
                     self.reset_failed_logins(client_ip)
+                    portal_state.log_audit_event(username or "admin", "auth.login", {}, True, "Inicio de sesión correcto", client_ip)
                     self.send_json({
                         "success": True,
                         "token": token,
                         "username": username or "admin",
-                        "role": "superadmin",
+                        "role": user_role,
                         "expires_in": SESSION_TTL_SECONDS
                     })
                 else:
                     self.record_failed_login(client_ip)
+                    portal_state.log_audit_event(username or "unknown", "auth.login_failed", {}, False, "Contraseña o usuario incorrecto", client_ip)
                     self.send_json({"success": False, "error": "Usuario o contrasena de administrador incorrectos."}, 401)
                 return
     
@@ -262,21 +275,42 @@ data:
                 return
     
             if path == "/api/agent/action":
+                action = body.get("action", "")
+                params = body.get("params", {})
+                user = getattr(self, "auth_user", "admin")
+                client_ip = self.get_client_ip()
+    
+                # Asynchronous execution for long-running operations
+                req_async = body.get("async", False) or GLOBAL_TASK_ENGINE.is_action_async(action)
+                if req_async:
+                    task_id = GLOBAL_TASK_ENGINE.submit_task(action, params, user, client_ip)
+                    self.send_json({
+                        "success": True,
+                        "async": True,
+                        "task_id": task_id,
+                        "message": f"Operación '{action}' iniciada en segundo plano con ID {task_id}",
+                        "action": action
+                    }, 202)
+                    return
+    
                 import sys
                 if "/app-config" not in sys.path:
                     sys.path.insert(0, "/app-config")
                 from nas_agentd import dispatch_request
-                action = body.get("action", "")
-                params = body.get("params", {})
-                user = "admin"
                 req = {"user": user, "action": action, "params": params}
                 res = dispatch_request(req)
                 self.send_json(res, 200 if res.get("success") else 400)
                 return
     
+            if path == "/api/tasks/cancel" or (path.startswith("/api/tasks/") and path.endswith("/cancel")):
+                task_id = body.get("task_id", "") or path.split("/")[3]
+                ok = GLOBAL_TASK_ENGINE.cancel_task(task_id)
+                self.send_json({"success": ok, "message": f"Señal de cancelación enviada a la tarea {task_id}"})
+                return
+    
             if path == "/api/auth/logout":
-                token = self.headers.get("Authorization", "").replace("Bearer ", "")
-                ACTIVE_SESSIONS.pop(token, None)
+                token = self.headers.get("Authorization", "").replace("Bearer ", "").strip()
+                portal_state.destroy_session(token)
                 self.send_json({"success": True})
             elif path == "/api/raid/action":
                 self.handle_raid_action(body)
@@ -976,6 +1010,15 @@ data:
             self.wfile.write(payload)
     
     if __name__ == "__main__":
+        # Register safe action catalog with asynchronous TaskEngine
+        try:
+            if "/app-config" not in sys.path:
+                sys.path.insert(0, "/app-config")
+            from nas_agentd import ACTION_CATALOG
+            GLOBAL_TASK_ENGINE.register_handlers(ACTION_CATALOG)
+        except Exception as e:
+            print(f"Advertencia: no se pudo vincular ACTION_CATALOG con TaskEngine: {e}")
+    
         server = ThreadedHTTPServer(("0.0.0.0", PORT), NasApiHandler)
         
         cert_dir = "/tmp/nas-tls"
@@ -994,6 +1037,379 @@ data:
         
         print(f"Enterprise NAS Control Center OS listening securely on https://0.0.0.0:{PORT}...")
         server.serve_forever()
+  portal_state.py: |
+    #!/usr/bin/env python3
+    """
+    Enterprise NAS Control Center — Persistent State & Security Storage (SQLite Engine)
+    Persists active admin sessions, brute-force IP rate limits, async tasks, and audit trails.
+    Survives pod restarts, rollouts, and container re-creations via HostPath mount.
+    """
+    import os
+    import time
+    import json
+    import sqlite3
+    import threading
+    
+    # Use HostPath tunnel volume if present, fallback to local var directory
+    STATE_DIR = "/tmp/nas-tunnel" if os.path.exists("/tmp/nas-tunnel") else "/tmp"
+    DB_PATH = os.path.join(STATE_DIR, "portal_state.db")
+    
+    _db_lock = threading.Lock()
+    
+    def _get_connection():
+        """Returns a SQLite connection with WAL mode and reasonable timeout for concurrency."""
+        conn = sqlite3.connect(DB_PATH, timeout=15.0)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+        return conn
+    
+    def init_db():
+        """Initializes schema tables if not existing."""
+        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+        with _db_lock, _get_connection() as conn:
+            c = conn.cursor()
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS sessions (
+                    token TEXT PRIMARY KEY,
+                    username TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    client_ip TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    expires_at REAL NOT NULL
+                );
+            """)
+            c.execute("""
+                CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+            """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS failed_logins (
+                    ip TEXT PRIMARY KEY,
+                    attempts INTEGER NOT NULL DEFAULT 1,
+                    last_attempt REAL NOT NULL,
+                    locked_until REAL NOT NULL DEFAULT 0
+                );
+            """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS tasks (
+                    task_id TEXT PRIMARY KEY,
+                    action TEXT NOT NULL,
+                    params TEXT NOT NULL,
+                    user TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    progress INTEGER NOT NULL DEFAULT 0,
+                    phase TEXT NOT NULL,
+                    started_at REAL NOT NULL,
+                    finished_at REAL NOT NULL DEFAULT 0,
+                    exit_code INTEGER NOT NULL DEFAULT 0,
+                    result TEXT NOT NULL DEFAULT '{}',
+                    log TEXT NOT NULL DEFAULT ''
+                );
+            """)
+            c.execute("""
+                CREATE INDEX IF NOT EXISTS idx_tasks_started ON tasks(started_at DESC);
+            """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS audit_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT NOT NULL,
+                    user TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    params TEXT NOT NULL,
+                    success INTEGER NOT NULL,
+                    message TEXT NOT NULL,
+                    client_ip TEXT NOT NULL
+                );
+            """)
+            c.execute("""
+                CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_events(id DESC);
+            """)
+            conn.commit()
+    
+    # --- SESSIONS ---
+    def create_session(token, username, role, client_ip, ttl_seconds=28800):
+        now = time.time()
+        expires = now + ttl_seconds
+        with _db_lock, _get_connection() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO sessions (token, username, role, client_ip, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (token, username, role, client_ip, now, expires)
+            )
+            conn.commit()
+    
+    def validate_session(token):
+        now = time.time()
+        with _db_lock, _get_connection() as conn:
+            row = conn.execute("SELECT username, role, expires_at FROM sessions WHERE token = ?", (token,)).fetchone()
+            if not row:
+                return False, None, None
+            if row["expires_at"] < now:
+                conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+                conn.commit()
+                return False, None, None
+            return True, row["username"], row["role"]
+    
+    def destroy_session(token):
+        with _db_lock, _get_connection() as conn:
+            conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+            conn.commit()
+    
+    def cleanup_expired_sessions():
+        now = time.time()
+        with _db_lock, _get_connection() as conn:
+            conn.execute("DELETE FROM sessions WHERE expires_at < ?", (now,))
+            conn.commit()
+    
+    # --- RATE LIMITING / BRUTE FORCE ---
+    def check_rate_limit(client_ip, max_attempts=5, lockout_seconds=900):
+        now = time.time()
+        with _db_lock, _get_connection() as conn:
+            row = conn.execute("SELECT attempts, last_attempt, locked_until FROM failed_logins WHERE ip = ?", (client_ip,)).fetchone()
+            if not row:
+                return True, 0
+            if row["locked_until"] > now:
+                remaining = int(row["locked_until"] - now)
+                return False, remaining
+            # If lockout window has passed, reset counter
+            if now - row["last_attempt"] > lockout_seconds:
+                conn.execute("DELETE FROM failed_logins WHERE ip = ?", (client_ip,))
+                conn.commit()
+                return True, 0
+            if row["attempts"] >= max_attempts:
+                # Lockout now
+                locked_until = now + lockout_seconds
+                conn.execute("UPDATE failed_logins SET locked_until = ? WHERE ip = ?", (locked_until, client_ip))
+                conn.commit()
+                return False, lockout_seconds
+            return True, 0
+    
+    def record_failed_login(client_ip, max_attempts=5, lockout_seconds=900):
+        now = time.time()
+        with _db_lock, _get_connection() as conn:
+            row = conn.execute("SELECT attempts FROM failed_logins WHERE ip = ?", (client_ip,)).fetchone()
+            if not row:
+                conn.execute("INSERT INTO failed_logins (ip, attempts, last_attempt, locked_until) VALUES (?, 1, ?, 0)", (client_ip, now))
+            else:
+                new_attempts = row["attempts"] + 1
+                locked_until = (now + lockout_seconds) if new_attempts >= max_attempts else 0
+                conn.execute("UPDATE failed_logins SET attempts = ?, last_attempt = ?, locked_until = ? WHERE ip = ?", (new_attempts, now, locked_until, client_ip))
+            conn.commit()
+    
+    def reset_failed_logins(client_ip):
+        with _db_lock, _get_connection() as conn:
+            conn.execute("DELETE FROM failed_logins WHERE ip = ?", (client_ip,))
+            conn.commit()
+    
+    # --- ASYNC TASKS ---
+    def create_task(task_id, action, params, user):
+        now = time.time()
+        params_str = json.dumps(params)
+        with _db_lock, _get_connection() as conn:
+            conn.execute(
+                "INSERT INTO tasks (task_id, action, params, user, status, progress, phase, started_at, finished_at, exit_code, result, log) "
+                "VALUES (?, ?, ?, ?, 'running', 0, 'Iniciando ejecución...', ?, 0, 0, '{}', '')",
+                (task_id, action, params_str, user, now)
+            )
+            conn.commit()
+    
+    def update_task_progress(task_id, progress=None, phase=None, append_log=None):
+        with _db_lock, _get_connection() as conn:
+            row = conn.execute("SELECT progress, phase, log FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+            if not row:
+                return
+            new_prog = row["progress"] if progress is None else int(progress)
+            new_phase = row["phase"] if phase is None else str(phase)
+            current_log = row["log"] or ""
+            new_log = current_log + (str(append_log) if append_log else "")
+            # Cap log in DB to last 200 KB to avoid unbounded growth
+            if len(new_log) > 200000:
+                new_log = "... [Log truncado] ...\n" + new_log[-180000:]
+            conn.execute(
+                "UPDATE tasks SET progress = ?, phase = ?, log = ? WHERE task_id = ?",
+                (new_prog, new_phase, new_log, task_id)
+            )
+            conn.commit()
+    
+    def finish_task(task_id, status, exit_code, result_dict, append_log=None):
+        now = time.time()
+        result_str = json.dumps(result_dict if isinstance(result_dict, dict) else {"raw": str(result_dict)})
+        with _db_lock, _get_connection() as conn:
+            row = conn.execute("SELECT log FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+            current_log = (row["log"] if row else "") or ""
+            final_log = current_log + (str(append_log) if append_log else "")
+            if len(final_log) > 200000:
+                final_log = "... [Log truncado] ...\n" + final_log[-180000:]
+            conn.execute(
+                "UPDATE tasks SET status = ?, progress = 100, phase = ?, finished_at = ?, exit_code = ?, result = ?, log = ? WHERE task_id = ?",
+                (status, "Completado" if status == "completed" else "Fallido", now, exit_code, result_str, final_log, task_id)
+            )
+            conn.commit()
+    
+    def get_task(task_id):
+        with _db_lock, _get_connection() as conn:
+            row = conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+            if not row:
+                return None
+            return dict(row)
+    
+    def list_tasks(limit=30):
+        with _db_lock, _get_connection() as conn:
+            rows = conn.execute("SELECT task_id, action, user, status, progress, phase, started_at, finished_at, exit_code FROM tasks ORDER BY started_at DESC LIMIT ?", (limit,)).fetchall()
+            return [dict(r) for r in rows]
+    
+    # --- AUDIT LOGS ---
+    def log_audit_event(user, action, params, success, message, client_ip):
+        now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        sanitized_params = {k: (v if "pass" not in k.lower() and "secret" not in k.lower() else "********") for k, v in params.items()}
+        with _db_lock, _get_connection() as conn:
+            conn.execute(
+                "INSERT INTO audit_events (timestamp, user, action, params, success, message, client_ip) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (now_iso, user or "admin", action, json.dumps(sanitized_params), 1 if success else 0, str(message), client_ip or "local")
+            )
+            conn.commit()
+    
+    def list_audit_events(limit=100):
+        with _db_lock, _get_connection() as conn:
+            rows = conn.execute("SELECT * FROM audit_events ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+            return [dict(r) for r in rows]
+    
+    # Auto-initialize on import
+    init_db()
+  task_engine.py: |
+    #!/usr/bin/env python3
+    """
+    Enterprise NAS Control Center — Asynchronous Task Runner Engine (Job Queue)
+    Executes heavy appliance operations in background daemon threads without blocking HTTP.
+    Streams logs, tracks progress phases, and records outcomes in persistent storage.
+    """
+    import sys
+    import os
+    import time
+    import json
+    import secrets
+    import threading
+    import queue
+    import traceback
+    
+    import portal_state
+    
+    # Identify heavy or long-running operations that should be handled asynchronously
+    ASYNC_ACTIONS = {
+        "zfs.pool.scrub_start",
+        "occ.files_scan",
+        "backup.r2.trigger",
+        "dr.run_drill",
+        "postgres.vacuum",
+        "services.cascade_restart",
+        "storage.smart.test",
+        "users.import_csv",
+        "system.drop_caches",
+    }
+    
+    class TaskEngine:
+        def __init__(self, max_workers=2):
+            self.queue = queue.Queue()
+            self.lock = threading.Lock()
+            self.cancel_flags = set()
+            self.handlers_catalog = {}
+            
+            # Start background worker threads
+            self.workers = []
+            for i in range(max_workers):
+                t = threading.Thread(target=self._worker_loop, daemon=True, name=f"TaskWorker-{i}")
+                t.start()
+                self.workers.append(t)
+    
+        def register_handlers(self, handlers):
+            """Registers the action handlers catalog from modules_catalog."""
+            with self.lock:
+                self.handlers_catalog.update(handlers)
+    
+        def is_action_async(self, action):
+            """Checks if an action is naturally asynchronous or long-running."""
+            return action in ASYNC_ACTIONS
+    
+        def submit_task(self, action, params, user="admin", client_ip="local"):
+            """Submits an action to the background queue and returns the unique task ID."""
+            task_id = f"task_{secrets.token_hex(6)}"
+            portal_state.create_task(task_id, action, params, user)
+            portal_state.log_audit_event(user, action, params, True, f"Tarea asíncrona '{action}' encolada con ID {task_id}", client_ip)
+            self.queue.put((task_id, action, params, user, client_ip))
+            return task_id
+    
+        def cancel_task(self, task_id):
+            """Signals cancellation for a running task."""
+            with self.lock:
+                self.cancel_flags.add(task_id)
+            task = portal_state.get_task(task_id)
+            if task and task.get("status") == "running":
+                portal_state.finish_task(task_id, "cancelled", 130, {"status": "Tarea cancelada por el operador."}, "\n[!] Operación cancelada por el usuario.")
+                return True
+            return False
+    
+        def is_cancelled(self, task_id):
+            with self.lock:
+                return task_id in self.cancel_flags
+    
+        def _worker_loop(self):
+            while True:
+                task_id, action, params, user, client_ip = self.queue.get()
+                try:
+                    self._run_task(task_id, action, params, user, client_ip)
+                except Exception as e:
+                    err_msg = f"Fallo no capturado en tarea {task_id}: {str(e)}\n{traceback.format_exc()}"
+                    portal_state.finish_task(task_id, "failed", 1, {"error": str(e)}, err_msg)
+                    portal_state.log_audit_event(user, action, params, False, f"Fallo fatal en tarea {task_id}: {str(e)}", client_ip)
+                finally:
+                    with self.lock:
+                        self.cancel_flags.discard(task_id)
+                    self.queue.task_done()
+    
+        def _run_task(self, task_id, action, params, user, client_ip):
+            portal_state.update_task_progress(task_id, progress=5, phase="Ejecutando...", append_log=f"[{time.strftime('%H:%M:%S')}] Iniciando acción: {action}\n")
+    
+            handler = self.handlers_catalog.get(action)
+            if not handler:
+                portal_state.finish_task(task_id, "failed", 1, {"error": f"Acción '{action}' no encontrada en el catálogo."}, f"Error: Acción '{action}' no soportada.\n")
+                portal_state.log_audit_event(user, action, params, False, "Acción desconocida", client_ip)
+                return
+    
+            # Progress tracking callback wrapper for handlers that support it
+            def progress_cb(pct, phase_str, log_line=None):
+                if self.is_cancelled(task_id):
+                    raise InterruptedError("Operación cancelada")
+                portal_state.update_task_progress(task_id, progress=pct, phase=phase_str, append_log=(log_line + "\n") if log_line else None)
+    
+            try:
+                # Check if handler accepts progress_cb kwarg
+                import inspect
+                sig = inspect.signature(handler)
+                if "progress_cb" in sig.parameters:
+                    ok, result = handler(params, progress_cb=progress_cb)
+                else:
+                    ok, result = handler(params)
+    
+                if self.is_cancelled(task_id):
+                    return
+    
+                status = "completed" if ok else "failed"
+                exit_code = 0 if ok else 1
+                log_suffix = f"\n[{time.strftime('%H:%M:%S')}] Tarea finalizada con estado: {status.upper()}.\n"
+                if isinstance(result, dict) and "output" in result:
+                    log_suffix = f"\nSalida del comando:\n{result['output']}\n" + log_suffix
+    
+                portal_state.finish_task(task_id, status, exit_code, result, log_suffix)
+                portal_state.log_audit_event(user, action, params, ok, f"Tarea {task_id} finalizada ({status})", client_ip)
+    
+            except InterruptedError:
+                portal_state.finish_task(task_id, "cancelled", 130, {"status": "Cancelado"}, "\n[!] Operación interrumpida por el operador.\n")
+            except Exception as e:
+                err_details = f"Excepción durante la ejecución: {str(e)}\n{traceback.format_exc()}"
+                portal_state.finish_task(task_id, "failed", 1, {"error": str(e)}, err_details)
+                portal_state.log_audit_event(user, action, params, False, f"Error en tarea {task_id}: {str(e)}", client_ip)
+    
+    # Global singleton
+    GLOBAL_TASK_ENGINE = TaskEngine(max_workers=2)
   nas_agentd.py: |
     #!/usr/bin/env python3
     """
@@ -1630,9 +2046,84 @@ data:
                 res_reset = run_cmd(["kubectl", "exec", "-i", "-n", "default", "deployment/nextcloud", "--", "sh"], input_data=script_nc_reset, timeout=25)
                 if res_reset.returncode == 0:
                     return True, {"status": f"El usuario {user} ya existía. Sus credenciales y grupo fueron actualizados exitosamente."}
-            return False, {"error": f"Fallo al registrar en Nextcloud: {full_out.strip()}"}
+            
+            # Rollback compensation (Saga pattern): undo Samba & Linux user creation if Nextcloud fails
+            run_cmd(["kubectl", "exec", "-n", "default", "deployment/samba", "--", "sh", "-c", f"smbpasswd -x {shlex.quote(user)} 2>/dev/null; deluser {shlex.quote(user)} 2>/dev/null || true"])
+            return False, {"error": f"Fallo al registrar en Nextcloud: {full_out.strip()}. Se revirtieron los cambios en Samba."}
     
         return True, {"status": f"Usuario {user} ({display}) creado y sincronizado con éxito en Nextcloud y carpetas de red Samba."}
+    
+    def act_users_import_csv(p, progress_cb=None):
+        """
+        Importa masivamente usuarios escolares desde CSV o JSON con trazabilidad y reversión.
+        Formato CSV esperado: usuario,contrasena,nombre_completo,grupo
+        """
+        csv_raw = p.get("csv", "")
+        users_list = p.get("users", [])
+        
+        rows_to_process = []
+        if users_list and isinstance(users_list, list):
+            rows_to_process = users_list
+        elif csv_raw:
+            for line in csv_raw.splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or line.lower().startswith("usuario,"):
+                    continue
+                parts = [x.strip() for x in line.split(",")]
+                if len(parts) >= 2:
+                    rows_to_process.append({
+                        "username": parts[0],
+                        "password": parts[1],
+                        "display_name": parts[2] if len(parts) > 2 else parts[0],
+                        "group": parts[3] if len(parts) > 3 else "alumnos"
+                    })
+    
+        if not rows_to_process:
+            return False, {"error": "No se encontraron filas válidas para importar. Formato: usuario,contraseña,nombre_completo,grupo"}
+    
+        total = len(rows_to_process)
+        created = 0
+        failed = 0
+        errors = []
+    
+        for idx, u in enumerate(rows_to_process):
+            u_name = str(u.get("username", "")).strip()
+            u_pass = str(u.get("password", "")).strip()
+            u_disp = str(u.get("display_name", u_name)).strip() or u_name
+            u_grp = str(u.get("group", "alumnos")).strip()
+    
+            pct = int((idx / total) * 100)
+            if progress_cb:
+                progress_cb(pct, f"Procesando ({idx+1}/{total}): {u_name}", f"Iniciando alta de usuario: {u_name}...")
+    
+            ok, res = act_users_sync_nextcloud({
+                "username": u_name,
+                "password": u_pass,
+                "display_name": u_disp,
+                "group": u_grp
+            })
+    
+            if ok:
+                created += 1
+                if progress_cb:
+                    progress_cb(pct, f"Creado ({idx+1}/{total}): {u_name}", f"✓ Usuario {u_name} sincronizado correctamente.")
+            else:
+                failed += 1
+                err_msg = res.get("error", "Error desconocido")
+                errors.append(f"{u_name}: {err_msg}")
+                if progress_cb:
+                    progress_cb(pct, f"Fallo ({idx+1}/{total}): {u_name}", f"✗ Error en {u_name}: {err_msg}")
+    
+        if progress_cb:
+            progress_cb(100, "Importación completada", f"Resumen: {created} creados, {failed} fallidos.")
+    
+        return (created > 0 or total == 0), {
+            "total": total,
+            "created": created,
+            "failed": failed,
+            "errors": errors,
+            "status": f"Importación finalizada: {created} usuarios sincronizados, {failed} con errores."
+        }
     
     def act_users_reset_password(p):
         """Restablece la contrasena de un usuario en ambos servicios."""
@@ -1942,9 +2433,10 @@ data:
         "files.delete": act_files_delete,
         "files.repair_permissions": act_files_repair_permissions,
     
-        # 7. Usuarios y Contrasenas
+        # 7. Usuarios y Contraseñas
         "users.list": act_users_list,
         "users.sync_nextcloud": act_users_sync_nextcloud,
+        "users.import_csv": act_users_import_csv,
         "users.reset_password": act_users_reset_password,
         "users.delete": act_users_delete,
         "users.toggle_status": act_users_toggle_status,
@@ -2208,6 +2700,11 @@ data:
     </head>
     <body>
     
+      <!-- BANNER DE RECONEXION ANTE CAIDA DE RED -->
+      <div id="offline-banner" style="display:none; background:#dc2626; color:#fff; text-align:center; padding:10px 16px; font-weight:700; font-size:13px; position:fixed; top:0; left:0; right:0; z-index:9999999; box-shadow:0 4px 12px rgba(0,0,0,0.5);">
+        ⚠️ Conexión perdida con el servidor escolar. Intentando reconectar automáticamente...
+      </div>
+    
       <!-- PANTALLA DE LOGIN GATEKEEPER -->
       <div id="login-view">
         <div class="login-card">
@@ -2288,6 +2785,9 @@ data:
               <span id="badge-host-online" class="badge badge-ok">● Servidor En Línea</span>
               <span id="badge-zfs-state" class="badge badge-ok">Almacenamiento: OK</span>
               <span id="badge-operator" style="font-size:12px; color:var(--text-muted); margin-left:8px;">👤 Sesión: <strong id="lbl-operator-user" style="color:#fff;">admin</strong></span>
+              <div id="btn-task-tray" class="badge" onclick="openTaskTray()" style="cursor:pointer; background:rgba(59,130,246,0.15); color:var(--primary); border:1px solid var(--primary); display:none; margin-left:8px;">
+                ⏳ <span id="lbl-task-tray">0 Tareas en Segundo Plano</span>
+              </div>
             </div>
             <div class="header-actions">
               <button class="btn btn-warning btn-sm" onclick="confirmPower('reboot', '¿Desea reiniciar el servidor físico ahora? Los servicios se interrumpirán por 60 segundos.')">Reiniciar Servidor</button>
@@ -2578,7 +3078,10 @@ data:
                   <div class="section-title">7. Usuarios y Contraseñas</div>
                   <div class="section-subtitle">Gestión unificada de cuentas escolares para el acceso a Nextcloud y carpetas de red Windows (Samba).</div>
                 </div>
-                <button class="btn btn-primary btn-sm" onclick="loadUsersView()">Actualizar Lista de Usuarios</button>
+                <div style="display:flex; gap:8px;">
+                  <button class="btn btn-secondary btn-sm" onclick="openModal('modal-import-csv')">📁 Importación Masiva (CSV)</button>
+                  <button class="btn btn-primary btn-sm" onclick="loadUsersView()">Actualizar Lista</button>
+                </div>
               </div>
     
               <!-- LISTA VIVA DE USUARIOS EXISTENTES -->
@@ -2971,6 +3474,91 @@ data:
         </div>
       </div>
     
+      <!-- MODAL BANDEJA DE TAREAS EN SEGUNDO PLANO -->
+      <div id="modal-task-tray" class="modal-overlay">
+        <div class="modal-content" style="max-width:850px;">
+          <div class="modal-header">
+            <span>Bandeja de Operaciones en Segundo Plano</span>
+            <button class="btn btn-sm" onclick="closeModal('modal-task-tray')" style="padding:2px 8px;">✕</button>
+          </div>
+          <div class="modal-body">
+            <div style="font-size:12px; color:var(--text-muted); margin-bottom:12px;">
+              Operaciones pesadas administradas asíncronamente para no congelar la navegación.
+            </div>
+            <div class="table-box">
+              <table>
+                <thead>
+                  <tr>
+                    <th>ID Tarea</th>
+                    <th>Acción Operativa</th>
+                    <th>Estado</th>
+                    <th>Progreso</th>
+                    <th>Fase Actual</th>
+                    <th>Acción</th>
+                  </tr>
+                </thead>
+                <tbody id="tbl-tasks-body">
+                  <tr><td colspan="6" style="text-align:center; color:var(--text-muted);">Sin tareas activas.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-sm" onclick="refreshTasksTray()">Actualizar</button>
+            <button class="btn btn-sm btn-primary" onclick="closeModal('modal-task-tray')">Cerrar</button>
+          </div>
+        </div>
+      </div>
+    
+      <!-- MODAL DETALLE Y LOG EN VIVO DE TAREA ASÍNCRONA -->
+      <div id="modal-task-detail" class="modal-overlay">
+        <div class="modal-content" style="max-width:750px;">
+          <div class="modal-header">
+            <span id="modal-task-title">Seguimiento de Tarea</span>
+            <button class="btn btn-sm" onclick="closeModal('modal-task-detail')" style="padding:2px 8px;">✕</button>
+          </div>
+          <div class="modal-body">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+              <span id="modal-task-phase" style="font-size:13px; font-weight:600; color:#fff;">Iniciando...</span>
+              <span id="modal-task-status-badge" class="badge badge-ok">EN CURSO</span>
+            </div>
+            <div style="background:#0f172a; border-radius:6px; height:12px; width:100%; overflow:hidden; border:1px solid var(--border); margin-bottom:14px;">
+              <div id="modal-task-progress-bar" style="background:var(--primary); height:100%; width:0%; transition:width 0.4s ease;"></div>
+            </div>
+            <div class="terminal-window" id="modal-task-log" style="min-height:280px; max-height:420px; font-size:12px;">Conectando con el registro de la tarea...</div>
+          </div>
+          <div class="modal-footer">
+            <button id="btn-cancel-task" class="btn btn-sm btn-danger" onclick="cancelCurrentTask()" style="display:none;">Cancelar Operación</button>
+            <button class="btn btn-sm" onclick="closeModal('modal-task-detail')">Cerrar Visor</button>
+          </div>
+        </div>
+      </div>
+    
+      <!-- MODAL IMPORTACION MASIVA CSV DE USUARIOS -->
+      <div id="modal-import-csv" class="modal-overlay">
+        <div class="modal-content" style="max-width:680px;">
+          <div class="modal-header">
+            <span>Importación Masiva de Usuarios (Planilla CSV)</span>
+            <button class="btn btn-sm" onclick="closeModal('modal-import-csv')" style="padding:2px 8px;">✕</button>
+          </div>
+          <div class="modal-body">
+            <p style="font-size:12px; color:var(--text-muted); margin-bottom:10px;">
+              Pegue la nómina de usuarios escolares. Cada fila debe tener el formato: <code>usuario,contraseña,nombre_completo,grupo</code> (grupo opcional: alumnos, docentes, directivos).
+            </p>
+            <div style="font-size:11px; background:#1e293b; padding:8px 12px; border-radius:6px; font-family:var(--font-mono); margin-bottom:12px; color:#94a3b8;">
+              Ejemplo:<br>
+              lucas_gonzalez,ClaveEscolar2026!,Lucas Gonzalez,alumnos<br>
+              laura_martinez,DocenteSegura2026!,Laura Martinez,docentes
+            </div>
+            <textarea id="txt-csv-users" style="width:100%; height:180px; background:#0b1120; border:1px solid var(--border); border-radius:6px; color:#fff; font-family:var(--font-mono); font-size:12px; padding:10px; resize:vertical;" placeholder="usuario,contraseña,nombre_completo,grupo"></textarea>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-sm" onclick="closeModal('modal-import-csv')">Cancelar</button>
+            <button class="btn btn-sm btn-primary" onclick="submitCsvImport()">Iniciar Alta Masiva</button>
+          </div>
+        </div>
+      </div>
+    
       <!-- NOTIFICACION TOAST -->
       <div id="toast" class="toast"></div>
     
@@ -3100,6 +3688,12 @@ data:
             }
     
             const data = await res.json();
+            if (data && data.async && data.task_id) {
+              showToast('⏳ ' + (data.message || 'Tarea iniciada en segundo plano...'));
+              trackAsyncTask(data.task_id, action);
+              return data;
+            }
+    
             if (!isSilent) {
               if (data && data.success) {
                 const statusMsg = (data.data && data.data.status) || 'Acción completada con éxito.';
@@ -3116,13 +3710,192 @@ data:
         }
     
         // =========================================================================
+        // GESTOR DE TAREAS ASINCRONAS EN SEGUNDO PLANO
+        // =========================================================================
+        let currentViewingTaskId = null;
+        let taskTrayPollInterval = null;
+    
+        function openTaskTray() {
+          refreshTasksTray();
+          openModal('modal-task-tray');
+        }
+    
+        async function refreshTasksTray() {
+          const token = getAuthToken();
+          if (!token) return;
+          try {
+            const res = await fetch('/api/tasks', { headers: { 'Authorization': 'Bearer ' + token } });
+            if (res.ok) {
+              const d = await res.json();
+              renderTasksTable(d.tasks || []);
+            }
+          } catch (e) {}
+        }
+    
+        function renderTasksTable(tasks) {
+          const tbody = document.getElementById('tbl-tasks-body');
+          if (!tbody) return;
+          if (!tasks || !tasks.length) {
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:16px;">Sin operaciones registradas recientemente.</td></tr>';
+            updateTaskTrayBadge(0);
+            return;
+          }
+          tbody.innerHTML = '';
+          let runningCount = 0;
+          tasks.forEach(t => {
+            if (t.status === 'running') runningCount++;
+            const tr = document.createElement('tr');
+            const badgeClass = t.status === 'completed' ? 'badge-ok' : (t.status === 'running' ? 'badge-warn' : 'badge-danger');
+            tr.innerHTML = `
+              <td style="font-family:var(--font-mono); font-weight:600; color:#94a3b8;">${t.task_id}</td>
+              <td style="font-weight:600; color:#fff;">${t.action}</td>
+              <td><span class="badge ${badgeClass}">${t.status.toUpperCase()}</span></td>
+              <td>
+                <div style="background:#1e293b; border-radius:4px; height:8px; width:70px; overflow:hidden; display:inline-block; vertical-align:middle; margin-right:6px;">
+                  <div style="background:var(--primary); height:100%; width:${t.progress}%;"></div>
+                </div>
+                <span style="font-size:11px; font-family:var(--font-mono);">${t.progress}%</span>
+              </td>
+              <td style="font-size:12px; color:var(--text-muted);">${t.phase || '-'}</td>
+              <td>
+                <button class="btn btn-sm btn-primary" onclick="viewTaskDetails('${t.task_id}', '${t.action}')" style="padding:2px 8px;">Ver Log</button>
+              </td>
+            `;
+            tbody.appendChild(tr);
+          });
+          updateTaskTrayBadge(runningCount);
+        }
+    
+        function updateTaskTrayBadge(runningCount) {
+          const btn = document.getElementById('btn-task-tray');
+          const lbl = document.getElementById('lbl-task-tray');
+          if (btn && lbl) {
+            if (runningCount > 0) {
+              btn.style.display = 'inline-flex';
+              lbl.innerText = `${runningCount} Tarea${runningCount > 1 ? 's' : ''} en Curso`;
+            } else {
+              btn.style.display = 'none';
+            }
+          }
+        }
+    
+        function trackAsyncTask(taskId, action) {
+          updateTaskTrayBadge(1);
+          viewTaskDetails(taskId, action);
+          const poll = async () => {
+            const token = getAuthToken();
+            if (!token) return;
+            try {
+              const res = await fetch(`/api/tasks/${taskId}`, { headers: { 'Authorization': 'Bearer ' + token } });
+              if (res.ok) {
+                const data = await res.json();
+                const t = data.task;
+                if (t) {
+                  if (currentViewingTaskId === taskId) {
+                    updateTaskDetailModal(t);
+                  }
+                  if (t.status === 'completed') {
+                    showToast(`✓ Operación '${action}' finalizada con éxito.`);
+                    refreshTasksTray();
+                    return;
+                  } else if (t.status === 'failed' || t.status === 'cancelled') {
+                    showToast(`✗ Operación '${action}' finalizó con estado: ${t.status}.`);
+                    refreshTasksTray();
+                    return;
+                  }
+                }
+              }
+            } catch (e) {}
+            setTimeout(poll, 1500);
+          };
+          setTimeout(poll, 1200);
+        }
+    
+        function viewTaskDetails(taskId, action) {
+          currentViewingTaskId = taskId;
+          document.getElementById('modal-task-title').innerText = `Seguimiento: ${action} (${taskId})`;
+          document.getElementById('modal-task-phase').innerText = 'Cargando estado...';
+          document.getElementById('modal-task-log').innerText = 'Recuperando registros...';
+          document.getElementById('modal-task-progress-bar').style.width = '0%';
+          document.getElementById('btn-cancel-task').style.display = 'none';
+          openModal('modal-task-detail');
+          fetchTaskDetail(taskId);
+        }
+    
+        async function fetchTaskDetail(taskId) {
+          const token = getAuthToken();
+          if (!token) return;
+          try {
+            const res = await fetch(`/api/tasks/${taskId}`, { headers: { 'Authorization': 'Bearer ' + token } });
+            if (res.ok) {
+              const data = await res.json();
+              if (data.task && currentViewingTaskId === taskId) {
+                updateTaskDetailModal(data.task);
+              }
+            }
+          } catch (e) {}
+        }
+    
+        function updateTaskDetailModal(t) {
+          document.getElementById('modal-task-phase').innerText = t.phase || 'Ejecutando...';
+          document.getElementById('modal-task-progress-bar').style.width = (t.progress || 0) + '%';
+          const logEl = document.getElementById('modal-task-log');
+          logEl.innerText = t.log || '(Sin registros adicionales aún)';
+          logEl.scrollTop = logEl.scrollHeight;
+    
+          const badge = document.getElementById('modal-task-status-badge');
+          badge.className = 'badge ' + (t.status === 'completed' ? 'badge-ok' : (t.status === 'running' ? 'badge-warn' : 'badge-danger'));
+          badge.innerText = t.status.toUpperCase();
+    
+          const cancelBtn = document.getElementById('btn-cancel-task');
+          cancelBtn.style.display = (t.status === 'running') ? 'inline-block' : 'none';
+        }
+    
+        async function cancelCurrentTask() {
+          if (!currentViewingTaskId) return;
+          const token = getAuthToken();
+          if (!token) return;
+          await fetch(`/api/tasks/${currentViewingTaskId}/cancel`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ task_id: currentViewingTaskId })
+          });
+          showToast('Señal de cancelación enviada.');
+          fetchTaskDetail(currentViewingTaskId);
+        }
+    
+        async function submitCsvImport() {
+          const txt = document.getElementById('txt-csv-users').value.trim();
+          if (!txt) {
+            alert('Por favor ingrese al menos una línea de datos en formato CSV.');
+            return;
+          }
+          closeModal('modal-import-csv');
+          await execCmd('users.import_csv', { csv: txt });
+          document.getElementById('txt-csv-users').value = '';
+        }
+    
+        // Detector de caídas de red y reconexión transparente
+        window.addEventListener('offline', () => {
+          document.getElementById('offline-banner').style.display = 'block';
+        });
+        window.addEventListener('online', () => {
+          document.getElementById('offline-banner').style.display = 'none';
+          showToast('✓ Conexión con el servidor escolar restablecida.');
+        });
+    
+        // =========================================================================
         // 1. ESTADO GENERAL & TELEMETRIA
         // =========================================================================
         let pollTimer = null;
+        let taskPollTimer = null;
         function startPolling() {
           if (pollTimer) clearInterval(pollTimer);
+          if (taskPollTimer) clearInterval(taskPollTimer);
           pollTelemetry();
+          refreshTasksTray();
           pollTimer = setInterval(pollTelemetry, 3500);
+          taskPollTimer = setInterval(refreshTasksTray, 4000);
         }
     
         async function pollTelemetry() {

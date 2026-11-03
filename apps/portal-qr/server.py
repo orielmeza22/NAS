@@ -17,6 +17,10 @@ import ssl
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 
+# Persistent state storage and asynchronous job execution engine
+import portal_state
+from task_engine import GLOBAL_TASK_ENGINE
+
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
 
@@ -24,10 +28,6 @@ PORT = 80
 SESSION_TTL_SECONDS = 28800  # 8 hours
 MAX_FAILED_LOGINS = 5
 LOCKOUT_SECONDS = 900  # 15 minutes
-
-# Security structures in memory
-ACTIVE_SESSIONS = {}   # token -> expiry_timestamp
-FAILED_LOGINS = {}     # ip -> [timestamps]
 
 # Strict validation regexes
 RE_USERNAME = re.compile(r"^[a-zA-Z0-9._-]{3,32}$")
@@ -96,32 +96,24 @@ class NasApiHandler(BaseHTTPRequestHandler):
         return self.client_address[0]
 
     def check_rate_limit(self, ip):
-        now = time.time()
-        attempts = FAILED_LOGINS.get(ip, [])
-        valid_attempts = [t for t in attempts if now - t < LOCKOUT_SECONDS]
-        FAILED_LOGINS[ip] = valid_attempts
-        return len(valid_attempts) < MAX_FAILED_LOGINS
+        allowed, remaining = portal_state.check_rate_limit(ip, MAX_FAILED_LOGINS, LOCKOUT_SECONDS)
+        return allowed, remaining
 
     def record_failed_login(self, ip):
-        now = time.time()
-        attempts = FAILED_LOGINS.get(ip, [])
-        attempts.append(now)
-        FAILED_LOGINS[ip] = attempts
+        portal_state.record_failed_login(ip, MAX_FAILED_LOGINS, LOCKOUT_SECONDS)
 
     def reset_failed_logins(self, ip):
-        FAILED_LOGINS.pop(ip, None)
+        portal_state.reset_failed_logins(ip)
 
     def is_auth(self):
         auth_hdr = self.headers.get("Authorization", "")
         if auth_hdr.startswith("Bearer "):
             token = auth_hdr.split(" ")[1]
-            now = time.time()
-            if token in ACTIVE_SESSIONS:
-                expiry = ACTIVE_SESSIONS[token]
-                if now < expiry:
-                    return True
-                else:
-                    ACTIVE_SESSIONS.pop(token, None)
+            valid, username, role = portal_state.validate_session(token)
+            if valid:
+                self.auth_user = username
+                self.auth_role = role
+                return True
         return False
 
     def send_json(self, data, status=200):
@@ -168,6 +160,23 @@ class NasApiHandler(BaseHTTPRequestHandler):
 
         if not self.is_auth():
             self.send_json({"error": "Unauthorized"}, 401)
+            return
+
+        if path == "/api/tasks":
+            tasks = portal_state.list_tasks(limit=30)
+            self.send_json({"success": True, "tasks": tasks})
+            return
+        elif path.startswith("/api/tasks/"):
+            task_id = path.replace("/api/tasks/", "").strip()
+            task = portal_state.get_task(task_id)
+            if not task:
+                self.send_json({"success": False, "error": "Tarea no encontrada"}, 404)
+            else:
+                self.send_json({"success": True, "task": task})
+            return
+        elif path == "/api/audit/logs":
+            logs = portal_state.list_audit_events(limit=100)
+            self.send_json({"success": True, "logs": logs})
             return
 
         if path == "/api/system/status":
@@ -218,8 +227,10 @@ class NasApiHandler(BaseHTTPRequestHandler):
 
         if path == "/api/auth/login":
             client_ip = self.get_client_ip()
-            if not self.check_rate_limit(client_ip):
-                self.send_json({"success": False, "error": "Demasiados intentos fallidos. Bloqueo temporal de seguridad por 15 minutos."}, 429)
+            allowed, remaining = self.check_rate_limit(client_ip)
+            if not allowed:
+                mins = max(1, int(remaining // 60))
+                self.send_json({"success": False, "error": f"Demasiados intentos fallidos. Bloqueo temporal de seguridad por {mins} minutos."}, 429)
                 return
 
             username = str(body.get("username", "")).strip().lower()
@@ -231,18 +242,20 @@ class NasApiHandler(BaseHTTPRequestHandler):
 
             if (username in ("admin", "directivo", "root", "") and secrets.compare_digest(password, real_admin_pass)):
                 token = secrets.token_urlsafe(32)
-                expiry = time.time() + SESSION_TTL_SECONDS
-                ACTIVE_SESSIONS[token] = expiry
+                user_role = "superadmin"
+                portal_state.create_session(token, username or "admin", user_role, client_ip, SESSION_TTL_SECONDS)
                 self.reset_failed_logins(client_ip)
+                portal_state.log_audit_event(username or "admin", "auth.login", {}, True, "Inicio de sesión correcto", client_ip)
                 self.send_json({
                     "success": True,
                     "token": token,
                     "username": username or "admin",
-                    "role": "superadmin",
+                    "role": user_role,
                     "expires_in": SESSION_TTL_SECONDS
                 })
             else:
                 self.record_failed_login(client_ip)
+                portal_state.log_audit_event(username or "unknown", "auth.login_failed", {}, False, "Contraseña o usuario incorrecto", client_ip)
                 self.send_json({"success": False, "error": "Usuario o contrasena de administrador incorrectos."}, 401)
             return
 
@@ -252,21 +265,42 @@ class NasApiHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/agent/action":
+            action = body.get("action", "")
+            params = body.get("params", {})
+            user = getattr(self, "auth_user", "admin")
+            client_ip = self.get_client_ip()
+
+            # Asynchronous execution for long-running operations
+            req_async = body.get("async", False) or GLOBAL_TASK_ENGINE.is_action_async(action)
+            if req_async:
+                task_id = GLOBAL_TASK_ENGINE.submit_task(action, params, user, client_ip)
+                self.send_json({
+                    "success": True,
+                    "async": True,
+                    "task_id": task_id,
+                    "message": f"Operación '{action}' iniciada en segundo plano con ID {task_id}",
+                    "action": action
+                }, 202)
+                return
+
             import sys
             if "/app-config" not in sys.path:
                 sys.path.insert(0, "/app-config")
             from nas_agentd import dispatch_request
-            action = body.get("action", "")
-            params = body.get("params", {})
-            user = "admin"
             req = {"user": user, "action": action, "params": params}
             res = dispatch_request(req)
             self.send_json(res, 200 if res.get("success") else 400)
             return
 
+        if path == "/api/tasks/cancel" or (path.startswith("/api/tasks/") and path.endswith("/cancel")):
+            task_id = body.get("task_id", "") or path.split("/")[3]
+            ok = GLOBAL_TASK_ENGINE.cancel_task(task_id)
+            self.send_json({"success": ok, "message": f"Señal de cancelación enviada a la tarea {task_id}"})
+            return
+
         if path == "/api/auth/logout":
-            token = self.headers.get("Authorization", "").replace("Bearer ", "")
-            ACTIVE_SESSIONS.pop(token, None)
+            token = self.headers.get("Authorization", "").replace("Bearer ", "").strip()
+            portal_state.destroy_session(token)
             self.send_json({"success": True})
         elif path == "/api/raid/action":
             self.handle_raid_action(body)
@@ -966,6 +1000,15 @@ goto MENU
         self.wfile.write(payload)
 
 if __name__ == "__main__":
+    # Register safe action catalog with asynchronous TaskEngine
+    try:
+        if "/app-config" not in sys.path:
+            sys.path.insert(0, "/app-config")
+        from nas_agentd import ACTION_CATALOG
+        GLOBAL_TASK_ENGINE.register_handlers(ACTION_CATALOG)
+    except Exception as e:
+        print(f"Advertencia: no se pudo vincular ACTION_CATALOG con TaskEngine: {e}")
+
     server = ThreadedHTTPServer(("0.0.0.0", PORT), NasApiHandler)
     
     cert_dir = "/tmp/nas-tls"
