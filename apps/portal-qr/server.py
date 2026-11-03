@@ -272,6 +272,7 @@ class NasApiHandler(BaseHTTPRequestHandler):
 
             # Asynchronous execution for long-running operations
             req_async = body.get("async", False) or GLOBAL_TASK_ENGINE.is_action_async(action)
+            print(f"[ACTION ROUTER] action={action}, req_async={req_async}, client_ip={client_ip}", flush=True)
             if req_async:
                 task_id = GLOBAL_TASK_ENGINE.submit_task(action, params, user, client_ip)
                 self.send_json({
