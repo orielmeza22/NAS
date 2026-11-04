@@ -2028,7 +2028,10 @@ data:
         script_smb = f"""set -e
     export SMB_USER={shlex.quote(user)}
     export SMB_PASS={shlex.quote(pwd)}
+    export SMB_GRP={shlex.quote(group)}
+    groupadd -f "$SMB_GRP" 2>/dev/null || true
     useradd -M -s /sbin/nologin "$SMB_USER" 2>/dev/null || true
+    usermod -aG "$SMB_GRP" "$SMB_USER" 2>/dev/null || true
     (echo "$SMB_PASS"; echo "$SMB_PASS") | smbpasswd -a -s "$SMB_USER" 2>&1
     """
         res_smb = run_cmd(["kubectl", "exec", "-i", "-n", "default", "deployment/samba", "--", "sh"], input_data=script_smb, timeout=20)
