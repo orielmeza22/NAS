@@ -78,9 +78,11 @@ spec:
             secretKeyRef:
               name: samba-credentials
               key: user-admin
+        - name: VETO
+          value: "no"
         args:
         - "-g"
-        - "veto files = /*.encrypted/*.locked/*.crypto/*.wannacry/*.lockbit/*.ryuk/*.akira/*.conti/*DECRYPT*/*RESTORE_FILES*/"
+        - "veto files = /*.exe/*.bat/*.cmd/*.msi/*.scr/*.ps1/*.iso/*.torrent/*.encrypted/*.locked/*.crypto/*.wannacry/*.lockbit/*.ryuk/*.akira/*.conti/*DECRYPT*/*RESTORE_FILES*/.apdisk/.DS_Store/.TemporaryItems/.Trashes/desktop.ini/Thumbs.db/"
         - "-g"
         - "delete veto files = no"
         - "-g"
@@ -112,7 +114,7 @@ spec:
         - "-s"
         - "entregas;/samba/alumnos/entregas;yes;no;no;alumno,profesor,@alumnos,@docentes,@directivos,maria.gomez,juan.perez,admin,admin.it,orielmeza;admin,admin.it,orielmeza;alumno,profesor,@alumnos,@docentes,@directivos,maria.gomez,juan.perez,admin,admin.it,orielmeza;Buzon de Entregas y Evaluaciones"
         - "-s"
-        - "alumnos;/samba/alumnos;yes;yes;no;alumno,profesor,@alumnos,@docentes,@directivos,maria.gomez,juan.perez,admin,admin.it,orielmeza;admin,admin.it,orielmeza;profesor,@docentes,@directivos,juan.perez,admin,admin.it,orielmeza;Recurso General Alumnos (Solo Lectura Alumnos, Escritura Docentes);veto files = /*.exe/*.msi/*.iso/*.bat/*.cmd/*.torrent/*.scr/*.encrypted/*.locked/*.crypto/*.wannacry/*.lockbit/*.ryuk/*.akira/*.conti/*DECRYPT*/*RESTORE_FILES*/"
+        - "alumnos;/samba/alumnos;yes;yes;no;alumno,profesor,@alumnos,@docentes,@directivos,maria.gomez,juan.perez,admin,admin.it,orielmeza;admin,admin.it,orielmeza;profesor,@docentes,@directivos,juan.perez,admin,admin.it,orielmeza;Recurso General Alumnos (Solo Lectura Alumnos Escritura Docentes)"
         - "-s"
         - "publico;/samba/publico;yes;no;no;all;none;all;Material Publico Institucional"
         - "-s"
