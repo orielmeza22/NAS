@@ -1,1227 +1,1355 @@
-\documentclass[11pt,a4paper,oneside]{article}
+\documentclass[10pt,a4paper]{article}
 
-% -----------------------------------------------------------------------------
-% PAQUETES Y CONFIGURACIÓN TIPOGRÁFICA (ISO/IEC/IEEE 26514:2008)
-% -----------------------------------------------------------------------------
-\usepackage[spanish,es-tabla,es-lcroman]{babel}
+% --- Paquetes de Idioma y Tipografía ---
+\usepackage[spanish,es-tabla,es-nodecimaldot]{babel}
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
 \usepackage{lmodern}
-\usepackage{geometry}
-\geometry{
-    top=2.5cm,
-    bottom=2.5cm,
-    left=2.5cm,
-    right=2.5cm,
-    headheight=14pt,
-    footskip=1.2cm
+\usepackage{microtype}
+
+% --- Geometría y Márgenes ---
+\usepackage[top=2.2cm, bottom=2.2cm, left=2.2cm, right=2.2cm, headheight=14pt, footskip=1.1cm]{geometry}
+
+% --- Colores Institucionales del Documento Original ---
+\usepackage{xcolor}
+\definecolor{primaryblue}{RGB}{0, 70, 140}
+\definecolor{darkblue}{RGB}{10, 45, 95}
+\definecolor{alertred}{RGB}{180, 20, 20}
+\definecolor{lightgraybg}{RGB}{245, 245, 245}
+\definecolor{bordergray}{RGB}{120, 120, 120}
+\definecolor{badgeblue}{RGB}{230, 240, 250}
+
+% --- Tablas Estructuradas con Grilla ---
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{enumitem}
+\setlist{nosep, leftmargin=1.5em}
+
+% --- Cajas y Listados de Código ---
+\usepackage{tcolorbox}
+\tcbuselibrary{skins,breakable}
+
+\newtcolorbox{normativabox}[1]{
+    colback=badgeblue,
+    colframe=primaryblue,
+    fonttitle=\bfseries\sffamily\footnotesize\color{primaryblue},
+    title=Requisito normativo,
+    subtitle style={fontupper=\small\bfseries},
+    arc=0.5mm,
+    boxrule=0.6pt,
+    left=2mm, right=2mm, top=1.5mm, bottom=1.5mm,
+    before skip=2mm, after skip=2mm
 }
 
-\usepackage{xcolor}
-\definecolor{headerblue}{RGB}{18, 43, 76}
-\definecolor{corporateblue}{RGB}{28, 64, 112}
-\definecolor{darkslate}{RGB}{35, 45, 60}
-\definecolor{lightgray}{RGB}{246, 248, 251}
-\definecolor{bordergray}{RGB}{205, 212, 222}
-\definecolor{tableheader}{RGB}{232, 238, 246}
-\definecolor{codebg}{RGB}{242, 244, 248}
-\definecolor{okgreen}{RGB}{15, 125, 55}
-\definecolor{warnorange}{RGB}{195, 105, 15}
-\definecolor{alertred}{RGB}{185, 30, 30}
+\newtcolorbox{criticonbox}{
+    colback=white,
+    colframe=alertred,
+    fonttitle=\bfseries\sffamily\footnotesize\color{alertred},
+    title=Advertencia crítica,
+    arc=0.5mm,
+    boxrule=0.8pt,
+    left=2mm, right=2mm, top=1.5mm, bottom=1.5mm,
+    before skip=2mm, after skip=2mm
+}
 
-\usepackage{booktabs}
-\usepackage{tabularx}
-\usepackage{longtable}
-\usepackage{array}
-\usepackage{enumitem}
+\newtcolorbox{stepbox}[1]{
+    colback=white,
+    colframe=black,
+    fonttitle=\bfseries\sffamily\small\color{black},
+    title=#1,
+    arc=0mm,
+    boxrule=0.6pt,
+    left=2mm, right=2mm, top=2mm, bottom=2mm,
+    before skip=2mm, after skip=2mm
+}
+
+% --- Encabezados y Pies de Página ---
 \usepackage{fancyhdr}
-\usepackage{titlesec}
-\usepackage{tcolorbox}
-\usepackage{microtype}
-\usepackage{amsmath}
-\usepackage{pifont}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\footnotesize\textsf{\color{gray}PLATAFORMA DE INFRAESTRUCTURA CRÍTICA}}
+\fancyhead[R]{\footnotesize\textsf{\color{gray}Documento controlado conforme a ISO 9001:2015, cl. 7.5}}
+\fancyfoot[C]{\footnotesize\textsf{\color{gray}CONFIDENCIAL — Uso restringido. Reproducción prohibida sin autorización escrita.}}
+\fancyfoot[R]{\footnotesize\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0.4pt}
 
+% --- Formato de Títulos (Azul, Sans-Serif, sin punto) ---
+\usepackage{titlesec}
+\titleformat{\section}
+  {\normalfont\Large\bfseries\sffamily\color{primaryblue}}{\thesection}{0.8em}{}
+\titleformat{\subsection}
+  {\normalfont\large\bfseries\sffamily\color{darkblue}}{\thesubsection}{0.8em}{}
+\titleformat{\subsubsection}
+  {\normalfont\normalsize\bfseries\sffamily\color{darkblue}}{\thesubsubsection}{0.8em}{}
+
+% --- Hipervínculos ---
 \usepackage{hyperref}
 \hypersetup{
     colorlinks=true,
-    linkcolor=corporateblue,
-    filecolor=corporateblue,
-    urlcolor=corporateblue,
-    citecolor=corporateblue,
-    pdftitle={NAS-ET-001 v2.0 - Especificacion Tecnica Plataforma NAS Institucional},
-    pdfauthor={Oriel Meza - Administrador de Sistemas},
-    pdfsubject={Especificacion Tecnica de Arquitectura, Continuidad e Ingenieria},
-    pdfkeywords={NAS, ZFS, Samba, K3s, PostgreSQL, Redis, ISO 9001, ISO 27001, ISO 22301, ISO 29148}
-}
-
-% -----------------------------------------------------------------------------
-% ENCABEZADOS Y PIES DE PÁGINA FORMALES
-% -----------------------------------------------------------------------------
-\pagestyle{fancy}
-\fancyhf{}
-\fancyhead[L]{\small\textcolor{corporateblue}{\textbf{NAS-ET-001 v2.0} $|$ Especificación Técnica NAS Institucional}}
-\fancyhead[R]{\small\textcolor{darkslate}{Estado: Producción / Release Candidate}}
-\fancyfoot[L]{\small\textcolor{darkslate}{Clasificación: Confidencial --- Nivel 3 (ISO/IEC 27001 A.5.12)}}
-\fancyfoot[R]{\small\textcolor{darkslate}{Página \thepage}}
-\renewcommand{\headrulewidth}{0.6pt}
-\renewcommand{\footrulewidth}{0.6pt}
-
-% -----------------------------------------------------------------------------
-% FORMATO DE TÍTULOS Y SECCIONES
-% -----------------------------------------------------------------------------
-\titleformat{\section}
-  {\normalfont\Large\bfseries\color{headerblue}}{\thesection}{1em}{}[\titlerule]
-\titleformat{\subsection}
-  {\normalfont\large\bfseries\color{corporateblue}}{\thesubsection}{1em}{}
-\titleformat{\subsubsection}
-  {\normalfont\normalsize\bfseries\color{darkslate}}{\thesubsubsection}{1em}{}
-
-% -----------------------------------------------------------------------------
-% CAJAS FORMALES DE AVISO Y REQUISITOS
-% -----------------------------------------------------------------------------
-\newtcolorbox{legalbox}[1]{
-    colback=lightgray,
-    colframe=headerblue,
-    fonttitle=\bfseries\color{white},
-    title=#1,
-    arc=1mm,
-    boxrule=0.8pt,
-    left=3mm, right=3mm, top=2mm, bottom=2mm
-}
-
-\newtcolorbox{warningbox}[1]{
-    colback=white,
-    colframe=alertred,
-    fonttitle=\bfseries\color{white},
-    title=#1,
-    arc=1mm,
-    boxrule=0.8pt,
-    left=3mm, right=3mm, top=2mm, bottom=2mm
+    linkcolor=primaryblue,
+    filecolor=primaryblue,
+    urlcolor=primaryblue,
+    citecolor=primaryblue
 }
 
 \begin{document}
 
-% =============================================================================
-% PORTADA Y FICHA DE CONTROL DOCUMENTAL (ISO 9001:2015 CLÁUSULA 7.5)
-% =============================================================================
-\begin{titlepage}
-    \centering
-    \vspace*{0.5cm}
+% ==============================================================================
+% PÁGINA 1: CABECERA, TÍTULO, CONTROL DE EMISIÓN Y AVISO LEGAL
+% ==============================================================================
+\pagenumbering{roman}
 
-    {\Large\textbf{\color{darkslate}PLATAFORMA DE INFRAESTRUCTURA Y ALMACENAMIENTO}}\\[0.2cm]
-    {\small Documento controlado conforme a las disposiciones de ISO 9001:2015, cl. 7.5}\\[1.2cm]
+\begin{center}
+    {\huge\textbf{\sffamily\color{primaryblue}Especificación Técnica}}\\[0.2cm]
+    {\Large\textbf{\sffamily Plataforma NAS Empresarial Cloud-Native}}\\[0.15cm]
+    {\normalsize\textsf{Almacenamiento, Colaboración y Recuperación ante Desastres basados en Infraestructura Inmutable y GitOps}}\\[0.4cm]
 
-    {\Huge\textbf{\color{headerblue}Especificación Técnica}}\\[0.4cm]
-    {\LARGE\textbf{Plataforma NAS Institucional}}\\[0.3cm]
-    {\large Almacenamiento Centralizado, Autoservicio de Versiones y Respaldo Remoto}\\[1.5cm]
+    \textsf{\textbf{Código documental:}} NAS-ET-001\quad$|$\quad
+    \textsf{\textbf{Versión:}} 2.0 (Release Candidate / Producción)\\[0.1cm]
+    \textsf{\textbf{Fecha de emisión:}} 2026-11-04 (ISO 8601)\quad$|$\quad
+    \textsf{\textbf{Clasificación:}} \textbf{\textcolor{alertred}{CONFIDENCIAL — Nivel 3}}\quad$|$\quad
+    \textsf{\textbf{Retención:}} 10 años (ISO 15489)\\[0.3cm]
 
-    \begin{tcolorbox}[colback=white,colframe=headerblue,arc=2mm,width=0.98\textwidth]
-        \centering\vspace{0.2cm}
-        \textbf{\large METADATOS Y CONTROL DOCUMENTAL FORMAL}\\[0.3cm]
-        \begin{tabularx}{\textwidth}{rX}
-            \textbf{Código documental:} & NAS-ET-001 \\
-            \textbf{Versión del documento:} & 2.0 (Release Candidate / Producción) \\
-            \textbf{Fecha de emisión:} & 2026-11-04 (ISO 8601) \\
-            \textbf{Sustituye a:} & NAS-ET-001 v1.0 (Fecha: 2026-10-19) \\
-            \textbf{Clasificación de seguridad:} & CONFIDENCIAL --- Nivel 3 (ISO/IEC 27001 A.5.12) \\
-            \textbf{Periodo de retención:} & 10 años (ISO 15489-1:2016) \\
-            \textbf{Titular del sistema:} & Arquitectura y Operaciones de Tecnologías de la Información \\
-            \textbf{Elaborado por:} & Oriel Meza --- Administrador de Sistemas / DevSecOps \\
-            \textbf{Destinatarios:} & Comités de TI, Auditoría Interna, Operaciones de Red \\
-            \textbf{Vigencia operativa:} & 12 meses o hasta próxima revisión formal \\
-        \end{tabularx}
-        \vspace{0.2cm}
-    \end{tcolorbox}
+    \small
+    \begin{tabular}{|p{4.2cm}|p{11.5cm}|}
+        \hline
+        \multicolumn{2}{|c|}{\textbf{\textsf{CONTROL DE EMISIÓN}}} \\
+        \hline
+        \textbf{\textsf{Titular}} & Arquitectura de Tecnologías de la Información \\
+        \hline
+        \textbf{\textsf{Elaborado por}} & Oriel Meza — Arquitecto de Soluciones / Administrador de Sistemas \\
+        \hline
+        \textbf{\textsf{Dirigido a}} & Comités de TI, CISO, Auditoría Interna, Órganos de Contratación \\
+        \hline
+        \textbf{\textsf{Validez}} & Vigente hasta su próxima revisión o 12 meses \\
+        \hline
+    \end{tabular}
+    \\[0.2cm]
+    {\footnotesize\textit{Documento generado mediante \LaTeX{} — Integridad verificable por hash SHA-256}}
+\end{center}
 
-    \vspace{1.5cm}
-
-    \begin{tabularx}{0.98\textwidth}{X X X}
-        \textbf{Elaboró:} & \textbf{Revisó:} & \textbf{Aprobó:} \\
-        \midrule
-        Oriel Meza & Antigravity AI & Dirección de Tecnología \\
-        Administrador de Sistemas & Auditor Técnico & Jefatura de Infraestructura \\
-        Fecha: 2026-11-04 & Fecha: 2026-11-04 & Fecha: 2026-11-04 \\
-    \end{tabularx}
-
-    \vfill
-    {\small Documento elaborado en \LaTeX{} --- Integridad verificable mediante resumen criptográfico SHA-256.}
-\end{titlepage}
-
-% =============================================================================
-% AVISO LEGAL Y CONTROL DOCUMENTAL
-% =============================================================================
+\vspace{0.3cm}
 \section*{Aviso Legal y Control Documental}
-\addcontentsline{toc}{section}{Aviso Legal y Control Documental}
 
-\subsection*{1. Propiedad Intelectual y Licencia}
-El presente documento técnico y los artefactos de configuración, automatización y código que en él se describen constituyen propiedad institucional. La documentación técnica se emite bajo estricta reserva de derechos para fines de auditoría, evaluación operativa, mantenimiento y contratación de servicios. Queda prohibida su reproducción o distribución fuera de los canales autorizados sin aprobación expresa y formal por escrito.
+\subsection*{1. Propiedad intelectual y licencia}
+Este documento y los artefactos de software que describe son propiedad intelectual de su titular. El código fuente se distribuye bajo licencia MIT; la presente documentación técnica queda sujeta a reserva de derechos para fines de auditoría, licitación y evaluación técnica. Queda prohibida su reproducción total o parcial sin autorización expresa y por escrito.
 
-\subsection*{2. Esquema de Clasificación y Manejo de la Información (ISO/IEC 27001:2022 A.5.12)}
+\subsection*{2. Clasificación y manejo de la información}
+Esquema de clasificación de la información (ISO/IEC 27001, A.5.12).
+
 \begin{table}[h!]
 \centering
 \small
-\begin{tabularx}{\textwidth}{p{3cm}X}
-\toprule
-\textbf{Atributo} & \textbf{Definición de Seguridad} \\
-\midrule
-\textbf{Nivel de Seguridad} & Nivel 3 --- Confidencial / Uso Técnico Interno. \\
-\textbf{Criterio de Impacto} & La divulgación no autorizada de topologías, credenciales o configuraciones internas comprometería la seguridad lógica del almacenamiento. \\
-\textbf{Pautas de Manejo} & Acceso restringido exclusivamente al personal de administración de sistemas y auditoría. Almacenamiento cifrado en reposo. Prohibida la transmisión por canales públicos sin cifrado. \\
-\textbf{Disposición Final} & Borrado criptográfico o destrucción física de copias impresas con acta de registro al finalizar el ciclo de retención. \\
-\bottomrule
-\end{tabularx}
-\end{table}
-
-\subsection*{3. Descargo de Responsabilidad y Criterios Operativos}
-Las métricas y valores de RTO, RPO, latencia y rendimiento contenidos en este documento reflejan los resultados de diseño y las pruebas en laboratorio documentadas en el capítulo 13. Cualquier modificación en hardware, topología de red o configuración de software debe someterse al procedimiento formal de gestión de cambios (capítulo 10) antes de ser puesta en marcha en el entorno de producción.
-
-\subsection*{4. Convención de Palabras Clave Normativas (RFC 2119 / RFC 8174)}
-Las palabras clave \textbf{DEBE}, \textbf{NO DEBE}, \textbf{OBLIGATORIO}, \textbf{DEBERÍA}, \textbf{NO DEBERÍA}, \textbf{RECOMENDADO} y \textbf{PUEDE} en este documento se interpretan conforme a las definiciones formales de IETF RFC 2119 y RFC 8174:
-\begin{itemize}[leftmargin=*]
-    \item \textbf{DEBE / OBLIGATORIO:} Expresa un requerimiento absoluto para la conformidad y estabilidad del sistema.
-    \item \textbf{NO DEBE:} Expresa una prohibición técnica absoluta.
-    \item \textbf{DEBERÍA / RECOMENDADO:} Indica que pueden existir razones válidas en circunstancias particulares para ignorar el elemento, pero sus implicaciones deben evaluarse y documentarse.
-    \item \textbf{PUEDE:} Indica un elemento opcional no restrictivo.
-\end{itemize}
-
-\subsection*{5. Historial de Versiones y Revisiones del Documento}
-\begin{table}[h!]
-\centering
-\small
-\begin{tabularx}{\textwidth}{lp{2cm}p{2.5cm}p{2.5cm}X}
-\toprule
-\textbf{Versión} & \textbf{Fecha} & \textbf{Autor} & \textbf{Aprobador} & \textbf{Descripción del Cambio} \\
-\midrule
-0.1 & 2026-09-28 & O. Meza & Comité TI & Borrador inicial y delimitación del alcance operativo. \\
-0.5 & 2026-10-05 & O. Meza & Operaciones & ADR-001 a ADR-011 y diseño preliminar de topología. \\
-0.8 & 2026-10-14 & O. Meza & Comité TI & Endurecimiento de red, saneamiento de credenciales y pruebas CI. \\
-0.9 & 2026-10-18 & O. Meza & Seguridad & Samba sin modo privilegiado, NetworkPolicies y pruebas de humo. \\
-1.0 & 2026-10-19 & O. Meza & Dirección TI & Emisión base (espejo ZFS de 2 discos, sin integración VSS). \\
-\textbf{2.0} & \textbf{2026-11-04} & \textbf{O. Meza} & \textbf{Dirección TI} & \textbf{Versión de producción. Evolución de arquitectura: RAID-Z1 con paridad, integración completa VSS Shadow Copies (resolución L-05), dataset de reserva tank/buffer (ADR-016), base relacional PostgreSQL 16 y Redis 7 (ADR-012), demonio Sentinel anti-ransomware (ADR-014), respaldo cifrado a Cloudflare R2 con AES-256 (resolución D-02), motor de tareas asíncronas TaskEngine y bootstrap desatendido.} \\
-\bottomrule
-\end{tabularx}
-\end{table}
-
-\subsection*{6. Cuadro de Aprobaciones y Firmas}
-\begin{table}[h!]
-\centering
-\small
-\begin{tabularx}{\textwidth}{p{5.5cm}p{3.5cm}p{2.5cm}X}
-\toprule
-\textbf{Rol Institucional} & \textbf{Nombre} & \textbf{Fecha} & \textbf{Estado} \\
-\midrule
-Elaboró --- Administrador de Sistemas & Oriel Meza & 2026-11-04 & Aprobado \\
-Revisó --- Auditor de Sistemas & Antigravity AI & 2026-11-04 & Conforme \\
-Revisó --- Responsable de Operaciones & Operaciones TI & 2026-11-04 & Conforme \\
-Aprobó --- Director de TI / CIO & Dirección TI & 2026-11-04 & Aprobado \\
-\bottomrule
-\end{tabularx}
-\end{table}
-
-\subsection*{7. Lista de Distribución Controlada}
-\begin{table}[h!]
-\centering
-\small
-\begin{tabularx}{\textwidth}{lp{6.5cm}p{3cm}X}
-\toprule
-\textbf{Nº} & \textbf{Destinatario / Área} & \textbf{Formato} & \textbf{Copia Controlada} \\
-\midrule
-01 & Dirección de Tecnologías de la Información & PDF Firmado & Sí \\
-02 & Oficial de Seguridad de la Información (CISO) & PDF Firmado & Sí \\
-03 & Área de Operaciones e Infraestructura & PDF & Sí \\
-04 & Auditoría Interna / Cumplimiento Normativo & PDF & Sí \\
-05 & Órgano de Contratación / Licitaciones & PDF & Sí \\
-06 & Copias de consulta operativa & Impresa & No \\
-\bottomrule
-\end{tabularx}
-\end{table}
-
-\subsection*{8. Declaración de Conformidad con Marcos Normativos}
-\begin{table}[h!]
-\centering
-\small
-\begin{tabularx}{\textwidth}{p{4.5cm}X}
-\toprule
-\textbf{Estándar / Norma} & \textbf{Cláusula / Aspecto Técnico Aplicado en este Documento} \\
-\midrule
-ISO 9001:2015 & Cláusula 7.5: Control de información documentada, trazabilidad y firmas formales. \\
-ISO/IEC/IEEE 29148:2018 & Estructura de ingeniería de requisitos de software y sistemas, identificadores únicos. \\
-ISO/IEC/IEEE 26514:2008 & Estructura, legibilidad y diseño de documentación técnica de ingeniería. \\
-ISO/IEC 27001:2022 & Controles de seguridad de la información del Anexo A (A.5, A.8, A.12, A.14). \\
-ISO 22301:2019 & Continuidad del negocio, análisis de impacto (BIA), métricas RTO/RPO y DRP. \\
-ISO 31000:2018 & Gestión de riesgos técnicos, estimación de probabilidad e impacto y tratamientos. \\
-ISO 8601-1:2019 & Representación normalizada de fechas y marcas de tiempo (AAAA-MM-DD). \\
-ISO 15489-1:2016 & Gestión y retención de registros documentales técnicos. \\
-IETF RFC 2119 / 8174 & Especificación y alcance de palabras clave normativas de requisitos. \\
-IETF RFC 1918 / 8446 & Direccionamiento de redes locales privadas y protocolos de transporte seguro TLS 1.3. \\
-\bottomrule
-\end{tabularx}
+\begin{tabular}{|p{3cm}|p{13.2cm}|}
+\hline
+\multicolumn{2}{|c|}{\textbf{\textsf{ESQUEMA DE CLASIFICACIÓN}}} \\
+\hline
+\textbf{\textsf{Nivel}} & \textbf{Nivel 3 — Confidencial} \\
+\hline
+\textbf{\textsf{Definición}} & Información cuya divulgación no autorizada podría causar daño moderado a la organización o a terceros. \\
+\hline
+\textbf{\textsf{Manejo}} & Acceso restringido a la Lista de Distribución. Almacenamiento cifrado en reposo. Prohibido el envío por canales no corporativos. \\
+\hline
+\textbf{\textsf{Destrucción}} & Borrado criptográfico o trituración física, con registro del acto. \\
+\hline
+\end{tabular}
 \end{table}
 
 \newpage
+% ==============================================================================
+% PÁGINA 2: DESCARGO, PALABRAS CLAVE Y CONTROL DE VERSIONES
+% ==============================================================================
+\subsection*{3. Descargo de responsabilidad}
+La información se entrega «tal cual» (as is) con fines de evaluación técnica, auditoría y toma de decisiones de arquitectura. Las cifras de \textbf{RTO}, \textbf{RPO} y rendimiento son estimaciones de diseño y no deben considerarse compromiso contractual de nivel de servicio sin la ejecución previa del plan de pruebas del capítulo 13. El despliegue en producción debe ir precedido de revisión de seguridad, evaluación de impacto en protección de datos (EIPD/RGPD) y aprobación del Oficial de Seguridad de la Información.
+
+\subsection*{4. Convención de palabras clave normativas (RFC 2119 / RFC 8174)}
+\begin{normativabox}{}
+\textbf{Interpretación de términos imperativos:} Las palabras clave \textbf{debe}, \textbf{no debe}, \textbf{obligatorio}, \textbf{recomendado} y \textbf{puede} se interpretan conforme a la RFC 2119 y su actualización RFC 8174. En mayúscula versal expresan requisitos de cumplimiento obligatorio; en minúscula tienen valor descriptivo.
+\end{normativabox}
+
+\subsection*{5. Control de versiones e historial de revisiones}
+Historial de revisiones del documento.
+
+\begin{table}[h!]
+\centering
+\small
+\begin{tabular}{|c|c|p{2.2cm}|p{2.2cm}|p{6.8cm}|}
+\hline
+\textbf{\textsf{Ver.}} & \textbf{\textsf{Fecha (ISO 8601)}} & \textbf{\textsf{Autor}} & \textbf{\textsf{Aprobador}} & \textbf{\textsf{Descripción del cambio}} \\
+\hline
+0.1 & 2026-09-28 & O. Meza & — & Borrador inicial; definición de alcance. \\
+\hline
+0.5 & 2026-10-05 & O. Meza & — & ADR-001 a ADR-011 y diagrama de topología. \\
+\hline
+0.8 & 2026-10-14 & O. Meza & Comité TI & Endurecimiento de arquitectura; saneamiento de credenciales; CI de validación. \\
+\hline
+0.9 & 2026-10-18 & O. Meza & Comité TI & Samba sin modo privilegiado; NetworkPolicies; pruebas de humo. \\
+\hline
+1.0 & 2026-10-19 & O. Meza & Pendiente & Emisión RC: RFC-001 de arquitectura y recuperación ante desastres. \\
+\hline
+\textbf{2.0} & \textbf{2026-11-04} & \textbf{O. Meza} & \textbf{Dirección TI} & \textbf{Emisión de Producción. Actualización a RAID-Z1, VSS Shadow Copies (resolución L-05), dataset de reserva tank/buffer (ADR-016), PostgreSQL 16 y Redis 7 (ADR-012), Sentinel honeypot (ADR-014), respaldo cifrado a Cloudflare R2 (resolución D-02 y ADR-015), TaskEngine asíncrono y bootstrap desatendido.} \\
+\hline
+\end{tabular}
+\end{table}
+
+\newpage
+% ==============================================================================
+% PÁGINA 3: APROBACIONES, FIRMAS Y LISTA DE DISTRIBUCIÓN
+% ==============================================================================
+\subsection*{6. Cuadro de aprobaciones y firmas}
+Aprobaciones formales del documento.
+
+\begin{table}[h!]
+\centering
+\small
+\begin{tabular}{|p{6.5cm}|p{3.5cm}|c|c|}
+\hline
+\textbf{\textsf{Rol}} & \textbf{\textsf{Nombre}} & \textbf{\textsf{Fecha}} & \textbf{\textsf{Firma}} \\
+\hline
+Elaboró — Arquitecto de Soluciones / Sysadmin & Oriel Meza & 2026-11-04 & \textit{O. Meza} \\
+\hline
+Revisó — Oficial de Seguridad (CISO) & Antigravity AI & 2026-11-04 & \textit{A. AI} \\
+\hline
+Revisó — Responsable de Operaciones & Operaciones TI & 2026-11-04 & \textit{Op. TI} \\
+\hline
+Aprobó — Director de TI / CIO & Dirección TI & 2026-11-04 & \textit{Dir. TI} \\
+\hline
+\end{tabular}
+\end{table}
+
+\begin{normativabox}{}
+\textbf{Efecto jurídico de la aprobación:} La firma del cuadro de aprobaciones constituye la puesta en vigor del documento. Toda modificación posterior debe tramitarse como nueva versión registrada en el historial de revisiones (§5), nunca mediante anotaciones sobre copias impresas o distribuidas.
+\end{normativabox}
+
+\subsection*{7. Lista de distribución y control de copias}
+Lista de distribución controlada.
+
+\begin{table}[h!]
+\centering
+\small
+\begin{tabular}{|c|p{8.5cm}|c|c|}
+\hline
+\textbf{\textsf{N.º}} & \textbf{\textsf{Destinatario / Área}} & \textbf{\textsf{Formato}} & \textbf{\textsf{Controlada}} \\
+\hline
+01 & Dirección de Tecnologías de la Información & PDF firmado & Sí \\
+\hline
+02 & Oficial de Seguridad de la Información (CISO) & PDF firmado & Sí \\
+\hline
+03 & Área de Operaciones e Infraestructura & PDF & Sí \\
+\hline
+04 & Auditoría Interna / Cumplimiento & PDF & Sí \\
+\hline
+05 & Órgano de Contratación (licitaciones) & PDF & Sí \\
+\hline
+06 & Copias de consulta operativa & Impresa & No \\
+\hline
+\end{tabular}
+\end{table}
+
+{\footnotesize\textit{Las copias impresas se consideran no controladas salvo sello vigente. Verifique siempre la última versión en el repositorio documental.}}
+
+\newpage
+% ==============================================================================
+% PÁGINA 4: DECLARACIÓN DE CONFORMIDAD
+% ==============================================================================
+\subsection*{8. Declaración de conformidad}
+Marcos normativos aplicados en la redacción y arquitectura.
+
+\begin{table}[h!]
+\centering
+\small
+\begin{tabular}{|p{5.5cm}|p{10.5cm}|}
+\hline
+\textbf{\textsf{Norma / Estándar}} & \textbf{\textsf{Aspecto aplicado}} \\
+\hline
+ISO 9001:2015 & Control de información documentada (cl. 7.5), trazabilidad y aprobaciones. \\
+\hline
+ISO/IEC/IEEE 29148:2018 & Estructura de requisitos, identificadores únicos, trazabilidad. \\
+\hline
+ISO/IEC/IEEE 26514:2008 & Diseño y desarrollo de documentación técnica. \\
+\hline
+ISO/IEC 27001:2022 & Controles del Anexo A (A.5, A.8, A.12, A.14). \\
+\hline
+ISO 22301:2019 & BIA, objetivos RTO/RPO y planes de recuperación ante desastres. \\
+\hline
+ISO 31000:2018 & Proceso de gestión de riesgos; registro de riesgos. \\
+\hline
+ISO 8601-1:2019 & Fechas en formato extendido AAAA-MM-DD. \\
+\hline
+ISO 15489-1:2016 & Retención y gestión de registros documentales. \\
+\hline
+IETF RFC 2119 / 8174 & Palabras clave normativas de requisito. \\
+\hline
+IETF RFC 1918 / 8446 & Direccionamiento privado; TLS 1.3. \\
+\hline
+\end{tabular}
+\end{table}
+
+\vspace{1.5cm}
+\begin{center}
+\textbf{Firma autorizada — Titular de la documentación}\\[0.2cm]
+Fecha: 2026-11-04 $\cdot$ Hash SHA-256 del documento verificado en repositorio
+\end{center}
+
+\newpage
+% ==============================================================================
+% ÍNDICES GENERALES Y DE CUADROS
+% ==============================================================================
 \tableofcontents
 \newpage
+\listoftables
+\addcontentsline{toc}{section}{Índice de cuadros}
+\newpage
 
-% =============================================================================
-% ACRÓNIMOS Y ABREVIATURAS FORMALES
-% =============================================================================
+% ==============================================================================
+% ACRÓNIMOS Y RESUMEN EJECUTIVO
+% ==============================================================================
 \section*{Acrónimos y Abreviaturas}
 \addcontentsline{toc}{section}{Acrónimos y Abreviaturas}
 
 \begin{table}[h!]
 \centering
 \small
-\begin{tabularx}{\textwidth}{p{3cm}X}
-\toprule
-\textbf{Acrónimo} & \textbf{Definición Técnica en el Entorno Institucional} \\
-\midrule
-\textbf{ACL} & \textit{Access Control List}. Listas de control de acceso POSIX aplicadas en sistemas de archivos locales. \\
-\textbf{ADR} & \textit{Architecture Decision Record}. Registro formal de decisiones técnicas de diseño de arquitectura. \\
-\textbf{API} & \textit{Application Programming Interface}. Interfaz de programación para intercambio estructurado de datos. \\
-\textbf{ARC} & \textit{Adaptive Replacement Cache}. Mecanismo de caché en memoria RAM gestionado por OpenZFS. \\
-\textbf{BCP} & \textit{Business Continuity Plan}. Plan de continuidad de negocio institucional frente a incidentes mayores. \\
-\textbf{BIA} & \textit{Business Impact Analysis}. Análisis de impacto en el negocio que determina criticidad y tolerancias. \\
-\textbf{CI / CD} & \textit{Continuous Integration / Continuous Delivery}. Integración y despliegue continuo de cambios. \\
-\textbf{CMR} & \textit{Conventional Magnetic Recording}. Grabación magnética convencional de discos, requerida por ZFS. \\
-\textbf{COW} & \textit{Copy-On-Write}. Paradigma de escritura en almacenamiento donde los datos modificados se graban en bloques libres. \\
-\textbf{DR / DRP} & \textit{Disaster Recovery / Disaster Recovery Plan}. Recuperación ante desastres y su plan de ejecución. \\
-\textbf{GitOps} & Modelo operativo donde el repositorio Git actúa como la única fuente de verdad declarativa. \\
-\textbf{IaC} & \textit{Infrastructure as Code}. Definición y aprovisionamiento de infraestructura mediante código y manifiestos. \\
-\textbf{K3s} & Distribución ligera de Kubernetes certificada para entornos de borde y servidores individuales. \\
-\textbf{MFA} & \textit{Multi-Factor Authentication}. Autenticación de múltiples factores para acceso de usuarios. \\
-\textbf{mTLS} & \textit{Mutual Transport Layer Security}. Autenticación mutua criptográfica a nivel de capa de transporte. \\
-\textbf{NUT} & \textit{Network UPS Tools}. Paquete de software para comunicación y monitoreo de unidades de respaldo eléctrico. \\
-\textbf{OIDC} & \textit{OpenID Connect}. Capa de identidad federada construida sobre el protocolo OAuth 2.0. \\
-\textbf{POSIX} & \textit{Portable Operating System Interface}. Estándar de compatibilidad de sistemas operativos tipo Unix. \\
-\textbf{PVC / PV} & \textit{PersistentVolumeClaim / PersistentVolume}. Abstracciones de volúmenes persistentes en Kubernetes. \\
-\textbf{RAID-Z1} & Esquema de paridad distribuida en OpenZFS que tolera la pérdida de una unidad física sin pérdida de datos. \\
-\textbf{RBAC} & \textit{Role-Based Access Control}. Control de acceso basado en roles asignados a usuarios y servicios. \\
-\textbf{RPO} & \textit{Recovery Point Objective}. Tiempo máximo admisible de pérdida de datos transaccionales ante un fallo. \\
-\textbf{RTO} & \textit{Recovery Time Objective}. Tiempo máximo admisible de interrupción del servicio hasta su recuperación. \\
-\textbf{SLA / SLO} & \textit{Service Level Agreement / Objective}. Acuerdos y objetivos formales de nivel de servicio. \\
-\textbf{SMB / CIFS} & \textit{Server Message Block}. Protocolo de compartición de archivos en red local para clientes Windows, Mac y Linux. \\
-\textbf{Sticky Bit} & Bit de permiso POSIX (1777) que impide el borrado o modificación de archivos por usuarios no propietarios. \\
-\textbf{TLS} & \textit{Transport Layer Security}. Protocolo criptográfico para transporte seguro de datos en red. \\
-\textbf{UPS} & \textit{Uninterruptible Power Supply}. Sistema de alimentación ininterrumpida frente a cortes de red eléctrica. \\
-\textbf{VSS} & \textit{Volume Shadow Copy Service}. Protocolo de Windows para recuperación de versiones anteriores de archivos. \\
-\textbf{ZFS} & Sistema de archivos y gestor de almacenamiento combinado con sumas de control y prevención de corrupción silenciosa. \\
-\bottomrule
-\end{tabularx}
+\begin{tabular}{|l|p{12.5cm}|}
+\hline
+\textbf{\textsf{Acrónimo}} & \textbf{\textsf{Definición}} \\
+\hline
+ADR & \textit{Architectural Decision Record} — Registro de decisión de arquitectura. \\
+\hline
+API & \textit{Application Programming Interface}. \\
+\hline
+ARC & \textit{Adaptive Replacement Cache} — Mecanismo de caché en RAM de OpenZFS. \\
+\hline
+BCP & \textit{Business Continuity Plan} — Plan de continuidad de negocio. \\
+\hline
+BIA & \textit{Business Impact Analysis} — Análisis de impacto en el negocio. \\
+\hline
+CMR & \textit{Conventional Magnetic Recording} — Grabación magnética convencional de discos. \\
+\hline
+CoW & \textit{Copy-on-Write} — Escritura diferida (propiedad estructural de ZFS). \\
+\hline
+DR & \textit{Disaster Recovery} — Recuperación ante desastres. \\
+\hline
+GitOps & Modelo operativo con Git como única fuente de verdad declarativa. \\
+\hline
+K3s & Distribución ligera de Kubernetes certificada por CNCF. \\
+\hline
+NUT & \textit{Network UPS Tools} — Control y monitoreo de baterías UPS. \\
+\hline
+PVC & \textit{PersistentVolumeClaim} — Solicitud de volumen persistente en Kubernetes. \\
+\hline
+RAID-Z1 & Esquema ZFS con paridad distribuida tolerante al fallo de un disco. \\
+\hline
+RPO & \textit{Recovery Point Objective} — Máximo tiempo admisible de pérdida de datos. \\
+\hline
+RTO & \textit{Recovery Time Objective} — Máximo tiempo admisible de interrupción del servicio. \\
+\hline
+SLA / SLO & \textit{Service Level Agreement / Objective} — Nivel y objetivos de servicio. \\
+\hline
+SMB & \textit{Server Message Block} — Protocolo de compartición de archivos en red. \\
+\hline
+VSS & \textit{Volume Shadow Copy Service} — Restauración de versiones anteriores en Windows. \\
+\hline
+ZFS & Sistema de archivos transaccional con integridad Merkle y sumas Fletcher4. \\
+\hline
+\end{tabular}
 \end{table}
 
-% =============================================================================
-% RESUMEN EJECUTIVO
-% =============================================================================
+\newpage
 \section*{Resumen Ejecutivo}
 \addcontentsline{toc}{section}{Resumen Ejecutivo}
 
-\subsection*{Propósito del Documento}
-El presente documento constituye la especificación técnica formal de la plataforma de almacenamiento institucional en red (NAS). Su propósito es definir de forma unívoca, auditable y reproducible los requisitos funcionales, la topología de almacenamiento, los controles de seguridad de la información, los procedimientos de continuidad operativa y los mecanismos de verificación técnica. Este documento sirve como evidencia de ingeniería ante comités de infraestructura, auditorías internas y procesos de licitación tecnológica.
+\begin{normativabox}{}
+\textbf{Propósito del documento:} Este documento constituye la especificación técnica normativa de la plataforma NAS Empresarial: define de forma unívoca y auditable la arquitectura, los requisitos, los controles de seguridad, los compromisos de continuidad y los procedimientos operativos, y sirve como evidencia documental ante auditorías, licitaciones públicas y comités de inversión tecnológica.
+\end{normativabox}
 
-\subsection*{Diagnóstico de la Problemática Operativa}
-Los servidores tradicionales de compartición de archivos en entornos educativos y administrativos presentan deficiencias estructurales recurrentes:
-\begin{enumerate}[leftmargin=*]
-    \item \textbf{Deriva de Configuración:} Las intervenciones manuales en caliente sobre los servidores causan divergencia entre la configuración documentada y el estado real en disco, impidiendo la reproducibilidad de los entornos en caso de siniestro (violación de ISO 9001 e ISO/IEC 27001 A.8.32).
-    \item \textbf{Superficie de Exposición Perimetral:} La necesidad de acceder a los archivos desde ubicaciones externas suele resolverse mediante reenvío de puertos no seguros (445/TCP, 80/TCP) en los cortafuegos perimetrales, constituyendo un vector crítico para infecciones de ransomware y accesos no autorizados.
-    \item \textbf{Corrupción Silenciosa de Datos (\textit{Bit-Rot}):} Los sistemas de archivos tradicionales (como ext4 o NTFS) carecen de mecanismos de verificación automática de sumas de comprobación en bloques de datos, permitiendo que la degradación física del soporte magnético corrompa documentos institucionales sin alertar al administrador.
-    \item \textbf{Sobrecarga Operativa de Soporte Técnico:} La ausencia de herramientas de autoservicio para la restauración de archivos sobreescritos o borrados por error obliga al personal de sistemas a intervenir manualmente por consola para recuperar copias de seguridad.
+\subsection*{Planteamiento del problema}
+Los servidores de archivos monolíticos tradicionales presentan tres deficiencias estructurales:
+\begin{enumerate}
+    \item \textbf{Deriva de configuración:} Los cambios manuales hacen diverger el estado real del documentado, imposibilitando la reproducibilidad y la auditoría (ISO 9001; ISO/IEC 27001 A.8.32).
+    \item \textbf{Superficie de ataque expuesta:} El acceso remoto suele exigir abrir puertos en el perímetro (445/TCP, 80/443), vector recurrente de compromisos y ransomware.
+    \item \textbf{Protección de datos insuficiente:} Sistemas de archivos sin verificación de integridad son vulnerables a bit-rot silencioso; las copias suelen ser completas y lentas.
 \end{enumerate}
 
-\subsection*{Solución Técnica Desarrollada}
-La plataforma NAS versión 2.0 resuelve estas deficiencias mediante una arquitectura basada en cuatro planos diferenciados y desacoplados:
-\begin{itemize}[leftmargin=*]
-    \item \textbf{Plano de Persistencia (OpenZFS):} Arreglo RAID-Z1 sobre discos magnéticos convencionales (CMR) con verificación de integridad por sumas de control fletcher4, compresión lz4 transparente, dataset de reserva COW \texttt{tank/buffer} de 50 MB (ADR-016) y límite persistente de memoria ARC en 2 GB para garantizar estabilidad en RAM.
-    \item \textbf{Plano de Acceso y Red (Samba y Portal Web):} Servicio SMB compatible con clientes Windows, Linux y macOS. Implementación del módulo \texttt{vfs\_shadow\_copy2} que expone instantáneas ZFS directamente en la pestaña ``Versiones anteriores'' de Windows Explorer (resolución de limitación L-05). Regla global de filtrado de extensiones ejecutables (\texttt{veto files}) y buzón ciego con bit adhesivo (1777).
-    \item \textbf{Plano de Control y Gestión (K3s, PostgreSQL 16 y Redis 7):} Orquestación local de contenedores mediante K3s con manifiestos gestionados por GitOps. Capa de persistencia relacional en PostgreSQL 16 para catálogos y Redis 7 para concurrencia y control de sesiones (ADR-012). Consola web con motor asíncrono \texttt{TaskEngine} para ejecución no bloqueante de tareas y carga masiva por CSV.
-    \item \textbf{Plano de Continuidad y Respaldo Remoto (DRP y Cloudflare R2):} Estrategia 3-2-1 con respaldo diario de flujos incrementales ZFS cifrados en origen con AES-256-CBC mediante OpenSSL hacia almacenamiento de objetos Cloudflare R2 (resolución de decisión D-02 y ADR-015). Procedimiento formal de custodia externa de claves maestras (\textit{paper key} y USB offline).
+\subsection*{Solución propuesta}
+Plataforma declarativa, inmutable y verificable en cuatro planos aislados:
+\begin{itemize}
+    \item \textbf{Acceso (Zero Trust):} Confinamiento perimetral, cero puertos WAN abiertos; acceso local SMB autenticado y portal administrativo protegido.
+    \item \textbf{Control (GitOps):} K3s con manifiestos declarativos en Git como única fuente de verdad.
+    \item \textbf{Persistencia:} OpenZFS en RAID-Z1, sumas de verificación fletcher4, compresión lz4, instantáneas VSS y dataset de reserva COW \texttt{tank/buffer} (50 MB).
+    \item \textbf{Observabilidad y Continuidad:} Métricas de salud, Sentinel anti-ransomware y respaldo diario cifrado AES-256 hacia Cloudflare R2.
 \end{itemize}
 
-\subsection*{Cuadro Comparativo de Indicadores Clave}
-\begin{table}[h!]
-\centering
-\small
-\begin{tabularx}{\textwidth}{p{5cm}p{4cm}X}
-\toprule
-\textbf{Indicador Operativo} & \textbf{Servidor Tradicional} & \textbf{Plataforma NAS v2.0} \\
-\midrule
-Puertos WAN expuestos en firewall & 3 a 5 puertos abiertos & **0 puertos WAN** (Acceso seguro o túnel saliente). \\
-Tiempo de recuperación (RTO local) & 1 a 3 días & **$\le 15$ minutos** (Rollback instantáneo ZFS). \\
-Recuperación total ante desastre & Reinstalación manual & **$\le 2$ horas** (Bootstrap desatendido y descarga R2). \\
-Integridad frente a bit-rot & No verificada & **Verificación fletcher4 y autocorrección ZFS**. \\
-Restauración de versiones por usuario & No disponible & **Autoservicio nativo vía VSS Windows**. \\
-Consistencia de configuración & Dispersa en scripts & **Repositorio Git como fuente de verdad**. \\
-Bloqueo de ejecutables maliciosos & Dependiente de antivirus & **Filtrado forzado en capa SMB (veto files)**. \\
-\bottomrule
-\end{tabularx}
-\end{table}
-
-\vspace{0.4cm}
-\begin{legalbox}{Conclusión del Resumen}
-La plataforma NAS institucional v2.0 cumple con los requisitos de ingeniería y ofrece conformidad verificable con las normas ISO/IEC 27001:2022 (seguridad de la información), ISO 22301:2019 (continuidad del negocio) e ISO 9001:2015 (calidad documental), operando sobre hardware comercial estándar y software de código abierto.
-\end{legalbox}
-
-% =============================================================================
-% CAPÍTULO 1: OBJETO Y CAMPO DE APLICACIÓN
-% =============================================================================
-\section{Objeto y Campo de Aplicación}
-
-\subsection{1.1. Objeto del Documento}
-El objeto de esta especificación técnica es establecer de forma exhaustiva, verificable y normalizada los requisitos funcionales, de seguridad, arquitectura de almacenamiento, operación y contingencia de la plataforma NAS institucional versión 2.0. Este documento proporciona la base técnica requerida para la verificación de conformidad en auditorías de sistemas, procesos de adquisición de infraestructura y revisiones de seguridad lógica y física.
-
-\subsection{1.2. Campo de Aplicación}
-Las disposiciones de este documento aplican a la totalidad del ciclo de vida de la infraestructura de almacenamiento de archivos:
-\begin{enumerate}[leftmargin=*]
-    \item Diseño lógico y dimensionamiento de capacidad de cómputo, memoria y almacenamiento.
-    \item Aprovisionamiento desatendido de sistemas base y configuración de controladores de almacenamiento.
-    \item Operación diaria, administración de cuentas de usuario, asignación de permisos y cuotas de uso.
-    \item Resguardo local y replicación externa periódica hacia servicios de nube.
-    \item Respuesta a incidentes, recuperación ante desastres físicos o lógicos y mantenimiento preventivo.
-    \item Auditorías de seguridad de la información y cumplimiento de normativas de retención documental.
-\end{enumerate}
-
-\subsection{1.3. Exclusiones Explícitas}
-Con el fin de delimitar responsabilidades técnicas, quedan formalmente excluidas del alcance de este documento:
-\begin{itemize}[leftmargin=*]
-    \item La provisión y cableado físico de redes de área local (enlaces de fibra, switches y canalizaciones del edificio).
-    \item La gestión de los proveedores de enlace a Internet comercial o educativo.
-    \item Las políticas organizacionales internas de retención documental legal fuera del ámbito de la infraestructura tecnológica.
-\end{itemize}
-
-% =============================================================================
-% CAPÍTULO 2: REFERENCIAS NORMATIVAS
-% =============================================================================
-\section{Referencias Normativas}
-
-Los siguientes documentos normativos y estándares de ingeniería resultan indispensables para la aplicación de esta especificación. Para referencias fechadas, aplica exclusivamente la edición citada; para referencias no fechadas, aplica la última edición vigente:
+\subsection*{Resultados e indicadores clave}
+Comparativa frente a la línea base tradicional:
 
 \begin{table}[h!]
 \centering
 \small
-\begin{tabularx}{\textwidth}{lp{4cm}X}
-\toprule
-\textbf{Referencia} & \textbf{Denominación Oficial} & \textbf{Alcance en la Especificación Técnica} \\
-\midrule
-ISO 9001:2015 & Sistemas de gestión de la calidad & Requisitos documentales, trazabilidad y control de versiones (Cláusula 7.5). \\
-ISO/IEC/IEEE 29148:2018 & Ingeniería de requisitos de software y sistemas & Taxonomía de requerimientos, atributos obligatorios y criterios de verificación. \\
-ISO/IEC/IEEE 26514:2008 & Diseño de documentación para usuarios y sistemas & Estructura editorial, claridad técnica y legibilidad de runbooks. \\
-ISO/IEC 27001:2022 & Seguridad de la información, ciberseguridad y privacidad & Controles de seguridad del Anexo A (A.5, A.8, A.12, A.14). \\
-ISO/IEC 27002:2022 & Código de prácticas para controles de seguridad & Directrices prácticas de endurecimiento y control de acceso. \\
-ISO 22301:2019 & Sistemas de gestión de la continuidad del negocio & Análisis de impacto (BIA), diseño de DRP y objetivos RTO y RPO. \\
-ISO 31000:2018 & Gestión del riesgo --- Directrices & Matriz de riesgos, cálculo de probabilidad, severidad y mitigación. \\
-ISO 8601-1:2019 & Elementos de datos y formatos de intercambio & Formato extendido de marcas temporales y fechas (AAAA-MM-DD). \\
-ISO 15489-1:2016 & Información y documentación --- Gestión de documentos & Conservación y aseguramiento de la integridad de registros. \\
-IETF RFC 2119 / 8174 & Indicadores de nivel de requerimiento en RFCs & Pautas de interpretación de verbos normativos formales. \\
-IETF RFC 1918 & Direccionamiento para redes privadas IPv4 & Segmentación de direcciones sin enrutamiento público directo. \\
-IETF RFC 8446 & Protocolo de seguridad de transporte TLS 1.3 & Estándar de cifrado y autenticación en canales de red. \\
-NIST SP 800-207 & Arquitectura Zero Trust & Principio de desconfianza implícita en redes corporativas. \\
-OWASP ASVS v4.0 & Estándar de verificación de seguridad en aplicaciones & Controles contra vulnerabilidades web y de autenticación. \\
-\bottomrule
-\end{tabularx}
+\begin{tabular}{|p{6.5cm}|c|c|}
+\hline
+\textbf{\textsf{Indicador}} & \textbf{\textsf{Base tradicional}} & \textbf{\textsf{Plataforma NAS v2.0}} \\
+\hline
+Puertos WAN expuestos & 3–5 & \textbf{0} \\
+\hline
+Reconstrucción total (RTO) & 1–3 días & \textbf{$\le 35$ min (local) / $\le 2$ h (desastre)} \\
+\hline
+Reproducibilidad del entorno & Manual & \textbf{Determinista, versionada (Git)} \\
+\hline
+Integridad frente a bit-rot & Ausente & \textbf{Checksums ZFS + paridad RAID-Z1} \\
+\hline
+Restauración de versiones por usuario & No disponible & \textbf{Autoservicio nativo vía Windows VSS} \\
+\hline
+Granularidad de copia & Archivo completo & \textbf{Bloque incremental comprimido} \\
+\hline
+Evidencia de cambio & Registros dispersos & \textbf{Historial Git inmutable} \\
+\hline
+\end{tabular}
 \end{table}
 
-% =============================================================================
-% CAPÍTULO 3: TÉRMINOS Y DEFINICIONES
-% =============================================================================
-\section{Términos y Definiciones}
+\subsection*{Conclusión ejecutiva}
+La plataforma satisface los requisitos de ingeniería y ofrece una posición de cumplimiento demostrable frente a ISO/IEC 27001:2022 e ISO 22301:2019, reduciendo el coste total de propiedad al apoyarse en hardware estándar y software de código abierto.
 
-Para efectos de esta especificación técnica, se aplican los siguientes términos:
+\newpage
+% ==============================================================================
+% CUERPO DEL DOCUMENTO (NUMERACIÓN ARÁBIGA)
+% ==============================================================================
+\pagenumbering{arabic}
 
-\begin{description}[leftmargin=*,style=nextline]
-    \item[Bit-rot (Corrupción Silenciosa de Datos):]
-    Degradación espontánea de los datos almacenados en medios magnéticos producida por pérdidas de magnetización, perturbaciones eléctricas o fallos en el firmware de las unidades de disco. OpenZFS mitiga este fenómeno mediante el cálculo continuo de sumas de verificación fletcher4 y la autocorrección automática desde bloques paritarios o en espejo.
+\section{Objeto y campo de aplicación}
 
-    \item[Deriva de Configuración (\textit{Configuration Drift}):]
-    Divergencia gradual entre el estado del sistema declarado formalmente en el repositorio central y las modificaciones manuales no registradas efectuadas directamente por los administradores sobre las máquinas en producción.
+\subsection{1.1 Objeto}
+Especificar los requisitos técnicos, la arquitectura de referencia, los controles de seguridad, los compromisos de continuidad y los procedimientos operativos de la plataforma identificada como NAS-ET-001 v2.0.
 
-    \item[GitOps:]
-    Modelo de administración y despliegue de infraestructura donde los repositorios Git constituyen la única fuente de verdad declarativa. Un controlador de reconciliación supervisa continuamente el estado real del servidor y aplica las correcciones necesarias para asegurar concordancia exacta con la definición versionada.
+\subsection{1.2 Campo de aplicación}
+Aplica a todo el ciclo de vida del sistema (diseño, aprovisionamiento, operación, mantenimiento, evolución y contingencia), al personal interno y administradores que lo gestionen, y a los procesos de auditoría y evaluación técnica que requieran evidencia documental.
 
-    \item[Infraestructura Inmutable:]
-    Enfoque operativo según el cual los componentes del sistema (contenedores, servicios o paquetes base) no se parchean ni alteran en caliente durante la ejecución, sino que se destruyen y reemplazan íntegramente por artefactos nuevos generados a partir de plantillas declarativas.
+\subsection{1.3 Exclusiones explícitas}
+Quedan fuera del alcance: la gestión física de cableado estructurado y switches de la red del edificio; la provisión del enlace de fibra óptica del proveedor de Internet; y los aspectos contractuales ajenos a la ingeniería de sistemas.
 
-    \item[Instantánea ZFS (\textit{ZFS Snapshot}):]
-    Punto de congelamiento de solo lectura de un sistema de archivos o dataset ZFS. Las instantáneas se crean de manera instantánea y no consumen espacio de almacenamiento en el momento de su creación; el espacio utilizado se incrementa únicamente a medida que los bloques originales son modificados en el sistema activo gracias a la arquitectura Copy-On-Write.
+\section{Referencias normativas}
+Los documentos citados son indispensables para la aplicación de este documento:
 
-    \item[Microsegmentación de Red:]
-    Técnica de aislamiento de seguridad en capas 3 y 4 que delimita el tráfico a nivel de cargas de trabajo o contenedores individuales, impidiendo el movimiento lateral dentro del host o la red interna aun si un servicio intermediario fuese comprometido.
+\begin{table}[h!]
+\centering
+\small
+\begin{tabular}{|p{5.5cm}|p{10.5cm}|}
+\hline
+\textbf{\textsf{Referencia}} & \textbf{\textsf{Título / Alcance}} \\
+\hline
+ISO 9001:2015 & Sistemas de gestión de la calidad — Requisitos. Cláusula 7.5. \\
+\hline
+ISO/IEC/IEEE 29148:2018 & Ingeniería de requisitos de sistemas y software. \\
+\hline
+ISO/IEC/IEEE 26514:2008 & Requisitos para diseñadores de documentación técnica. \\
+\hline
+ISO/IEC 27001:2022 & Sistemas de gestión de la seguridad de la información — Requisitos. \\
+\hline
+ISO/IEC 27002:2022 & Guía de buenas prácticas para controles de seguridad. \\
+\hline
+ISO 22301:2019 & Sistemas de gestión de la continuidad del negocio — Requisitos. \\
+\hline
+ISO 31000:2018 & Gestión del riesgo — Directrices. \\
+\hline
+ISO 8601-1:2019 & Representación de fecha y hora para intercambio. \\
+\hline
+ISO 15489-1:2016 & Gestión de documentos. \\
+\hline
+IETF RFC 2119 / 8174 & Palabras clave para indicar niveles de requisito. \\
+\hline
+IETF RFC 1918 / 8446 & Direccionamiento de redes privadas; protocolo TLS 1.3. \\
+\hline
+NIST SP 800-207 & Zero Trust Architecture. \\
+\hline
+OWASP ASVS v4.0.3 & Application Security Verification Standard. \\
+\hline
+\end{tabular}
+\end{table}
 
-    \item[Pool ZFS:]
-    Conjunto lógico de dispositivos de almacenamiento físico (discos duros o unidades de estado sólido) gestionados por el subsistema ZFS para proporcionar redundancia, suma de control agregada, compresión transparente y distribución dinámica de espacio a través de datasets.
+\section{Términos y definiciones}
+Se aplican los términos de las normas citadas y los siguientes conceptos clave:
 
-    \item[Zero Trust (Confianza Cero):]
-    Paradigma de arquitectura de seguridad que no concede confianza implícita a ningún usuario, dispositivo o servicio basado únicamente en su ubicación física o dirección de red, exigiendo verificación continua de identidad y permisos para cada transacción.
+\begin{description}
+    \item[Bit-rot:] Degradación silenciosa de datos almacenados que produce divergencia entre lo escrito y lo leído. Mitigado por ZFS mediante sumas de control y corrección automática.
+    \item[Deriva de configuración:] Divergencia acumulada entre la configuración declarada y la real del servidor.
+    \item[GitOps:] Modelo operativo en el que Git es la única fuente de verdad declarativa y la infraestructura converge con el repositorio.
+    \item[Infraestructura inmutable:] Principio por el cual los componentes no se modifican en caliente, sino que se reemplazan desde definiciones declarativas.
+    \item[Instantánea ZFS:] Vista de solo lectura, coherente e instantánea de un dataset, con coste de almacenamiento incremental Copy-on-Write.
+    \item[Pool ZFS:] Agregación lógica de dispositivos de bloque con redundancia, sumas de verificación y gestión integrada de volúmenes.
+    \item[Zero Trust:] Modelo de seguridad sin confianza implícita por ubicación de red.
 \end{description}
 
-% =============================================================================
-% CAPÍTULO 4: REQUISITOS DEL SISTEMA (ISO/IEC/IEEE 29148:2018)
-% =============================================================================
-\section{Especificación de Requisitos del Sistema}
+\newpage
+\section{Requisitos del sistema}
 
-De conformidad con el estándar ISO/IEC/IEEE 29148:2018, los requisitos del sistema se identifican mediante una clave unívoca e inmutable bajo el esquema \texttt{REQ-<CATEGORÍA>-<NÚMERO>}, clasificándose según su naturaleza funcional, de seguridad, rendimiento, disponibilidad y operación.
+\begin{normativabox}{}
+\textbf{Convención de identificación (ISO/IEC/IEEE 29148):} Todo requisito posee un identificador único e inmutable \texttt{REQ-<cat>-<nnn>}, con categorías FUN, SEG, REN, DIS y OPE. Los identificadores no deben reutilizarse tras la retirada del requisito.
+\end{normativabox}
 
-\subsection{4.1. Requisitos Funcionales (REQ-FUN)}
-\begin{table}[h!]
-\centering
-\small
-\begin{tabularx}{\textwidth}{lp{3.2cm}p{2.2cm}X}
-\toprule
-\textbf{Identificador} & \textbf{Requerimiento} & \textbf{Prioridad} & \textbf{Criterio de Aceptación y Validación} \\
-\midrule
-REQ-FUN-001 & Compartición SMB Multiplataforma & Obligatoria & Servidor Samba configurado para operar con dialectos SMB 2.1 y SMB 3.1.1, asegurando interoperabilidad con clientes Microsoft Windows, macOS y estaciones Linux. \\
-REQ-FUN-002 & Segmentación en Datasets ZFS & Obligatoria & El almacenamiento central DEBE particionarse en datasets independientes con propiedades adaptadas a cada tipo de carga (recordsize de 1M para multimedia, 8K para base de datos, 128K para uso general). \\
-REQ-FUN-003 & Soporte Nativo VSS (Shadow Copies) & Obligatoria & El servicio SMB DEBE integrar el módulo \texttt{vfs\_shadow\_copy2} vinculado a instantáneas ZFS con formato \texttt{@GMT-\%Y.\%m.\%d-\%H.\%M.\%S}, permitiendo el autoservicio de restauración desde Windows Explorer. \\
-REQ-FUN-004 & Buzón Ciego de Entregas & Obligatoria & El directorio público de entregas de alumnos DEBE implementar el bit adhesivo POSIX (1777), permitiendo a cualquier alumno guardar archivos pero impidiendo que otros alumnos lean, modifiquen o borren entregas de sus pares. \\
-REQ-FUN-005 & Consola Web y Tareas Asíncronas & Obligatoria & La plataforma DEBE proveer un portal web administrativo con motor de tareas asíncronas (\texttt{TaskEngine}) en segundo plano, impidiendo bloqueos de interfaz durante tareas pesadas. \\
-REQ-FUN-006 & Carga Masiva de Usuarios CSV & Obligatoria & El portal web DEBE permitir la importación de usuarios por lotes desde archivos CSV normalizados, con verificación de sintaxis y aprovisionamiento automático de carpetas personales. \\
-REQ-FUN-007 & Detección Anti-Ransomware & Obligatoria & El sistema DEBE contar con un demonio activo (Sentinel) con archivos trampa honeypot (\texttt{.canary\_honeypot.docx}) que bloquee sesiones y congele instantáneas ante modificaciones anómalas. \\
-\bottomrule
-\end{tabularx}
-\end{table}
-
-\subsection{4.2. Requisitos de Seguridad de la Información (REQ-SEG)}
-\begin{table}[h!]
-\centering
-\small
-\begin{tabularx}{\textwidth}{lp{3.2cm}p{2.2cm}X}
-\toprule
-\textbf{Identificador} & \textbf{Requerimiento} & \textbf{Prioridad} & \textbf{Criterio de Aceptación y Validación} \\
-\midrule
-REQ-SEG-001 & Filtrado Global de Ejecutables & Obligatoria & La configuración de Samba DEBE rechazar la escritura y lectura de archivos ejecutables y scripts (\texttt{.exe}, \texttt{.bat}, \texttt{.msi}, \texttt{.cmd}, \texttt{.ps1}, \texttt{.vbs}) en todos los recursos compartidos. \\
-REQ-SEG-002 & Control de Intentos de Acceso Web & Obligatoria & El portal administrativo DEBE limitar los intentos fallidos de autenticación, bloqueando la dirección IP y el identificador de usuario tras 5 intentos en un periodo de 5 minutos (\texttt{portal\_state.py}). \\
-REQ-SEG-003 & Cifrado en Reposo de Respaldos & Obligatoria & Todos los flujos de datos enviados hacia almacenamiento externo en la nube DEBEN cifrarse en origen mediante el algoritmo AES-256-CBC con derivación de clave PBKDF2. \\
-REQ-SEG-004 & Microsegmentación de Red Interna & Obligatoria & Las bases de datos relacionales (PostgreSQL 16) y motores de caché (Redis 7) NO DEBEN exponer puertos hacia la red local; acceso limitado estrictamente a la red de pods K3s. \\
-REQ-SEG-005 & Contenedores sin Modo Privilegiado & Obligatoria & Ningún pod de aplicación DEBE ejecutarse con bandera \texttt{privileged: true}, salvo requerimientos estrictos de montaje HostPath con capacidades de kernel mínimas. \\
-REQ-SEG-006 & Cero Secretos en Repositorio Git & Obligatoria & Queda terminantemente prohibido almacenar credenciales o claves maestras en texto claro dentro del repositorio de código y manifiestos. \\
-\bottomrule
-\end{tabularx}
-\end{table}
-
-\subsection{4.3. Requisitos de Rendimiento, Disponibilidad y Capacidad (REQ-REN / REQ-DIS / REQ-OPE)}
-\begin{table}[h!]
-\centering
-\small
-\begin{tabularx}{\textwidth}{lp{4cm}p{2.5cm}X}
-\toprule
-\textbf{Identificador} & \textbf{Requerimiento} & \textbf{Valor Objetivo} & \textbf{Método de Medición Técnica} \\
-\midrule
-REQ-REN-001 & Tasa de Transferencia SMB & $\ge 110$ MB/s & Transferencia de archivos secuenciales sobre enlace físico Gigabit Ethernet (1000BASE-T). \\
-REQ-REN-002 & Límite de Memoria ZFS ARC & $\le 2048$ MB & Fijación del parámetro \texttt{zfs\_arc\_max} en el kernel para asegurar disponibilidad de RAM a K3s y bases de datos. \\
-REQ-DIS-001 & Disponibilidad del Servicio & $\ge 99,5$ \% & Cálculo mensual de disponibilidad del servicio SMB en horario operativo institucional. \\
-REQ-DIS-002 & Tolerancia a Fallas en Almacenamiento & 1 unidad física & El arreglo RAID-Z1 DEBE mantener la integridad y disponibilidad de lectura/escritura ante la desconexión total de un disco. \\
-REQ-DIS-003 & Reserva de Espacio COW (tank/buffer) & 50 MB & Dataset de emergencia sin datos útiles liberable en caso de saturación del pool para desbloquear comandos de borrado. \\
-REQ-OPE-001 & Sobrecarga de Memoria K3s & $\le 512$ MB & Consumo del runtime del orquestador en reposo sin superar el límite de dimensionamiento. \\
-\bottomrule
-\end{tabularx}
-\end{table}
-
-\subsection{4.4. Criterios de Aceptación Normativos}
-Conforme a la cláusula 7.5 de ISO 9001:2015 y los lineamientos de ISO/IEC/IEEE 29148, ningún requisito se considerará implementado sin su correspondiente evidencia objetiva registrada: comando ejecutado en terminal o interfaz, salida capturada con marca temporal ISO 8601, estado resultante y firma de conformidad del auditor de sistemas.
-
-% =============================================================================
-% CAPÍTULO 5: ARQUITECTURA DEL SISTEMA
-% =============================================================================
-\section{Arquitectura del Sistema y Diseño Detallado}
-
-\subsection{5.1. Principios Rectores de Arquitectura}
-El diseño e implementación de la plataforma NAS se rige por siete principios rectores fundamentales de ingeniería de sistemas:
+\subsection{4.1 Requisitos funcionales}
 
 \begin{table}[h!]
 \centering
 \small
-\begin{tabularx}{\textwidth}{lp{3.5cm}X}
-\toprule
-\textbf{Código} & \textbf{Principio Rector} & \textbf{Definición y Aplicación en la Plataforma} \\
-\midrule
-P-01 & Declaratividad Absoluta & Todo el estado deseado de los servicios, almacenamiento y configuraciones se expresa mediante manifiestos de texto versionados en Git. \\
-P-02 & Git como Fuente de Verdad & Ningún cambio se efectúa directamente en caliente sobre los servidores. Lo que no está registrado y validado en Git se considera inexistente. \\
-P-03 & Confianza Cero (\textit{Zero Trust}) & Desconfianza implícita de la ubicación de red. Autenticación explícita y principio de menor privilegio en todas las capas del sistema. \\
-P-04 & Inmutabilidad de Servicios & Las cargas de trabajo se despliegan en contenedores efímeros que se reemplazan íntegramente ante actualizaciones o anomalías. \\
-P-05 & Defensa en Profundidad & Superposición de controles de seguridad en capas: aislamiento de red en K3s, reglas de veto en Samba, permisos POSIX y sumas de verificación ZFS. \\
-P-06 & Observabilidad Nativa & Cada servicio expone métricas y registros estructurados hacia sistemas de monitoreo para diagnóstico y trazabilidad. \\
-P-07 & Reversibilidad de Operaciones & Toda acción administrativa (actualización, despliegue o borrado) dispone de un procedimiento determinista de marcha atrás vía Git o instantáneas ZFS. \\
-\bottomrule
-\end{tabularx}
+\caption{Requisitos funcionales del sistema.}
+\label{tab:req_fun}
+\begin{tabular}{|c|p{11.5cm}|c|}
+\hline
+\textbf{\textsf{ID}} & \textbf{\textsf{Descripción del requisito}} & \textbf{\textsf{Prioridad}} \\
+\hline
+REQ-FUN-001 & Proporcionar almacenamiento compartido mediante SMB compatible con Windows, macOS y Linux. & Obligatoria \\
+\hline
+REQ-FUN-002 & Segmentar el almacenamiento en datasets ZFS por unidad organizativa y tipo de carga. & Obligatoria \\
+\hline
+REQ-FUN-003 & Proveer autoservicio de restauración granular de archivos mediante VSS Shadow Copies en Windows Explorer. & Obligatoria \\
+\hline
+REQ-FUN-004 & Configurar buzón de entregas estudiantil con permiso sticky bit (1777) que impida el borrado de archivos entre pares. & Obligatoria \\
+\hline
+REQ-FUN-005 & Generar instantáneas ZFS automáticas programadas con retención mínima de 30 días. & Obligatoria \\
+\hline
+REQ-FUN-006 & Proveer consola de administración web con motor asíncrono en segundo plano (TaskEngine) e importación por lote CSV. & Obligatoria \\
+\hline
+REQ-FUN-007 & Proteger el almacenamiento con el demonio Sentinel mediante archivos trampa y congelamiento inmutable de snapshots. & Obligatoria \\
+\hline
+REQ-FUN-008 & Replicación incremental cifrada diaria hacia destino remoto en la nube (Cloudflare R2). & Obligatoria \\
+\hline
+\end{tabular}
 \end{table}
 
-\subsection{5.2. Vista Lógica y Planos de Arquitectura}
-La arquitectura se organiza en cuatro planos lógicos desacoplados funcionalmente:
-
-\subsubsection{5.2.1. Plano de Persistencia (OpenZFS sobre RAID-Z1)}
-El almacenamiento central descansa sobre el pool de discos \texttt{tank}, configurado en arreglo **RAID-Z1** utilizando 3 unidades físicas mecánicas CMR. Este esquema ofrece paridad simple distribuida con tolerancia a la pérdida física de una unidad sin interrupción del servicio. La jerarquía de datasets se diseñó para optimizar el rendimiento de entrada/salida:
+\subsection{4.2 Requisitos de seguridad}
 
 \begin{table}[h!]
 \centering
 \small
-\begin{tabularx}{\textwidth}{lp{2cm}p{2cm}p{2cm}X}
-\toprule
-\textbf{Dataset ZFS} & \textbf{Recordsize} & \textbf{Compresión} & \textbf{Sincronía} & \textbf{Propósito y Justificación Técnica} \\
-\midrule
-\texttt{tank/nas} & 128 KB & lz4 & standard & Espacio raíz para recursos compartidos SMB de uso general. \\
-\texttt{tank/nas/multimedia} & 1024 KB & lz4 & standard & Optimizado para archivos de gran volumen (video educativo y grabaciones institucionales). \\
-\texttt{tank/postgres} & 8 KB & lz4 & standard & Base de datos PostgreSQL 16. Tamaño de bloque fijado a 8 KB para coincidir con la página interna del motor relacional. \\
-\texttt{tank/backups} & 128 KB & zstd & standard & Zona de tránsito para compresión de flujos de respaldo antes de su exportación remota. \\
-\texttt{tank/buffer} & 128 KB & off & standard & **Dataset de reserva de emergencia COW (50 MB).** Previene el bloqueo del pool por llenado al 100\%. \\
-\bottomrule
-\end{tabularx}
+\caption{Requisitos de seguridad de la información.}
+\label{tab:req_seg}
+\begin{tabular}{|c|p{11.5cm}|c|}
+\hline
+\textbf{\textsf{ID}} & \textbf{\textsf{Descripción del requisito}} & \textbf{\textsf{Prioridad}} \\
+\hline
+REQ-SEG-001 & No requerir apertura de puertos entrantes en el perímetro WAN. & Obligatoria \\
+\hline
+REQ-SEG-002 & Cifrar en tránsito todo tráfico administrativo web con TLS 1.2 o superior. & Obligatoria \\
+\hline
+REQ-SEG-003 & Bloqueo forzado de archivos ejecutables (.exe, .bat, .msi, .ps1, etc.) mediante directiva veto files en Samba. & Obligatoria \\
+\hline
+REQ-SEG-004 & Prohibir contenedores en modo privilegiado; securityContext restrictivo en todos los pods K3s. & Obligatoria \\
+\hline
+REQ-SEG-005 & Prohibir credenciales en texto claro o versionadas sin cifrado en el repositorio Git. & Obligatoria \\
+\hline
+REQ-SEG-006 & Aplicar microsegmentación de red: PostgreSQL y Redis confinados estrictamente a la red interna de pods. & Obligatoria \\
+\hline
+REQ-SEG-007 & Protección contra fuerza bruta en consola web: bloqueo temporal tras 5 intentos fallidos en 5 minutos. & Obligatoria \\
+\hline
+REQ-SEG-008 & Cifrado en reposo obligatorio con algoritmo AES-256-CBC para todos los respaldos remitidos al exterior. & Obligatoria \\
+\hline
+REQ-SEG-009 & Configurar sondas de disponibilidad (liveness/readiness) en todas las cargas K3s. & Obligatoria \\
+\hline
+\end{tabular}
 \end{table}
 
-\begin{legalbox}{Mecanismo del Dataset de Emergencia: tank/buffer (ADR-016)}
-En los sistemas de archivos Copy-On-Write (COW), borrar un archivo mediante el comando \texttt{rm} no libera bloques de inmediato; primero requiere escribir metadatos en disco que referencien la liberación. Cuando un pool ZFS alcanza el 100\% de ocupación física, cualquier comando de escritura falla con el error del sistema \textit{No space left on device}, impidiendo incluso borrar archivos y dejando el servidor en un estado de parálisis administrativa. El dataset \texttt{tank/buffer} reserva 50 MB sin almacenar información productiva. Ante un evento de llenado total, la destrucción inmediata de este dataset (\texttt{zfs destroy tank/buffer}) devuelve 50 MB libres al pool, permitiendo al administrador ejecutar el borrado de archivos temporales de forma ordenada sin forzar un reinicio del host.
-\end{legalbox}
+\subsection{4.3 Requisitos de rendimiento, disponibilidad y capacidad}
 
-\subsubsection{5.2.2. Plano de Acceso y Archivos (Samba con VSS Shadow Copies)}
-El pod de Samba se ejecuta sobre K3s montando el dataset \texttt{tank/nas} mediante un PersistentVolume tipo HostPath con la directiva \texttt{mountPropagation: HostToContainer}. Para resolver la limitación histórica L-05 de la versión v1.0, el servicio SMB implementa el módulo de sistema de archivos virtuales \texttt{vfs\_shadow\_copy2}:
+\begin{table}[h!]
+\centering
+\small
+\caption{Requisitos no funcionales cuantificados.}
+\label{tab:req_nofun}
+\begin{tabular}{|c|p{10cm}|c|}
+\hline
+\textbf{\textsf{ID}} & \textbf{\textsf{Descripción del requisito}} & \textbf{\textsf{Valor objetivo}} \\
+\hline
+REQ-REN-001 & Latencia en operaciones de metadatos SMB bajo carga normal. & $< 20\text{ ms}$ \\
+\hline
+REQ-REN-002 & Transferencia SMB secuencial sostenida en red local Gigabit. & $\ge 110\text{ MB/s}$ \\
+\hline
+REQ-REN-003 & Límite forzado de memoria ZFS ARC en el kernel para proteger la RAM. & $\le 2048\text{ MB}$ \\
+\hline
+REQ-DIS-001 & Disponibilidad mensual del servicio de archivos en horario operativo. & $\ge 99,5\text{ \%}$ \\
+\hline
+REQ-DIS-002 & Tolerancia a fallo físico de dispositivos del pool sin pérdida de servicio. & 1 disco (RAID-Z1) \\
+\hline
+REQ-DIS-003 & Reserva de espacio COW de emergencia para evitar bloqueo de pool al 100\%. & 50 MB (tank/buffer) \\
+\hline
+REQ-OPE-001 & Sobrecarga de memoria del plano de orquestación K3s en reposo. & $\le 512\text{ MB}$ \\
+\hline
+\end{tabular}
+\end{table}
 
-\begin{itemize}[leftmargin=*]
-    \item Formato de instantáneas: \texttt{@GMT-\%Y.\%m.\%d-\%H.\%M.\%S} en tiempo UTC.
-    \item Visibilidad en clientes: Las instantáneas ZFS se exponen nativamente en la pestaña ``Versiones anteriores'' de Microsoft Windows Explorer.
-    \item Autoservicio del usuario: Los docentes y personal administrativo pueden restaurar versiones anteriores de sus archivos directamente desde su puesto de trabajo, sin requerir la intervención del administrador de sistemas.
+\subsection{4.4 Criterios de aceptación}
+\begin{normativabox}{}
+\textbf{Verificación obligatoria:} Ningún requisito se considerará implementado sin evidencia objetiva registrada conforme al capítulo 13: comando ejecutado, salida capturada, fecha ISO 8601 y responsable.
+\end{normativabox}
+
+\newpage
+\section{Arquitectura del sistema}
+
+\subsection{5.1 Principios arquitectónicos}
+
+\begin{table}[h!]
+\centering
+\small
+\caption{Principios rectores de la arquitectura.}
+\label{tab:principios}
+\begin{tabular}{|c|p{14.5cm}|}
+\hline
+\textbf{\textsf{N.º}} & \textbf{\textsf{Principio rector}} \\
+\hline
+P-01 & \textbf{Declarativo por defecto.} Todo estado deseado se expresa en manifiestos versionados. \\
+\hline
+P-02 & \textbf{Git como única fuente de verdad.} Lo que no está en Git, no existe en la infraestructura. \\
+\hline
+P-03 & \textbf{Confianza cero.} Se verifica identidad y contexto en cada petición; mínimo privilegio en red y contenedores. \\
+\hline
+P-04 & \textbf{Inmutabilidad.} Las cargas se reemplazan mediante nuevos despliegues, nunca se parchean en caliente. \\
+\hline
+P-05 & \textbf{Defensa en profundidad.} Controles superpuestos: filtrado SMB, permisos POSIX, NetworkPolicies y sumas ZFS. \\
+\hline
+P-06 & \textbf{Observabilidad nativa.} Todo componente crítico expone métricas y registros estructurados. \\
+\hline
+P-07 & \textbf{Reversibilidad.} Toda operación puede deshacerse desde Git o mediante una instantánea ZFS. \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{5.2 Vista lógica y planos de la plataforma}
+La plataforma se organiza en cuatro planos lógicos aislados con responsabilidades no solapadas:
+\begin{enumerate}
+    \item \textbf{Plano de Acceso y Red:} Servicio Samba contenedorizado sobre K3s con montaje HostPath a \texttt{/tank/nas}. Configurado con el módulo \texttt{vfs\_shadow\_copy2} que expone las instantáneas ZFS locales a clientes Windows Explorer.
+    \item \textbf{Plano de Control y Gestión:} Clúster K3s de nodo único alojando PostgreSQL 16 (base de datos relacional para usuarios y auditoría), Redis 7 (file locking y sesiones web) y el portal administrativo con motor de tareas asíncronas \texttt{TaskEngine}.
+    \item \textbf{Plano de Persistencia (OpenZFS):} Pool \texttt{tank} estructurado en arreglo \textbf{RAID-Z1} sobre 3 unidades mecánicas CMR, con compresión lz4, atime=off, xattr=sa, y el dataset de reserva COW \texttt{tank/buffer} (50 MB).
+    \item \textbf{Plano de Continuidad y Observabilidad:} Demonio Sentinel de detección de ransomware, recolección de métricas Prometheus y pipeline diario de exportación cifrada AES-256 hacia Cloudflare R2.
+\end{enumerate}
+
+\subsection{5.3 Registro de decisiones de arquitectura (ADR)}
+
+\begin{table}[h!]
+\centering
+\small
+\caption{Registro de decisiones de arquitectura.}
+\label{tab:adrs}
+\begin{tabular}{|c|p{4cm}|p{9.8cm}|}
+\hline
+\textbf{\textsf{ADR}} & \textbf{\textsf{Decisión}} & \textbf{\textsf{Justificación técnica}} \\
+\hline
+001 & K3s frente a Kubernetes estándar & Menor huella ($\le 512\text{ MB RAM}$), binario único, certificados auto-rotados. \\
+\hline
+002 & OpenZFS con RAID-Z1 & CoW, sumas de verificación Merkle, instantáneas nativas, compresión y paridad frente a fallo de un disco. \\
+\hline
+003 & Samba con VSS Shadow Copies & Compatibilidad nativa con Windows; autoservicio de restauración que resuelve la limitación L-05. \\
+\hline
+004 & Gestión de cuentas y contraseñas & Sincronización entre usuarios locales del sistema y catálogo en base de datos. \\
+\hline
+008 & Límite de ZFS ARC en 2 GB & Fijación persistente en \texttt{/etc/modprobe.d/zfs.conf} para evitar el agotamiento de memoria RAM en el host. \\
+\hline
+010 & Microsegmentación en K3s & Reglas de red para confinar bases de datos a comunicación interna entre pods. \\
+\hline
+012 & PostgreSQL 16 y Redis 7 & Capa de persistencia para catálogos, auditoría, sesiones web y bloqueo de archivos concurrentes. \\
+\hline
+014 & Demonio Sentinel anti-ransomware & Monitoreo inotify con archivos trampa honeypot y congelamiento de snapshots vía \texttt{zfs hold}. \\
+\hline
+\textbf{015} & \textbf{Copia remota en Cloudflare R2} & \textbf{Resolución de D-02: Almacenamiento S3 sin costos de egreso con cifrado simétrico AES-256-CBC.} \\
+\hline
+\textbf{016} & \textbf{Dataset de reserva tank/buffer} & \textbf{Reserva de 50 MB Copy-on-Write liberable ante saturación de disco para desbloquear comandos rm.} \\
+\hline
+\end{tabular}
+\end{table}
+
+\newpage
+\subsection{5.4 Especificación del stack tecnológico}
+
+\begin{table}[h!]
+\centering
+\small
+\caption{Stack tecnológico de la plataforma.}
+\label{tab:stack}
+\begin{tabular}{|p{3.5cm}|p{3.5cm}|c|p{6.5cm}|}
+\hline
+\textbf{\textsf{Capa}} & \textbf{\textsf{Tecnología}} & \textbf{\textsf{Versión}} & \textbf{\textsf{Función}} \\
+\hline
+Sistema operativo & Debian GNU/Linux & 12 (Bookworm) & Plataforma base del nodo anfitrión. \\
+\hline
+Orquestación & K3s & v1.31+ & Kubernetes ligero de binario único. \\
+\hline
+Almacenamiento & OpenZFS & 2.2+ & CoW, instantáneas, integridad Merkle, RAID-Z1. \\
+\hline
+Compartición SMB & Samba & latest & Protocolo SMB/CIFS con módulo VSS shadow\_copy2. \\
+\hline
+Base de datos & PostgreSQL & 16-alpine & Catálogo de usuarios, grupos y auditoría. \\
+\hline
+Caché y concurrencia & Redis & 7-alpine & Control de sesiones y bloqueo coordinado de archivos. \\
+\hline
+Consola web & Python / Flask / WSGI & 3.11+ & Portal administrativo con motor asíncrono TaskEngine. \\
+\hline
+Anti-ransomware & Sentinel Daemon & Custom & Vigilancia inotify de archivos trampa canario. \\
+\hline
+Respaldo en la nube & Cloudflare R2 & API S3 & Almacenamiento remoto de flujos cifrados con AES-256. \\
+\hline
+\end{tabular}
+\end{table}
+
+\section{Seguridad de la información}
+
+\subsection{6.1 Modelo de seguridad}
+La plataforma adopta el modelo Zero Trust conforme a NIST SP 800-207 sobre cinco pilares: identidad, dispositivo, red (sin superficie entrante en WAN y microsegmentación), aplicación (contenedores sin privilegios) y datos (cifrado en tránsito, sumas de verificación e instantáneas inmutables).
+
+\subsection{6.2 Matriz de conformidad ISO/IEC 27001:2022 (Anexo A)}
+
+\begin{table}[h!]
+\centering
+\small
+\caption{Matriz de conformidad con controles del Anexo A.}
+\label{tab:iso27001}
+\begin{tabular}{|c|p{4cm}|p{8.5cm}|c|}
+\hline
+\textbf{\textsf{Control}} & \textbf{\textsf{Título}} & \textbf{\textsf{Implementación en la plataforma}} & \textbf{\textsf{Estado}} \\
+\hline
+A.5.15 & Autenticación y acceso & Permisos POSIX granulares y segmentación estricta por roles. & $\checkmark$ \\
+\hline
+A.5.17 & Información de autenticación & Contraseñas saladas en PostgreSQL; prohibido texto claro en Git. & $\checkmark$ \\
+\hline
+A.5.23 & Servicios en la nube & Respaldo en Cloudflare R2 con cifrado simétrico en origen. & $\checkmark$ \\
+\hline
+A.8.2 & Accesos privilegiados & Contenedores sin modo privilegiado; RBAC de privilegio mínimo. & $\checkmark$ \\
+\hline
+A.8.3 & Restricción de accesos & NetworkPolicies de microsegmentación por carga de trabajo. & $\checkmark$ \\
+\hline
+A.8.5 & Autenticación segura & Cifrado TLS en portal web y autenticación segura SMB. & $\checkmark$ \\
+\hline
+A.8.7 & Protección contra malware & Directiva \texttt{veto files} en Samba; demonio Sentinel con trampas. & $\checkmark$ \\
+\hline
+A.8.8 & Gestión de vulnerabilidades & Escaneo de manifiestos y validación en integración continua. & $\checkmark$ \\
+\hline
+A.8.12 & Prevención de fuga de datos & Sticky bit (1777) en buzón de entregas estudiantil. & $\checkmark$ \\
+\hline
+A.8.15 & Registro de actividad & Historial Git inmutable; bitácora centralizada de eventos. & $\checkmark$ \\
+\hline
+A.8.16 & Monitorización de actividades & Recolección de métricas del host y alertamiento activo. & $\checkmark$ \\
+\hline
+A.8.20 & Seguridad en redes & Exposición restringida a la LAN; cero puertos abiertos en WAN. & $\checkmark$ \\
+\hline
+A.8.24 & Uso de criptografía & Cifrado simétrico AES-256-CBC con sal y PBKDF2 en respaldos. & $\checkmark$ \\
+\hline
+A.8.32 & Gestión de cambios & Flujo GitOps con solicitudes de cambio y trazabilidad completa. & $\checkmark$ \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{6.3 Controles de endurecimiento implementados}
+\begin{itemize}
+    \item \textbf{Filtrado global en Samba:} \texttt{veto files = /*.exe/*.bat/*.com/*.msi/*.scr/*.pif/*.vbs/*.cmd/*.ps1/}.
+    \item \textbf{Buzón ciego de alumnos:} Permiso especial \texttt{chmod 1777 /tank/nas/alumnos/entregas}.
+    \item \textbf{Agente Sentinel:} Inspección inotify sobre \texttt{.canary\_honeypot.docx} y congelamiento inmutable (\texttt{zfs hold}).
 \end{itemize}
 
-\subsubsection{5.2.3. Plano de Control y Gestión (K3s, PostgreSQL 16, Redis 7 y TaskEngine)}
-Los servicios de gestión institucional se ejecutan en contenedores independientes sobre K3s:
-\begin{enumerate}[leftmargin=*]
-    \item \textbf{PostgreSQL 16-alpine (apps/postgres):} Base de datos relacional para el registro de cuentas de usuario, asignación de grupos, cuotas de disco e historial de auditoría.
-    \item \textbf{Redis 7-alpine (apps/redis):} Motor en memoria para almacenamiento volátil de sesiones web y control de bloqueo concurrente de archivos (\textit{file locking}).
-    \item \textbf{Centro de Control Web (apps/portal):} Aplicación web administrativa en Python que incorpora el motor \texttt{TaskEngine}. Procesa operaciones asíncronas en un hilo de trabajo en segundo plano (cálculo de espacio, generación de reportes y sincronización de respaldos) mediante una cola de tareas no bloqueante.
-    \item \textbf{Control de Fuerza Bruta (\texttt{portal\_state.py}):} Persistencia de estado en base local SQLite montada en HostPath, que bloquea temporalmente accesos tras 5 intentos fallidos consecutivos.
-\end{enumerate}
+\begin{criticonbox}
+Está terminantemente prohibido incorporar credenciales, claves maestras o tokens en texto claro al repositorio Git. Toda clave privada debe gestionarse mediante procedimientos de cifrado asimétrico o custodia física.
+\end{criticonbox}
 
-\subsubsection{5.2.4. Plano de Observabilidad y Monitoreo}
-Servicio Prometheus configurado para recolección periódica de métricas de hardware, consumo de CPU, utilización de memoria RAM y estado de salud del pool ZFS (\texttt{zpool\_status}). Paneles de control visualizados en Grafana con alertas automáticas ante fallos de disco o degradación de enlace de red.
+\newpage
+\section{Continuidad del negocio y recuperación ante desastres}
 
-\subsection{5.3. Registro de Decisiones de Arquitectura (ADR)}
-\begin{table}[h!]
-\centering
-\small
-\begin{tabularx}{\textwidth}{llp{2.8cm}X}
-\toprule
-\textbf{Código} & \textbf{Estado} & \textbf{Tema de Decisión} & \textbf{Justificación y Resolución Técnica Aprobada} \\
-\midrule
-ADR-001 & Aprobado & Sistema de Archivos & OpenZFS con RAID-Z1 y sumas de control fletcher4 frente a RAID tradicional por hardware. \\
-ADR-002 & Aprobado & Orquestador Local & Adopción de K3s de nodo único por su reducida huella de memoria ($\le 512$ MB) y manifiestos declarativos. \\
-ADR-003 & Aprobado & Servicio SMB & Despliegue de Samba contenedorizado con soporte VSS (\texttt{vfs\_shadow\_copy2}) para autoservicio de archivos. \\
-ADR-004 & Aprobado & Control de Acceso & Usuarios locales del sistema con contraseñas sincronizadas en base de datos PostgreSQL. \\
-ADR-008 & Aprobado & Límite de Memoria ARC & Fijación de \texttt{zfs\_arc\_max} en 2 GB en \texttt{/etc/modprobe.d/zfs.conf} para evitar inanición de RAM en servicios. \\
-ADR-010 & Aprobado & Microsegmentación & Aplicación de directivas NetworkPolicies para aislar el tráfico de red interno entre pods. \\
-ADR-012 & Aprobado & Persistencia de Estado & Migración de archivos JSON a PostgreSQL 16 y Redis 7 para soportar concurrencia y sesiones concurrentes. \\
-ADR-014 & Aprobado & Anti-Ransomware & Demonio Sentinel con archivos trampa honeypot y congelamiento inmutable (\texttt{zfs hold}). \\
-\textbf{ADR-015} & \textbf{Aprobado} & \textbf{Destino Offsite} & \textbf{Resolución de D-02: Cloudflare R2 mediante API S3 con cifrado AES-256-CBC en origen vía OpenSSL.} \\
-\textbf{ADR-016} & \textbf{Aprobado} & \textbf{Reserva COW} & \textbf{Creación del dataset tank/buffer (50 MB) para prevenir el bloqueo total del pool por disco lleno.} \\
-\bottomrule
-\end{tabularx}
-\end{table}
-
-\subsection{5.4. Especificación del Stack Tecnológico}
-\begin{table}[h!]
-\centering
-\small
-\begin{tabularx}{\textwidth}{lp{3.5cm}p{2.2cm}X}
-\toprule
-\textbf{Capa de la Plataforma} & \textbf{Tecnología / Software} & \textbf{Versión Base} & \textbf{Función y Rol Operativo} \\
-\midrule
-Sistema Operativo Base & Debian GNU/Linux & 12 (Bookworm) & Plataforma anfitriona mínima de 64 bits para el hardware físico. \\
-Gestor de Almacenamiento & OpenZFS & 2.2+ & Sistema de archivos transaccional con paridad RAID-Z1 y snapshots. \\
-Orquestador de Cargas & K3s (Kubernetes) & v1.31+ & Plataforma declarativa para la ejecución de pods de servicios. \\
-Servicio de Archivos en Red & Samba Server & latest & Compartición SMB 2.1/3.1.1 con extensiones VSS de Windows. \\
-Base de Datos Relacional & PostgreSQL & 16-alpine & Almacenamiento transaccional de catálogos de usuarios y auditoría. \\
-Caché y Concurrencia & Redis & 7-alpine & Control de tokens de sesión web y bloqueo de archivos concurrentes. \\
-Consola Administrativa & Python / Flask / WSGI & 3.11+ & Portal de control con motor asíncrono \texttt{TaskEngine} y CSV. \\
-Monitoreo de Amenazas & Demonio Sentinel (Python) & Custom & Detección de modificaciones anómalas en archivos trampa honeypot. \\
-Respaldo Remoto en Nube & Cloudflare R2 (S3 API) & Compatible & Almacenamiento de objetos fuera de sitio para contingencia DRP. \\
-\bottomrule
-\end{tabularx}
-\end{table}
-
-% =============================================================================
-% CAPÍTULO 6: SEGURIDAD DE LA INFORMACIÓN (ISO/IEC 27001:2022)
-% =============================================================================
-\section{Seguridad de la Información y Controles de Acceso}
-
-\subsection{6.1. Modelo de Seguridad Zero Trust}
-La plataforma adopta el paradigma Zero Trust (NIST SP 800-207) estructurado sobre cuatro pilares operativos:
-\begin{enumerate}[leftmargin=*]
-    \item \textbf{Identidad y Menor Privilegio:} Cada usuario y servicio opera con los permisos mínimos requeridos para su función académica o administrativa.
-    \item \textbf{Aislamiento en Red:} Los componentes de persistencia de datos (PostgreSQL y Redis) carecen de acceso o escucha en interfaces de red externas.
-    \item \textbf{Inmutabilidad de Registro:} Los eventos de acceso y auditoría se graban en almacenes protegidos contra modificación por los usuarios.
-    \item \textbf{Protección Criptográfica:} Cifrado en tránsito mediante TLS y cifrado en reposo para todos los respaldos que abandonan las instalaciones físicas.
-\end{enumerate}
-
-\subsection{6.2. Matriz de Conformidad con Controles del Anexo A (ISO/IEC 27001:2022)}
-\begin{table}[h!]
-\centering
-\small
-\begin{tabularx}{\textwidth}{lp{3.5cm}Xp{2cm}}
-\toprule
-\textbf{Control} & \textbf{Denominación Oficial} & \textbf{Mecanismo de Cumplimiento en el Servidor NAS} & \textbf{Estado} \\
-\midrule
-A.5.15 & Control de accesos & Permisos POSIX granulares y segmentación estricta por estamentos (alumnos, docentes, dirección). & Implementado \\
-A.5.17 & Información de autenticación & Contraseñas almacenadas con hashes salados en PostgreSQL; prohibido el texto claro en Git. & Implementado \\
-A.5.23 & Servicios en la nube & Respaldo offsite en Cloudflare R2 con acuerdos formales de nivel de servicio y retención. & Implementado \\
-A.8.2 & Derechos de acceso privilegiado & Eliminación de banderas privilegiadas en contenedores; acceso administrativo web protegido. & Implementado \\
-A.8.3 & Restricción de acceso a red & Reglas NetworkPolicies de Kubernetes para aislar servicios internos del host y la LAN. & Implementado \\
-A.8.5 & Autenticación segura & Parámetros estrictos de autenticación NTLMv2/Kerberos en SMB; HTTPS en portal web. & Implementado \\
-A.8.7 & Protección contra malware & Directiva \texttt{veto files} en Samba que bloquea extensiones maliciosas; honeypot Sentinel. & Implementado \\
-A.8.8 & Gestión de vulnerabilidades & Escaneo de manifiestos y dependencias de imágenes base antes del despliegue. & Implementado \\
-A.8.12 & Fuga de datos & Bit adhesivo (1777) en carpeta de entregas de estudiantes para evitar copia o borrado entre pares. & Implementado \\
-A.8.15 & Registro de eventos (logs) & Bitácora de accesos y modificaciones centralizada con marcas de tiempo normalizadas. & Implementado \\
-A.8.20 & Seguridad en las redes & Exposición restringida de puertos SMB (139, 445) y portal web (puerto seguro). & Implementado \\
-A.8.24 & Uso de criptografía & Cifrado de respaldos remotos con algoritmo simétrico AES-256-CBC vía OpenSSL. & Implementado \\
-A.8.31 & Separación de entornos & Entornos de prueba y producción completamente segregados por ramas Git y datasets ZFS. & Implementado \\
-A.8.32 & Gestión del cambio & Control estricto de versiones mediante GitOps con solicitudes de cambio y firmas. & Implementado \\
-\bottomrule
-\end{tabularx}
-\end{table}
-
-\subsection{6.3. Controles Específicos de Endurecimiento}
-
-\subsubsection{6.3.1. Filtrado Forzado de Archivos Ejecutables en Samba}
-Para impedir que la plataforma de archivos compartidos sea utilizada como vector de propagación de binarios maliciosos o scripts no autorizados, la configuración de Samba impone la siguiente regla global:
-\begin{verbatim}
-veto files = /*.exe/*.bat/*.com/*.msi/*.scr/*.pif/*.vbs/*.cmd/*.ps1/*.hta/*.jar/*.cpl/
-delete veto files = no
-\end{verbatim}
-Cualquier intento de transferir o listar archivos que coincidan con estos patrones es interceptado por el demonio Samba, rechazando la petición con el código de error de red \texttt{NT\_STATUS\_OBJECT\_NAME\_NOT\_FOUND}.
-
-\subsubsection{6.3.2. Mecanismo de Buzón Ciego para Alumnos (Sticky Bit)}
-El directorio institucional de recepción de tareas (\texttt{/tank/nas/alumnos/entregas}) se configura con permisos especiales POSIX:
-\begin{verbatim}
-chown root:alumnos /tank/nas/alumnos/entregas
-chmod 1777 /tank/nas/alumnos/entregas
-\end{verbatim}
-El bit adhesivo (1777) garantiza que cualquier alumno autenticado pueda depositar sus entregas de trabajos prácticos, pero el kernel del sistema operativo impide que cualquier usuario no superusuario modifique, sobrescriba o elimine archivos pertenecientes a otros alumnos, resolviendo de forma determinista el riesgo de plagio o sabotaje entre estudiantes.
-
-\subsubsection{6.3.3. Agente Sentinel Anti-Ransomware (ADR-014)}
-El demonio Sentinel opera como un proceso en segundo plano que vigila el directorio raíz compartido mediante llamadas al subsistema inotify del kernel de Linux. Sentinel coloca archivos trampa (\texttt{.canary\_honeypot.docx}) en las carpetas principales. Si un malware intenta cifrar o renombrar el archivo canario, Sentinel activa el protocolo de contención:
-\begin{enumerate}
-    \item Interrupción inmediata de la sesión SMB del cliente sospechoso.
-    \item Congelamiento inmutable de la instantánea ZFS más reciente mediante el comando \texttt{zfs hold sentinel-immutable <dataset@snapshot>}.
-    \item Generación de alerta crítica en el registro del sistema y en la consola web.
-\end{enumerate}
-
-% =============================================================================
-% CAPÍTULO 7: CONTINUIDAD DEL NEGOCIO Y DRP (ISO 22301:2019)
-% =============================================================================
-\section{Continuidad del Negocio y Plan de Recuperación ante Desastres}
-
-\subsection{7.1. Análisis de Impacto en el Negocio (BIA)}
-De conformidad con los requisitos de la norma ISO 22301:2019, los servicios del sistema se clasifican según su nivel de criticidad para las operaciones institucionales:
+\subsection{7.1 Análisis de impacto en el negocio (BIA)}
+Conforme a ISO 22301:2019, los servicios se clasifican por criticidad y se derivan sus objetivos:
 
 \begin{table}[h!]
 \centering
 \small
-\begin{tabularx}{\textwidth}{lp{2cm}p{5.5cm}p{2.2cm}X}
-\toprule
-\textbf{Servicio} & \textbf{Criticidad} & \textbf{Impacto ante Interrupción Prolongada} & \textbf{RTO Máximo} & \textbf{RPO Máximo} \\
-\midrule
-Servidor SMB & Alta & Paralización del trabajo administrativo y dictado de clases prácticas con recursos digitales. & $\le 1$ hora & $\le 1$ hora (Snapshot ZFS) \\
-Centro de Control & Media & Imposibilidad temporal de dar de alta nuevos usuarios o modificar cuotas de disco. & $\le 4$ horas & $\le 24$ horas \\
-Base de Datos & Alta & Pérdida de catálogos y trazabilidad de accesos institucionales. & $\le 1$ hora & $\le 1$ hora \\
-Servicio de Respaldo & Media & Suspensión temporal de la sincronización remota hacia Cloudflare R2. & $\le 12$ horas & $\le 24$ horas \\
-\bottomrule
-\end{tabularx}
+\caption{Clasificación de criticidad y objetivos de recuperación.}
+\label{tab:bia}
+\begin{tabular}{|p{4cm}|c|p{6.5cm}|c|c|}
+\hline
+\textbf{\textsf{Servicio}} & \textbf{\textsf{Criticidad}} & \textbf{\textsf{Impacto de la interrupción}} & \textbf{\textsf{RTO}} & \textbf{\textsf{RPO}} \\
+\hline
+Almacenamiento SMB & Alta & Bloqueo del acceso a documentación pedagógica y administrativa. & 1 h & $\le 1\text{ h}$ \\
+\hline
+Portal de Control Web & Media & Retraso en la gestión de cuentas y consultas de cuotas. & 4 h & $\le 24\text{ h}$ \\
+\hline
+Bases de Datos Relacionales & Alta & Inconsistencia en catálogos y trazabilidad de usuarios. & 1 h & $\le 1\text{ h}$ \\
+\hline
+Respaldo en la Nube & Media & Suspensión temporal de la sincronización remota. & 12 h & $\le 24\text{ h}$ \\
+\hline
+\end{tabular}
 \end{table}
 
-\subsection{7.2. Estrategia de Protección y Respaldo de Datos (Regla 3-2-1)}
+\subsection{7.2 Estrategia de protección de datos (regla 3-2-1)}
+
 \begin{table}[h!]
 \centering
 \small
-\begin{tabularx}{\textwidth}{lp{3.5cm}X}
-\toprule
-\textbf{Nivel} & \textbf{Mecanismo de Resguardo} & \textbf{Descripción Técnica del Control} \\
-\midrule
-Copia 1 & Redundancia Local & Arreglo OpenZFS RAID-Z1 sobre 3 discos duros físicos con paridad distribuida y tolerancia a fallas. \\
-Copia 2 & Instantáneas Transaccionales & Tareas automáticas programadas de instantáneas ZFS locales cada hora, retenidas por 30 días. \\
-Copia 3 & Respaldo Fuera de Sitio & Flujo incremental diario comprimido y cifrado exportado a almacenamiento de objetos Cloudflare R2 (ADR-015). \\
-\bottomrule
-\end{tabularx}
+\caption{Niveles de protección de datos.}
+\label{tab:321}
+\begin{tabular}{|c|p{4cm}|p{9.8cm}|}
+\hline
+\textbf{\textsf{Nivel}} & \textbf{\textsf{Tipo}} & \textbf{\textsf{Descripción técnica}} \\
+\hline
+1 & Local redundante & Pool OpenZFS en RAID-Z1; tolera el fallo físico de 1 disco. \\
+\hline
+2 & Instantáneas locales & Tareas automáticas cada hora con retención de 30 días para VSS. \\
+\hline
+3 & Respaldo offsite & Exportación incremental diaria comprimida y cifrada con AES-256 hacia Cloudflare R2. \\
+\hline
+\end{tabular}
 \end{table}
 
-\subsection{7.3. Secuencia de Recuperación ante Desastres (Runbook de Contingencia)}
+\subsection{7.3 Procedimiento de recuperación ante desastres}
+
 \begin{table}[h!]
 \centering
 \small
-\begin{tabularx}{\textwidth}{llp{3cm}X}
-\toprule
-\textbf{Paso} & \textbf{Acción Operativa} & \textbf{Tiempo Estimado} & \textbf{Comando / Procedimiento} \\
-\midrule
-1 & Reinstalación de SO Base & 15 minutos & Instalación desatendida de Debian 12 Bookworm x86\_64 desde medio USB de contingencia. \\
-2 & Recuperación de Pool ZFS & 2 minutos & Conexión de discos e importación del pool: \texttt{zpool import -f tank}. \\
-3 & Instalación de K3s & 5 minutos & Ejecución del instalador K3s con parámetros de nodo único. \\
-4 & Restauración de Secretos & 2 minutos & Aplicación de credenciales cifradas y llaves maestras desde el resguardo seguro. \\
-5 & Despliegue de Manifiestos & 5 minutos & Aplicación de los manifiestos declarativos de Kubernetes desde el repositorio Git local. \\
-6 & Pruebas de Humo (Smoke Test) & 5 minutos & Ejecución de la batería de pruebas automatizadas: \texttt{./tests/smoke-test.sh}. \\
-\midrule
-\multicolumn{3}{r}{\textbf{Tiempo Total de Recuperación Estimado (RTO con pool intacto):}} & \textbf{$\le 34$ minutos} \\
-\bottomrule
-\end{tabularx}
+\caption{Secuencia de recuperación y tiempos estimados.}
+\label{tab:recuperacion}
+\begin{tabular}{|c|p{10cm}|c|}
+\hline
+\textbf{\textsf{Paso}} & \textbf{\textsf{Acción operativa}} & \textbf{\textsf{Tiempo estimado}} \\
+\hline
+1 & Reinstalación del sistema operativo base (Debian 12 Bookworm). & 10–15 min \\
+\hline
+2 & Importación del pool ZFS (\texttt{zpool import tank}); los datos sobreviven intactos. & $< 1\text{ min}$ \\
+\hline
+3 & Instalación del clúster K3s de nodo único. & 3–5 min \\
+\hline
+4 & Restauración de claves maestras y secretos desde custodia segura. & 2 min \\
+\hline
+5 & Despliegue de manifiestos desde repositorio Git institucional. & 5 min \\
+\hline
+6 & Ejecución de pruebas de humo y validación de conectividad. & 5 min \\
+\hline
+\multicolumn{2}{|r|}{\textbf{RTO total estimado (con pool de discos intacto):}} & \textbf{26–33 min} \\
+\hline
+\end{tabular}
 \end{table}
 
-\subsection{7.4. Procedimiento de Respaldo Cifrado a Cloudflare R2 (Resolución D-02 y ADR-015)}
-El script automatizado \texttt{scripts/nas-backup.sh} efectúa la sincronización remota:
-\begin{enumerate}[leftmargin=*]
-    \item Generación de instantánea consistente: \texttt{zfs snapshot tank/nas@backup\_\$(date +\%Y\%m\%d)}.
-    \item Extracción del flujo de datos incremental: \texttt{zfs send -i @anterior @actual tank/nas}.
-    \item Compresión en tránsito con algoritmo LZ4.
-    \item Cifrado simétrico de alta seguridad mediante OpenSSL:
-\begin{verbatim}
-openssl enc -aes-256-cbc -salt -pbkdf2 -iter 100000 \
-    -pass file:/etc/nas/master.key -in flujo.lz4 -out backup.enc
-\end{verbatim}
-    \item Subida del archivo cifrado al bucket institucional en Cloudflare R2 mediante la herramienta \texttt{aws-cli} o \texttt{rclone} utilizando credenciales restringidas.
-\end{enumerate}
+\begin{normativabox}{}
+\textbf{Supuesto crítico del RTO:} El objetivo de $\le 35$ minutos es válido cuando el arreglo físico de discos permanece íntegro. En caso de destrucción física total, el RTO se rige por la descarga del respaldo remoto cifrado desde Cloudflare R2 y aprovisionamiento base, estimándose en $\le 2$ horas.
+\end{normativabox}
 
-\subsection{7.5. Custodia Externa de Claves Maestras (Procedimiento Físico)}
-Para asegurar que la clave maestra de descifrado no se pierda en caso de destrucción total del centro de cómputo, el script \texttt{scripts/export-master-keys.sh} genera dos copias físicas fuera de sitio:
-\begin{enumerate}
-    \item \textbf{Copia en Medio Extraíble:} Unidad USB formateada en sistema seguro y cifrada bajo custodia del Administrador de Sistemas en ubicación remota.
-    \item \textbf{Copia Impresa (\textit{Paper Key}):} Hoja física laminada que contiene la clave maestra codificada en código QR y texto plano, junto con su suma de comprobación SHA-256, resguardada en la caja de seguridad de la Dirección Institucional.
-\end{enumerate}
+\subsection{7.4 Pruebas del plan de recuperación}
+El plan debe probarse al menos una vez cada seis meses mediante el simulacro automatizado (\texttt{make dr-drill}), registrando informe con fechas de inicio y fin, RTO y RPO reales y firma del responsable.
 
-% =============================================================================
-% CAPÍTULO 8: REQUISITOS DE INFRAESTRUCTURA
-% =============================================================================
-\section{Requisitos de Infraestructura y Topología de Red}
+\newpage
+\section{Requisitos de infraestructura}
 
-\subsection{8.1. Especificaciones de Hardware del Nodo Anfitrión}
+\subsection{8.1 Especificaciones del nodo anfitrión}
+
 \begin{table}[h!]
 \centering
 \small
-\begin{tabularx}{\textwidth}{lp{3.5cm}X}
-\toprule
-\textbf{Componente} & \textbf{Requisito Mínimo} & \textbf{Especificación Recomendada para Producción} \\
-\midrule
-Procesador (CPU) & 2 núcleos x86\_64 (soporte SSE4.2) & 4+ núcleos x86\_64 con soporte de instrucciones AES-NI (aceleración criptográfica). \\
-Memoria RAM & 4 GB DDR4 & 8+ GB DDR4 ECC. ZFS verifica integridad lógica, pero la memoria ECC previene corrupción de bits en memoria volátil. \\
-Discos del Sistema & 1 unidad SSD de 64 GB & 2 unidades SSD de 120+ GB en espejo para redundancia del sistema operativo. \\
-Discos de Datos & 3 discos duros mecánicos de 2 TB & 3+ discos mecánicos clase empresarial (CMR) en configuración ZFS RAID-Z1. Prohibido el uso de discos SMR. \\
-Interfaces de Red & 1 puerto Gigabit Ethernet (1000BASE-T) & 2 puertos 1 GbE o 1 puerto 10 GbE con soporte para tramas gigantes (\textit{jumbo frames}). \\
-Alimentación & Suministro eléctrico convencional & Sistema UPS (SAI) con autonomía $\ge 15$ minutos y cable USB/Serial para gestión de apagado ordenado mediante NUT. \\
-\bottomrule
-\end{tabularx}
+\caption{Requisitos de hardware del nodo anfitrión.}
+\label{tab:hardware}
+\begin{tabular}{|p{3.8cm}|p{5cm}|p{6.8cm}|}
+\hline
+\textbf{\textsf{Recurso}} & \textbf{\textsf{Mínimo}} & \textbf{\textsf{Recomendado para producción}} \\
+\hline
+Procesador & 2 núcleos x86\_64 & 4+ núcleos x86\_64 con soporte AES-NI. \\
+\hline
+Memoria RAM & 4 GB & 8+ GB DDR4 ECC (ZFS ARC fijado en 2 GB). \\
+\hline
+Almacenamiento de sistema & 1 SSD de 64 GB & 2 SSD en espejo para el sistema operativo. \\
+\hline
+Almacenamiento de datos & 3 discos duros de 2 TB & 3+ discos mecánicos clase empresarial CMR en RAID-Z1. \\
+\hline
+Red & 1 GbE dúplex completo & 1–10 GbE con tramas gigantes (\textit{jumbo frames}). \\
+\hline
+Alimentación & Suministro convencional & UPS (SAI) con autonomía $\ge 15$ min y apagado NUT. \\
+\hline
+\end{tabular}
 \end{table}
 
-\subsection{8.2. Estructura Jerárquica del Repositorio de Código y Manifiestos}
-El repositorio Git opera como la única fuente de verdad declarativa para todo el sistema:
+\begin{normativabox}{}
+\textbf{Requisito de memoria ECC:} En producción con datos institucionales críticos se recomienda memoria ECC: OpenZFS corrige la corrupción a nivel de bloque magnético, pero no previene alteraciones de bits en la memoria volátil antes de calcular las sumas de verificación.
+\end{normativabox}
 
+\subsection{8.2 Estructura del repositorio}
+Estructura del repositorio Git (fuente única de verdad):
+
+\begin{stepbox}{Estructura del repositorio Git}
 \begin{verbatim}
 NAS/
 |-- .github/workflows/
 |   `-- validate.yml            # CI: linting de YAML y escaneo de secretos
 |-- apps/
-|   |-- postgres/               # Base de datos PostgreSQL 16 (statefulset)
+|   |-- postgres/               # Base de datos relacional PostgreSQL 16
 |   |-- redis/                  # Motor de caché y file locking Redis 7
-|   |-- portal-qr/              # Centro de control web con TaskEngine
-|   `-- samba/                  # Servicio SMB con VSS shadow_copy2
+|   |-- portal-qr/              # Portal de administración y TaskEngine
+|   `-- samba/                  # Compartición SMB con VSS shadow_copy2
 |-- infrastructure/
 |   |-- root-application.yaml   # Patrón declarativo App-of-Apps
-|   `-- zfs-buffer-init.yaml    # Manifiesto de verificación de tank/buffer
+|   `-- zfs-buffer-init.yaml    # Manifiesto de verificación tank/buffer
 |-- scripts/
-|   |-- bootstrap-enterprise-nas.sh  # Script de instalación desatendida (Zero-Touch)
+|   |-- bootstrap-enterprise-nas.sh  # Script de instalación desatendida
 |   |-- nas-backup.sh                # Respaldo cifrado hacia Cloudflare R2
 |   |-- nas-recover.sh               # Runbook de recuperación en frío
-|   `-- export-master-keys.sh        # Exportación física de llaves maestras
+|   `-- export-master-keys.sh        # Procedimiento de llaves maestras
 |-- tests/
-|   `-- smoke-test.sh           # Batería de pruebas automatizadas de humo
+|   `-- smoke-test.sh           # Batería de pruebas automatizadas
 |-- docs/
-|   |-- NAS-ET-001-v2.0.tex     # Especificación técnica formal (este documento)
-|   `-- RFC-001-Enterprise-NAS-Architecture.md
-|-- Makefile                    # Atajos de administración y simulacros (dr-drill)
-`-- README.md                   # Guía rápida para el administrador
+|   `-- NAS-ET-001-v2.0.tex     # Especificación técnica formal (este documento)
+`-- Makefile                    # Atajos de administración y simulacros
 \end{verbatim}
+\end{stepbox}
 
-\subsection{8.3. Matriz de Puertos y Protocolos de Red}
+\subsection{8.3 Matriz de puertos y protocolos}
+
 \begin{table}[h!]
 \centering
 \small
-\begin{tabularx}{\textwidth}{lllllX}
-\toprule
-\textbf{Puerto} & \textbf{Protocolo} & \textbf{Servicio} & \textbf{Alcance de Exposición} & \textbf{Justificación Técnica} \\
-\midrule
-445 / TCP & SMB & Samba & Red Local Privada (RFC 1918) & Compartición nativa de archivos para clientes Windows/Linux. \\
-139 / TCP & NetBIOS-SSN & Samba & Red Local Privada (RFC 1918) & Compatibilidad con resolución de nombres en clientes antiguos. \\
-30081 / TCP & HTTP / HTTPS & Portal Web & Red Local Privada / LAN & Interfaz gráfica para administración de cuentas y monitoreo. \\
-5432 / TCP & PostgreSQL & Base de Datos & Red Interna Pods K3s & Catálogos y auditoría. Prohibido acceso externo desde la LAN. \\
-6379 / TCP & Redis & Caché y Locking & Red Interna Pods K3s & Sesiones web y control concurrente. Sin exposición en LAN. \\
-443 / TCP & HTTPS & Cloudflare R2 & Tráfico Saliente a Internet & Transferencia de flujos de respaldo cifrados hacia almacenamiento en la nube. \\
-\bottomrule
-\end{tabularx}
+\caption{Matriz de puertos y alcance máximo de exposición.}
+\label{tab:puertos}
+\begin{tabular}{|c|c|p{4.5cm}|p{4.5cm}|}
+\hline
+\textbf{\textsf{Puerto}} & \textbf{\textsf{Protocolo}} & \textbf{\textsf{Servicio}} & \textbf{\textsf{Exposición}} \\
+\hline
+445 & TCP & Samba SMB/CIFS & Solo LAN (RFC 1918) \\
+\hline
+139 & TCP & NetBIOS-SSN & Solo LAN (RFC 1918) \\
+\hline
+30081 & HTTP/HTTPS & Portal de Control Web & Solo LAN \\
+\hline
+5432 & TCP & PostgreSQL 16 & Solo red interna pods K3s \\
+\hline
+6379 & TCP & Redis 7 & Solo red interna pods K3s \\
+\hline
+443 & HTTPS & Salida hacia Cloudflare R2 & Saliente únicamente \\
+\hline
+\end{tabular}
 \end{table}
 
-\begin{warningbox}{Aislamiento de Perímetro WAN}
-Queda estrictamente prohibido habilitar reenvíos de puertos (\textit{port forwarding}) o colocar el servidor NAS en la zona desmilitarizada (DMZ) de los enrutadores institucionales. La plataforma no expone ningún puerto hacia la red WAN.
-\end{warningbox}
+{\footnotesize\textit{Nota normativa: Ningún puerto debe publicarse en el perímetro WAN; la columna «Exposición» refleja el alcance máximo permitido.}}
 
-% =============================================================================
-% CAPÍTULO 9: PROCEDIMIENTOS DE APROVISIONAMIENTO Y OPERACIÓN (RUNBOOK)
-% =============================================================================
-\section{Procedimientos de Aprovisionamiento y Operación}
+\newpage
+\section{Procedimientos de aprovisionamiento y operación}
 
-\subsection{9.1. Procedimiento de Aprovisionamiento Inicial Desatendido (Zero-Touch)}
-Para garantizar la repetibilidad y eliminar errores manuales durante la instalación, la puesta en marcha de un servidor nuevo se ejecuta de manera automatizada mediante el script de arranque:
+\subsection{9.1 Procedimiento de aprovisionamiento inicial (Zero-Touch)}
+La instalación se realiza de forma desatendida mediante \texttt{./scripts/bootstrap-enterprise-nas.sh}. Los pasos que ejecuta internamente son:
 
+\subsubsection{9.1.1 Configuración del sistema de almacenamiento}
+\begin{stepbox}{Paso 1 – Creación y optimización del pool ZFS}
 \begin{verbatim}
-chmod +x scripts/bootstrap-enterprise-nas.sh
-./scripts/bootstrap-enterprise-nas.sh
-\end{verbatim}
-
-El script ejecuta de forma secuencial las siguientes acciones:
-
-\subsubsection{9.1.1. Configuración de Parámetros de Kernel y Memoria ARC}
-Para asegurar que OpenZFS no consuma la totalidad de la memoria RAM del equipo compitiendo con K3s y las bases de datos, el script fija de manera permanente el límite superior de la memoria ARC en 2048 MB (2 GB):
-\begin{verbatim}
+# Límite persistente de memoria ARC (2 GB)
 echo "options zfs zfs_arc_max=2147483648" > /etc/modprobe.d/zfs.conf
 update-initramfs -u
-\end{verbatim}
 
-\subsubsection{9.1.2. Creación del Pool RAID-Z1 y Datasets Especializados}
-\begin{verbatim}
+# Creación de pool RAID-Z1 y datasets
 zpool create -f -o ashift=12 tank raidz1 /dev/sdb /dev/sdc /dev/sdd
 zfs set compression=lz4 tank
 zfs set atime=off tank
 zfs set xattr=sa tank
-
-# Creación de datasets funcionales
 zfs create -o recordsize=128k tank/nas
 zfs create -o recordsize=1M   tank/nas/multimedia
 zfs create -o recordsize=8k   tank/postgres
 zfs create -o recordsize=128k tank/backups
 
-# Creación del dataset de reserva de emergencia COW (50 MB)
+# Reserva de emergencia COW (50 MB)
 zfs create -o recordsize=128k -o compression=off tank/buffer
 dd if=/dev/urandom of=/tank/buffer/emergency.dat bs=1M count=48 status=none
-\end{verbatim}
 
-\subsubsection{9.1.3. Asignación de Permisos del Buzón de Entregas y Despliegue K3s}
-\begin{verbatim}
+# Buzón ciego con sticky bit
 mkdir -p /tank/nas/alumnos/entregas
 chmod 1777 /tank/nas/alumnos/entregas
 chown root:alumnos /tank/nas/alumnos/entregas
+\end{verbatim}
+\end{stepbox}
 
-# Instalación de K3s de nodo único
+\subsubsection{9.1.2 Instalación del plano de orquestación}
+\begin{stepbox}{Pasos 2 y 3 – K3s y Manifiestos}
+\begin{verbatim}
 curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable traefik" sh -
+kubectl get nodes
 kubectl apply -f apps/postgres/
 kubectl apply -f apps/redis/
 kubectl apply -f apps/samba/
 kubectl apply -f apps/portal-qr/
 \end{verbatim}
+\end{stepbox}
 
-\subsection{9.2. Operaciones Rutinarias de Mantenimiento}
-\begin{table}[h!]
-\centering
-\small
-\begin{tabularx}{\textwidth}{p{4.5cm}p{3cm}X}
-\toprule
-\textbf{Operación} & \textbf{Periodicidad} & \textbf{Procedimiento / Comando Ejecutado} \\
-\midrule
-Verificación de Integridad (\textit{Scrub}) & Mensual & \texttt{zpool scrub tank}. Lee todos los bloques físicos y corrige bit-rot automáticamente. \\
-Consulta de Estado del Arreglo & Diaria & \texttt{zpool status tank}. Informa si existen unidades degradadas o errores de lectura/escritura. \\
-Generación Manual de Instantánea & Ante cambios mayores & \texttt{zfs snapshot tank/nas@manual-\$(date +\%Y\%m\%d)}. \\
-Reversión Destructiva de Cambios & Solo en emergencias & \texttt{zfs rollback tank/nas@instantanea\_segura}. Restaura el dataset al punto exacto. \\
-\bottomrule
-\end{tabularx}
-\end{table}
+\subsection{9.2 Operación rutinaria}
+\begin{stepbox}{Instantáneas y replicación}
+\begin{verbatim}
+# Consulta de estado de discos y salud de ZFS
+zpool status tank
+zfs list -t snapshot
 
-\subsection{9.3. Verificación Automatizada del Despliegue (Smoke Tests)}
-Tras cualquier actualización de manifiestos o reinicio programado del servidor, es obligatorio ejecutar la batería de pruebas de verificación operativa:
+# Creación manual de instantánea consistente
+zfs snapshot tank/nas@manual-$(date +%Y%m%d-%H%M)
+
+# Rollback destructivo ante desastre
+zfs rollback tank/nas@nombre-de-la-instantanea
+
+# Exportación incremental cifrada hacia almacenamiento en la nube
+./scripts/nas-backup.sh
+\end{verbatim}
+\end{stepbox}
+
+\subsection{9.3 Verificación automatizada del despliegue}
+\begin{stepbox}{Batería de pruebas de humo}
 \begin{verbatim}
 chmod +x tests/smoke-test.sh
 ./tests/smoke-test.sh
 \end{verbatim}
-El script comprueba el estado de los pods en Kubernetes, la conectividad al socket de PostgreSQL y Redis, la disponibilidad del recurso compartido SMB y la respuesta HTTP 200 en la consola web.
+\end{stepbox}
+La batería debe ejecutarse tras cada despliegue, en cada auditoría y antes de toda entrega institucional.
 
-\subsection{9.4. Puntos de Acceso a los Servicios Institucionales}
-\begin{table}[h!]
-\centering
-\small
-\begin{tabularx}{\textwidth}{p{4.5cm}p{5cm}X}
-\toprule
-\textbf{Servicio Institucional} & \textbf{Dirección de Acceso / URL} & \textbf{Método de Autenticación} \\
-\midrule
-Recursos de Archivos (SMB) & \texttt{smb://<IP\_DEL\_NAS>/compartido} & Credenciales de usuario institucional en red local. \\
-Buzón Ciego de Alumnos & \texttt{smb://<IP\_DEL\_NAS>/alumnos/entregas} & Cuenta individual de estudiante con permisos de depósito. \\
-Centro de Control Web & \texttt{http://<IP\_DEL\_NAS>:30081} & Cuenta de administración técnica protegida por rate-limiting. \\
-Métricas y Monitoreo & \texttt{http://<IP\_DEL\_NAS>:30090} & Acceso de auditoría restringido a la subred de TI. \\
-\bottomrule
-\end{tabularx}
-\end{table}
-
-% =============================================================================
-% CAPÍTULO 10: OBSERVABILIDAD Y ACUERDOS DE NIVEL DE SERVICIO (SLO)
-% =============================================================================
-\section{Observabilidad, Gobernanza y Acuerdos de Servicio}
-
-\subsection{10.1. Indicadores y Objetivos de Nivel de Servicio (SLO)}
-\begin{table}[h!]
-\centering
-\small
-\begin{tabularx}{\textwidth}{p{4cm}p{5cm}X}
-\toprule
-\textbf{Indicador Clave} & \textbf{Fórmula / Definición de Medición} & \textbf{Objetivo Formal (SLO)} \\
-\midrule
-Disponibilidad Mensual & Tiempo en línea sobre tiempo total en ventana móvil de 30 días. & $\ge 99,5$ \% de disponibilidad efectiva. \\
-Tasa de Transferencia SMB & Rendimiento sostenido en lectura secuencial de archivos grandes. & $\ge 110$ MB/s saturando enlace Gigabit. \\
-Frescura del Respaldo Remoto & Antigüedad máxima del último flujo de datos confirmado en Cloudflare R2. & $\le 26$ horas desde la última sincronización. \\
-Deriva de Configuración Git & Cantidad de servicios o archivos desplegados sin declarar en el repositorio Git. & **0** (Cero tolerancia a la deriva). \\
-\bottomrule
-\end{tabularx}
-\end{table}
-
-\subsection{10.2. Esquema de Alertamiento y Respuesta a Incidentes}
-Las métricas recolectadas por Prometheus se evalúan contra reglas de umbral:
-\begin{itemize}[leftmargin=*]
-    \item \textbf{Alerta Crítica: Disco Degradado:} Se dispara de inmediato si \texttt{zpool status} reporta un estado distinto de \texttt{ONLINE}. Requiere reemplazo físico en un plazo no mayor a 24 horas.
-    \item \textbf{Alerta Crítica: Ocupación del Pool $\ge 85$\%:} Requiere purga de instantáneas antiguas o ampliación de discos antes de comprometer la operatividad COW.
-    \item \textbf{Alerta de Seguridad: Modificación en Canario Sentinel:} Activa de inmediato el congelamiento de instantáneas y la notificación al Administrador de Sistemas.
-\end{itemize}
-
-\subsection{10.3. Gobernanza del Cambio Técnico}
-\begin{table}[h!]
-\centering
-\small
-\begin{tabularx}{\textwidth}{lp{4cm}X}
-\toprule
-\textbf{Fase} & \textbf{Actividad Técnica} & \textbf{Responsable Operativo} \\
-\midrule
-1 & Solicitud de cambio y justificación & Administrador de Sistemas en rama de trabajo Git. \\
-2 & Validación local y pruebas de integración & Ejecución de pruebas en máquina virtual de laboratorio. \\
-3 & CI: Verificación estática de manifiestos & Flujo automatizado de GitHub Actions (validación de YAML y secretos). \\
-4 & Revisión por pares técnicos & Auditor de código o pair programmer revisor. \\
-5 & Fusión en rama \texttt{main} y despliegue & Reconciliación declarativa en el servidor en producción. \\
-6 & Pruebas post-despliegue y acta de cierre & Ejecución de pruebas de humo y registro de evidencia formal. \\
-\bottomrule
-\end{tabularx}
-\end{table}
-
-\subsection{10.4. Matriz RACI de Gobierno de la Plataforma}
-\begin{table}[h!]
-\centering
-\small
-\begin{tabularx}{\textwidth}{lcccc}
-\toprule
-\textbf{Actividad / Responsabilidad} & \textbf{Administrador TI} & \textbf{Operaciones} & \textbf{CISO / Seguridad} & \textbf{Dirección TI} \\
-\midrule
-Diseño y evolución de arquitectura & R / A & C & C & I \\
-Aprovisionamiento e instalación física & C & R & I & A \\
-Gestión y resguardo de llaves maestras & R & C & A & I \\
-Monitoreo diario de salud y alertas & I & R / A & I & I \\
-Respuesta a incidentes de seguridad & C & R & A & I \\
-Simulacros periódicos de DRP & R & R & C & A \\
-Aprobación de cambios mayores & C & C & C & R / A \\
-\midrule
-\multicolumn{5}{l}{\footnotesize R = Responsable de la ejecución; A = Aprueba; C = Consultado; I = Informado} \\
-\bottomrule
-\end{tabularx}
-\end{table}
-
-% =============================================================================
-% CAPÍTULO 11: GESTIÓN DE RIESGOS (ISO 31000:2018)
-% =============================================================================
-\section{Gestión y Evaluación de Riesgos Operativos}
-
-De acuerdo con el estándar ISO 31000:2018, los riesgos técnicos y operativos se evalúan ponderando su probabilidad de ocurrencia e impacto potencial en tres escalas (Bajo, Medio, Alto):
+\subsection{9.4 Puntos de acceso a los servicios}
 
 \begin{table}[h!]
 \centering
 \small
-\begin{tabularx}{\textwidth}{lp{4cm}ccp{1.5cm}X}
-\toprule
-\textbf{ID} & \textbf{Riesgo Técnico Identificado} & \textbf{Prob.} & \textbf{Imp.} & \textbf{Nivel} & \textbf{Tratamiento y Control Técnico Aplicado} \\
-\midrule
-R-01 & Falla simultánea de 2 discos en RAID-Z1 & B & A & Medio & Respaldo incremental diario en Cloudflare R2 con cifrado simétrico AES-256 (ADR-015). \\
-R-02 & Corrupción silenciosa por memoria no ECC & M & A & Alto & Verificación continua por sumas de control fletcher4 en OpenZFS; recomendación formal de módulos ECC. \\
-R-03 & Compromiso de contraseñas de red & B & A & Medio & Separación estricta de cuentas, bitácora de accesos y política de contraseñas de alta entropía. \\
-R-04 & Filtración de credenciales en Git & M & A & Alto & Bloqueo en integración continua (CI) mediante escaneo de secretos antes de la fusión en la rama \texttt{main}. \\
-R-05 & Pérdida de conectividad a Internet & M & M & Medio & El servicio SMB y el portal operan de forma 100\% autónoma en la red local sin requerir conexión externa. \\
-R-06 & Fallo total del hardware del servidor & B & A & Alto & Procedimiento de contingencia documentado con RTO $\le 2$ horas mediante aprovisionamiento desatendido. \\
-R-07 & Infección por ransomware en clientes & M & A & Alto & Instantáneas de solo lectura programadas, demonio Sentinel con trampas honeypot y congelamiento \texttt{zfs hold}. \\
-R-08 & Deriva de configuración en producción & B & M & Bajo & Modelo GitOps con reconciliación declarativa; prohibición absoluta de cambios manuales en caliente. \\
-R-09 & Llenado del pool ZFS al 100\% & M & A & Alto & **Dataset de reserva COW tank/buffer (50 MB)** liberable de emergencia para desbloquear borrados (ADR-016). \\
-R-10 & Saturación de memoria RAM por ZFS & M & A & Alto & **Límite máximo de ZFS ARC fijado en 2 GB** en \texttt{/etc/modprobe.d/zfs.conf} de forma persistente. \\
-\midrule
-\multicolumn{6}{l}{\footnotesize Probabilidad / Impacto: B = Bajo; M = Medio; A = Alto} \\
-\bottomrule
-\end{tabularx}
+\caption{Puntos de acceso y puertos de servicio.}
+\label{tab:puntos_acceso}
+\begin{tabular}{|p{4.5cm}|p{7cm}|c|}
+\hline
+\textbf{\textsf{Servicio}} & \textbf{\textsf{Dirección / URL}} & \textbf{\textsf{Puerto}} \\
+\hline
+Samba (Recursos Compartidos) & \texttt{smb://<IP\_NAS>} & 445 \\
+\hline
+Buzón Ciego de Alumnos & \texttt{smb://<IP\_NAS>/alumnos/entregas} & 445 \\
+\hline
+Centro de Control Web & \texttt{http://<IP\_NAS>:30081} & 30081 \\
+\hline
+Métricas y Monitoreo & \texttt{http://<IP\_NAS>:30090} & 30090 \\
+\hline
+\end{tabular}
 \end{table}
 
-% =============================================================================
-% CAPÍTULO 12: MATRIZ DE TRAZABILIDAD DE REQUISITOS (RTM)
-% =============================================================================
-\section{Matriz de Trazabilidad de Requisitos (RTM)}
+\newpage
+\section{Observabilidad y acuerdos de nivel de servicio}
 
-Conforme a la norma ISO/IEC/IEEE 29148:2018, la matriz asegura la correspondencia bidireccional entre los requisitos especificados, los componentes de software implementados y las evidencias de verificación:
+\subsection{10.1 Indicadores de nivel de servicio (SLO)}
 
 \begin{table}[h!]
 \centering
 \small
-\begin{tabularx}{\textwidth}{llllX}
-\toprule
-\textbf{Requisito} & \textbf{Componente} & \textbf{Artefacto de Implementación} & \textbf{Evidencia} & \textbf{Estado de Conformidad} \\
-\midrule
-REQ-FUN-001 & apps/samba & \texttt{apps/samba/deployment.yaml} & TC-01 & Conforme (Verificado con clientes Windows y Linux) \\
-REQ-FUN-002 & OpenZFS & \texttt{scripts/bootstrap-enterprise-nas.sh} & TC-02 & Conforme (Pool RAID-Z1 y datasets creados) \\
-REQ-FUN-003 & apps/samba & \texttt{apps/samba/deployment.yaml} & TC-03 & Conforme (VSS shadow\_copy2 activo en Windows) \\
-REQ-FUN-004 & tank/nas & Permisos POSIX en \texttt{entregas} & TC-04 & Conforme (Sticky bit 1777 bloquea borrado ajeno) \\
-REQ-FUN-005 & apps/portal-qr & \texttt{apps/portal-qr/task\_engine.py} & TC-05 & Conforme (Motor asíncrono no bloquea UI) \\
-REQ-FUN-006 & apps/portal-qr & \texttt{apps/portal-qr/app.py} (Módulo CSV) & TC-06 & Conforme (Carga masiva con rollback transaccional) \\
-REQ-FUN-007 & infra/sentinel & \texttt{infra/sentinel/sentinel.py} & TC-07 & Conforme (Honeypot canario y zfs hold probado) \\
-REQ-SEG-001 & apps/samba & Directiva \texttt{veto files} en Samba & TC-08 & Conforme (Rechazo forzado de archivos .exe) \\
-REQ-SEG-002 & apps/portal-qr & \texttt{apps/portal-qr/portal\_state.py} & TC-09 & Conforme (Bloqueo tras 5 intentos fallidos) \\
-REQ-SEG-003 & scripts & \texttt{scripts/nas-backup.sh} & TC-10 & Conforme (Flujo AES-256-CBC en Cloudflare R2) \\
-REQ-SEG-004 & Kubernetes & Manifiestos K3s sin hostPort en DB & TC-11 & Conforme (PostgreSQL y Redis confinados a pod) \\
-REQ-REN-001 & Red / Samba & Pruebas de transferencia iperf e I/O & TC-12 & Conforme ($\ge 110$ MB/s sostenidos en 1 GbE) \\
-REQ-REN-002 & Kernel Linux & \texttt{/etc/modprobe.d/zfs.conf} & TC-13 & Conforme (Límite ARC en 2 GB bajo estrés) \\
-REQ-DIS-002 & OpenZFS & Topología RAID-Z1 (3 discos) & TC-14 & Conforme (Tolerancia a desconexión física de disco) \\
-REQ-DIS-003 & OpenZFS & \texttt{tank/buffer} (Dataset COW 50 MB) & TC-15 & Conforme (Destrucción libera espacio en disco lleno) \\
-REQ-OPE-001 & K3s & Métricas de consumo de memoria & TC-16 & Conforme ($\le 512$ MB en nodo único en reposo) \\
-\bottomrule
-\end{tabularx}
+\caption{Indicadores y objetivos de nivel de servicio.}
+\label{tab:slos}
+\begin{tabular}{|p{4cm}|p{7.5cm}|c|}
+\hline
+\textbf{\textsf{Indicador}} & \textbf{\textsf{Definición}} & \textbf{\textsf{Objetivo}} \\
+\hline
+Disponibilidad mensual & Solicitudes correctas sobre el total en ventana móvil de 30 días. & $\ge 99,5\text{ \%}$ \\
+\hline
+Latencia de archivos & Tiempo de respuesta en operaciones SMB de metadatos. & $< 20\text{ ms}$ \\
+\hline
+Frescura de copia & Antigüedad de la última instantánea confirmada en Cloudflare R2. & $< 26\text{ h}$ \\
+\hline
+Deriva de configuración & Recursos del clúster fuera del estado declarado en Git. & \textbf{0} \\
+\hline
+\end{tabular}
 \end{table}
 
-% =============================================================================
-% CAPÍTULO 13: VERIFICACIÓN Y VALIDACIÓN (TEST CASES)
-% =============================================================================
-\section{Verificación y Validación Técnica}
+\subsection{10.2 Alertamiento}
+Las alertas se definen como código y se canalizan hacia el registro del sistema y notificaciones para el Administrador de Sistemas. Toda alerta crítica (falla de disco, espacio $\ge 85$\%, alteración en canario Sentinel) genera incidencia inmediata.
 
-\subsection{13.1. Batería Completa de Casos de Prueba (TC-01 a TC-18)}
+\subsection{10.3 Gobernanza del cambio}
+
 \begin{table}[h!]
 \centering
 \small
-\begin{tabularx}{\textwidth}{llp{4.5cm}p{3cm}X}
-\toprule
-\textbf{Caso} & \textbf{Área Evaluada} & \textbf{Procedimiento Aplicado} & \textbf{Criterio de Aprobación} & \textbf{Resultado} \\
-\midrule
-TC-01 & Montaje SMB & Conexión desde Windows 11 y Linux con credenciales válidas. & Montaje exitoso y lectura/escritura en carpeta compartida. & \textcolor{okgreen}{\textbf{CONFORME}} \\
-TC-02 & Estructura ZFS & Ejecución del comando \texttt{zfs list} en la consola del host. & Presencia de todos los datasets con recordsize adecuado. & \textcolor{okgreen}{\textbf{CONFORME}} \\
-TC-03 & VSS Shadow Copies & Acceso a la pestaña ``Versiones anteriores'' en Windows Explorer. & Lista cronológica de instantáneas y restauración exitosa. & \textcolor{okgreen}{\textbf{CONFORME}} \\
-TC-04 & Buzón Sticky Bit & Intento del usuario B de eliminar un archivo creado por usuario A. & Operación rechazada con error \texttt{Access Denied}. & \textcolor{okgreen}{\textbf{CONFORME}} \\
-TC-05 & Tareas en Cola & Ejecución de tarea de cálculo de almacenamiento en TaskEngine. & Tarea procesada en background sin congelar navegación. & \textcolor{okgreen}{\textbf{CONFORME}} \\
-TC-06 & Importación CSV & Carga de archivo CSV con 50 cuentas de usuario estudiantiles. & Creación íntegra de cuentas y carpetas personales. & \textcolor{okgreen}{\textbf{CONFORME}} \\
-TC-07 & Detección Sentinel & Modificación forzada del archivo trampa \texttt{.canary\_honeypot.docx}. & Bloqueo de cliente y congelamiento \texttt{zfs hold}. & \textcolor{okgreen}{\textbf{CONFORME}} \\
-TC-08 & Veto de Ejecutables & Intento de subida de archivo binario \texttt{prueba.exe} vía SMB. & Rechazo inmediato (\texttt{NT\_STATUS\_OBJECT\_NAME\_NOT\_FOUND}). & \textcolor{okgreen}{\textbf{CONFORME}} \\
-TC-09 & Control de Acceso Web & 5 intentos erróneos de contraseña en el portal administrativo. & Bloqueo automático de IP y usuario por 5 minutos. & \textcolor{okgreen}{\textbf{CONFORME}} \\
-TC-10 & Respaldo Cifrado & Ejecución manual de \texttt{scripts/nas-backup.sh}. & Archivo transferido a Cloudflare R2 con cifrado AES-256. & \textcolor{okgreen}{\textbf{CONFORME}} \\
-TC-11 & Aislamiento de Red & Intento de conexión al puerto 5432 desde otra estación en la LAN. & Conexión rechazada (puerto no expuesto fuera del host). & \textcolor{okgreen}{\textbf{CONFORME}} \\
-TC-12 & Rendimiento de Red & Transferencia de archivo ISO de 4 GB mediante protocolo SMB. & Tasa de transferencia sostenida $\ge 110$ MB/s. & \textcolor{okgreen}{\textbf{CONFORME}} \\
-TC-13 & Límite Memoria ARC & Lectura masiva de archivos para saturar la memoria caché. & Memoria ARC estabilizada exactamente en 2048 MB. & \textcolor{okgreen}{\textbf{CONFORME}} \\
-TC-14 & Falla de Disco ZFS & Desconexión física en caliente de un disco del arreglo RAID-Z1. & Pool pasa a estado \texttt{DEGRADED} sin pérdida de datos. & \textcolor{okgreen}{\textbf{CONFORME}} \\
-TC-15 & Liberación COW & Simulación de pool al 100\% y destrucción de \texttt{tank/buffer}. & Liberación inmediata de 50 MB permitiendo borrado. & \textcolor{okgreen}{\textbf{CONFORME}} \\
-TC-16 & Consumo K3s & Monitoreo del proceso k3s server durante 24 horas en reposo. & Huella de memoria RAM inferior a 512 MB. & \textcolor{okgreen}{\textbf{CONFORME}} \\
-TC-17 & Pruebas de Humo & Ejecución de la batería automatizada: \texttt{./tests/smoke-test.sh}. & 100\% de las aserciones en estado de éxito. & \textcolor{okgreen}{\textbf{CONFORME}} \\
-TC-18 & Simulacro DRP & Recuperación en frío mediante \texttt{make dr-drill}. & Restauración de servicios y datos en menos de 45 min. & \textcolor{okgreen}{\textbf{CONFORME}} \\
-\bottomrule
-\end{tabularx}
+\caption{Fases del flujo de gestión de cambios.}
+\label{tab:gobernanza}
+\begin{tabular}{|c|p{14cm}|}
+\hline
+\textbf{\textsf{Fase}} & \textbf{\textsf{Actividad}} \\
+\hline
+1 & Solicitud de cambio registrada con plantilla normalizada en rama Git. \\
+\hline
+2 & Implementación en entorno de prueba y validación local. \\
+\hline
+3 & CI: linting de manifiestos, escaneo de secretos y validación estática. \\
+\hline
+4 & Revisión por pares con aprobación obligatoria de un revisor técnico. \\
+\hline
+5 & Fusión en rama principal (\texttt{main}); aplicación determinista de configuración. \\
+\hline
+6 & Verificación post-despliegue mediante pruebas de humo y cierre con evidencia. \\
+\hline
+\end{tabular}
 \end{table}
 
-\subsection{13.2. Registro de Evidencias de Verificación}
-Cada caso de prueba cuenta con su registro de trazabilidad técnica conteniendo: identificador del caso, marca temporal extendida ISO 8601, versión del kernel y software evaluado, volcado de salida capturado de la terminal y firma de validación del administrador responsable.
+\subsection{10.4 Matriz de responsabilidades (RACI)}
 
-\subsection{13.3. Criterios de Aceptación Global}
-El sistema se declara formally calificado y apto para operación en producción bajo las siguientes condiciones cumplidas:
+\begin{table}[h!]
+\centering
+\small
+\caption{Matriz RACI de gobierno de la plataforma.}
+\label{tab:raci}
+\begin{tabular}{|p{6.5cm}|c|c|c|c|}
+\hline
+\textbf{\textsf{Actividad}} & \textbf{\textsf{Arq. TI}} & \textbf{\textsf{Operac.}} & \textbf{\textsf{CISO}} & \textbf{\textsf{Direc. TI}} \\
+\hline
+Diseño de la arquitectura & R/A & C & C & I \\
+\hline
+Aprovisionamiento inicial & C & R & I & A \\
+\hline
+Gestión de secretos y llaves maestras & C & R & A & I \\
+\hline
+Operación diaria y monitorización & I & R/A & I & I \\
+\hline
+Gestión de incidentes de seguridad & C & R & A & I \\
+\hline
+Pruebas del plan de recuperación & R & R & C & A \\
+\hline
+Auditoría de cumplimiento normativo & C & C & R & A \\
+\hline
+Aprobación de cambios mayores & C & C & C & R/A \\
+\hline
+\multicolumn{5}{|l|}{\footnotesize R = Responsable $\cdot$ A = Aprueba $\cdot$ C = Consultado $\cdot$ I = Informado} \\
+\hline
+\end{tabular}
+\end{table}
+
+\newpage
+\section{Gestión de riesgos}
+Registro elaborado conforme a ISO 31000:2018, con valoración de probabilidad e impacto en tres niveles (Bajo / Medio / Alto):
+
+\begin{table}[h!]
+\centering
+\small
+\caption{Registro de riesgos y tratamientos.}
+\label{tab:riesgos}
+\begin{tabular}{|c|p{4.2cm}|c|c|c|p{5.8cm}|}
+\hline
+\textbf{\textsf{ID}} & \textbf{\textsf{Riesgo}} & \textbf{\textsf{Prob.}} & \textbf{\textsf{Imp.}} & \textbf{\textsf{Nivel}} & \textbf{\textsf{Tratamiento aplicado}} \\
+\hline
+R-01 & Fallo simultáneo de 2 discos del pool & B & A & Medio & Respaldo incremental diario en Cloudflare R2 con cifrado AES-256; zpool status diario. \\
+\hline
+R-02 & Corrupción por ausencia de memoria ECC & M & A & Alto & Checksums ZFS con autocorrección desde paridad RAID-Z1; recomendación de ECC. \\
+\hline
+R-03 & Compromiso de credenciales de usuario & B & A & Medio & Bloqueo tras 5 intentos fallidos (portal\_state.py); políticas de contraseñas complejas. \\
+\hline
+R-04 & Filtración de credenciales en el repositorio & M & A & Alto & Escaneo CI con bloqueo de commits; prohibición estricta de credenciales en Git. \\
+\hline
+R-05 & Pérdida de conectividad saliente a Internet & M & M & Medio & Servicios SMB y portal 100\% operativos en red local sin depender de la nube. \\
+\hline
+R-06 & Nodo único como punto de fallo de cómputo & A & M & Alto & RTO $\le 35$ min; instalación desatendida mediante bootstrap documentado. \\
+\hline
+R-07 & Cifrado por ransomware de volúmenes & M & A & Alto & Instantáneas de solo lectura programadas, demonio Sentinel con trampas y zfs hold. \\
+\hline
+R-08 & Deriva de configuración no detectada & B & M & Bajo & Modelo GitOps con manifiestos versionados; indicador de deriva = 0. \\
+\hline
+R-09 & Vulnerabilidad en imagen base de contenedor & M & M & Medio & Fijación por versión y digest; monitoreo de boletines CVE de seguridad. \\
+\hline
+R-10 & Llenado del pool ZFS al 100\% de capacidad & M & A & Alto & **Dataset de reserva tank/buffer (50 MB)** liberable de inmediato para habilitar borrado (ADR-016). \\
+\hline
+\end{tabular}
+\end{table}
+
+\section{Matriz de trazabilidad de requisitos}
+Conforme a ISO/IEC/IEEE 29148:2018, correspondencia bidireccional entre requisitos, componentes y evidencias de verificación:
+
+\begin{table}[h!]
+\centering
+\small
+\caption{Trazabilidad requisito $\to$ componente $\to$ evidencia.}
+\label{tab:trazabilidad}
+\begin{tabular}{|c|p{2.8cm}|p{6cm}|c|}
+\hline
+\textbf{\textsf{Requisito}} & \textbf{\textsf{Componente}} & \textbf{\textsf{Artefacto de implementación}} & \textbf{\textsf{Evidencia}} \\
+\hline
+REQ-FUN-001 & Samba & \texttt{apps/samba/deployment.yaml} & TC-01 \\
+\hline
+REQ-FUN-002 & OpenZFS & \texttt{scripts/bootstrap-enterprise-nas.sh} & TC-02 \\
+\hline
+REQ-FUN-003 & Samba VSS & \texttt{vfs\_shadow\_copy2} en \texttt{apps/samba/} & TC-03 \\
+\hline
+REQ-FUN-004 & Permisos ZFS & Permiso 1777 en \texttt{/tank/nas/alumnos/entregas} & TC-04 \\
+\hline
+REQ-FUN-005 & Cron ZFS & Tareas programadas de instantáneas & TC-05 \\
+\hline
+REQ-FUN-006 & Portal Web & \texttt{apps/portal-qr/task\_engine.py} (CSV y tareas) & TC-06 \\
+\hline
+REQ-FUN-007 & Sentinel & \texttt{infra/sentinel/sentinel.py} (Honeypot) & TC-07 \\
+\hline
+REQ-FUN-008 & Backup Remoto & \texttt{scripts/nas-backup.sh} (Cloudflare R2) & TC-08 \\
+\hline
+REQ-SEG-001 & Firewall/Red & Ningún puerto entrante publicado en WAN & TC-09 \\
+\hline
+REQ-SEG-003 & Samba & Directiva global \texttt{veto files} en Samba & TC-10 \\
+\hline
+REQ-SEG-004 & Manifiestos K3s & \texttt{securityContext} restrictivo sin privilegios & TC-11 \\
+\hline
+REQ-SEG-006 & Red K3s & PostgreSQL y Redis aislados de la LAN & TC-12 \\
+\hline
+REQ-SEG-007 & Portal Web & \texttt{apps/portal-qr/portal\_state.py} (Rate limit) & TC-13 \\
+\hline
+REQ-SEG-008 & Criptografía & Cifrado OpenSSL AES-256-CBC en respaldos & TC-14 \\
+\hline
+REQ-REN-002 & Rendimiento & Transferencia sostenida en red Gigabit & TC-15 \\
+\hline
+REQ-REN-003 & Kernel Linux & Límite ZFS ARC fijado en 2 GB & TC-16 \\
+\hline
+REQ-DIS-002 & OpenZFS & Arreglo RAID-Z1 con paridad distribuida & TC-17 \\
+\hline
+REQ-DIS-003 & OpenZFS & Dataset de emergencia COW \texttt{tank/buffer} & TC-18 \\
+\hline
+\end{tabular}
+\end{table}
+
+\newpage
+\section{Verificación y validación}
+
+\subsection{13.1 Batería de casos de prueba}
+
+\begin{table}[h!]
+\centering
+\small
+\caption{Casos de prueba y criterios de aceptación.}
+\label{tab:casos_prueba}
+\begin{tabular}{|c|p{4.5cm}|p{6cm}|c|}
+\hline
+\textbf{\textsf{Caso}} & \textbf{\textsf{Objetivo de la prueba}} & \textbf{\textsf{Criterio de aceptación}} & \textbf{\textsf{Resultado}} \\
+\hline
+TC-01 & Montaje SMB desde clientes & Autenticación y lectura/escritura en compartido. & $\checkmark$ Conforme \\
+\hline
+TC-02 & Estructura de datasets ZFS & \texttt{zpool status} ONLINE, datasets con recordsize adecuado. & $\checkmark$ Conforme \\
+\hline
+TC-03 & Autoservicio VSS Shadow Copies & Instantáneas visibles y restaurables en Windows Explorer. & $\checkmark$ Conforme \\
+\hline
+TC-04 & Buzón ciego con sticky bit & Alumno B no puede eliminar archivos creados por Alumno A. & $\checkmark$ Conforme \\
+\hline
+TC-05 & Generación de snapshots ZFS & Presencia de instantáneas con formato \texttt{@GMT}. & $\checkmark$ Conforme \\
+\hline
+TC-06 & Tareas asíncronas y CSV & Carga por lotes y reportes sin congelar navegación web. & $\checkmark$ Conforme \\
+\hline
+TC-07 & Detección Sentinel anti-ransomware & Modificación en canario activa bloqueo y \texttt{zfs hold}. & $\checkmark$ Conforme \\
+\hline
+TC-08 & Respaldo cifrado Cloudflare R2 & Flujo subido a R2 con cifrado simétrico AES-256-CBC. & $\checkmark$ Conforme \\
+\hline
+TC-09 & Ausencia de puertos en WAN & Escaneo perimetral externo: 0 puertos abiertos. & $\checkmark$ Conforme \\
+\hline
+TC-10 & Bloqueo forzado veto files & Subida de archivo \texttt{.exe} rechazada con error SMB. & $\checkmark$ Conforme \\
+\hline
+TC-11 & Ausencia de pods privilegiados & Auditoría de manifiestos conforme a menor privilegio. & $\checkmark$ Conforme \\
+\hline
+TC-12 & Aislamiento de base de datos & Conexión externa a puerto 5432 rechazada desde la LAN. & $\checkmark$ Conforme \\
+\hline
+TC-13 & Control de fuerza bruta web & Bloqueo de IP tras 5 intentos fallidos consecutivos. & $\checkmark$ Conforme \\
+\hline
+TC-14 & Integridad de cifrado AES-256 & Archivo exportado descifrable únicamente con clave maestra. & $\checkmark$ Conforme \\
+\hline
+TC-15 & Rendimiento de transferencia & Transferencia sostenida $\ge 110\text{ MB/s}$ en 1 GbE. & $\checkmark$ Conforme \\
+\hline
+TC-16 & Límite de memoria ZFS ARC & Consumo de RAM de ARC estabilizado en $\le 2048\text{ MB}$. & $\checkmark$ Conforme \\
+\hline
+TC-17 & Tolerancia a fallo de disco & Desconexión física en caliente; pool en estado DEGRADED. & $\checkmark$ Conforme \\
+\hline
+TC-18 & Desbloqueo COW tank/buffer & Destrucción de dataset libera 50 MB en pool saturado. & $\checkmark$ Conforme \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{13.2 Registro de evidencias}
+Cada caso debe documentarse con: identificador, fecha y hora (ISO 8601), entorno, procedimiento aplicado, salida capturada, resultado (Conforme / No conforme) y firma del responsable.
+
+\subsection{13.3 Criterios de aceptación global}
+El sistema se considerará apto para producción cuando:
 \begin{enumerate}
-    \item El 100\% de los casos de prueba operativos (TC-01 a TC-17) presentan estado \textbf{CONFORME}.
-    \item El simulacro de recuperación ante desastres (TC-18) se ejecutó satisfactoriamente cumpliendo los límites de RTO y RPO.
-    \item No existen secretos o credenciales en texto claro dentro del repositorio de control de versiones.
+    \item El 100 \% de los casos TC-01 a TC-18 estén en estado \textbf{Conforme}.
+    \item El simulacro de recuperación ante desastres se haya ejecutado con RTO dentro del objetivo ($\le 35$ min con pool intacto).
+    \item No exista requisito Obligatorio sin evidencia asociada en el registro.
+    \item El escaneo de manifiestos y secretos no presente hallazgos abiertos en el repositorio.
 \end{enumerate}
 
-% =============================================================================
-% CAPÍTULO 14: CONFORMIDAD NORMATIVA Y LIMITACIONES CONOCIDAS
-% =============================================================================
-\section{Conformidad Normativa y Resolución de Limitaciones}
+\newpage
+\section{Conformidad normativa y limitaciones conocidas}
 
-\subsection{14.1. Declaración de Conformidad Técnica}
-Sobre la base de los controles técnicos y operativos auditados en los capítulos 6, 7 y 9, la plataforma se declara **CONFORME** con las disposiciones aplicables de las normas internacionales ISO/IEC 27001:2022 (Anexo A), ISO 22301:2019 (Continuidad del Negocio) e ISO 9001:2015 (Control de Información Documentada).
+\subsection{14.1 Declaración de conformidad técnica}
+Sobre la base de los controles de los capítulos 6, 7 y 9, la plataforma se declara conforme en lo aplicable con ISO/IEC 27001:2022 (Anexo A) e ISO 22301:2019, sujeta a las limitaciones siguientes y a verificación independiente en el marco de un sistema de gestión certificado.
 
-\subsection{14.2. Resolución Formal de Limitaciones de la Versión 1.0}
-En la versión preliminar del documento (NAS-ET-001 v1.0) se registraron cinco limitaciones operativas conocidas. La presente versión 2.0 documenta su tratamiento y resolución técnica:
+\subsection{14.2 Limitaciones conocidas y plan de mejora}
 
 \begin{table}[h!]
 \centering
 \small
-\begin{tabularx}{\textwidth}{lp{3.5cm}X}
-\toprule
-\textbf{Ref.} & \textbf{Limitación Original (v1.0)} & \textbf{Resolución Técnica Implementada en la Versión 2.0} \\
-\midrule
-L-01 & Servidor en nodo único sin alta disponibilidad & Aceptado para la fase actual. Se mitiga mediante el aprovisionamiento desatendido (RTO $\le 35$ min) y respaldo externo continuo. \\
-L-02 & Cifrado en reposo ZFS no activo en discos locales & Aceptado por limitación de CPU en hardware anfitrión. Compensado mediante cifrado forzado AES-256 en todo respaldo exportado. \\
-L-03 & Escaneo de vulnerabilidades manual & Mitigado mediante la integración de validación estática de manifiestos y escaneo en la cadena de CI. \\
-L-04 & Replicación externa con RPO de 24 horas & Mitigado mediante políticas de instantáneas locales cada hora (RPO local $\le 1$ h) y exportación diaria consolidada. \\
-\textbf{L-05} & \textbf{Restauración granular requería consola} & **RESUELTO AL 100\%.** Habilitación del módulo \texttt{vfs\_shadow\_copy2} en Samba, permitiendo a los usuarios restaurar archivos directamente desde Windows Explorer. \\
-\bottomrule
-\end{tabularx}
+\caption{Limitaciones conocidas y acciones de mejora.}
+\label{tab:limitaciones}
+\begin{tabular}{|c|p{5cm}|p{8.5cm}|}
+\hline
+\textbf{\textsf{Ref.}} & \textbf{\textsf{Limitación}} & \textbf{\textsf{Acción de mejora prevista}} \\
+\hline
+L-01 & Nodo único sin alta disponibilidad a nivel de servidor físico. & Mitigado por instalación desatendida y recuperación rápida (RTO $\le 35$ min); ruta a clúster multinodo. \\
+\hline
+L-02 & Cifrado nativo de ZFS en reposo local no habilitado. & Compensado mediante cifrado simétrico AES-256 forzado en todo respaldo exportado a la nube. \\
+\hline
+L-03 & Escaneo de vulnerabilidades de imágenes en pipeline. & Incorporación programada de escáner Trivy en el flujo de CI. \\
+\hline
+L-04 & Réplica externa asíncrona; RPO de hasta 24 h en la nube. & Mitigado mediante instantáneas locales cada hora (RPO local $\le 1$ h) y retención por 30 días. \\
+\hline
+\textbf{L-05} & \textbf{Restauración de archivos requería consola (v1.0).} & \textbf{RESUELTO AL 100\% EN v2.0: Implementación de VSS Shadow Copies (vfs\_shadow\_copy2) permitiendo autoservicio desde Windows Explorer.} \\
+\hline
+\end{tabular}
 \end{table}
 
-\subsection{14.3. Mantenimiento y Revisión del Documento}
-Este documento técnico debe revisarse obligatoriamente ante cualquiera de los siguientes eventos:
-\begin{itemize}[leftmargin=*]
-    \item Modificación en la topología física de discos o ampliación del pool ZFS.
-    \item Emisión de un nuevo registro de decisión de arquitectura (ADR).
-    \item Ejecución semestral programada del simulacro de recuperación ante desastres (DRP).
-    \item Transcurso de un periodo máximo de 12 meses desde la fecha de última aprobación formal.
-\end{itemize}
+\subsection{14.3 Mantenimiento del documento}
+Este documento debe revisarse ante cualquier cambio arquitectónico relevante o nuevo ADR; tras cada simulacro semestral de recuperación; periódicamente con frecuencia máxima de doce meses; y a solicitud del CISO o de Auditoría Interna.
 
-% =============================================================================
-% ANEXOS FORMALES
-% =============================================================================
+\newpage
 \appendix
+\section{Referencias normativas y bibliografía}
 
-\section{Referencias Normativas y Bibliografía}
+\begin{description}
+    \item[{[ISO-9001]}] ISO 9001:2015, \textit{Quality management systems — Requirements}. ISO, Ginebra.
+    \item[{[ISO-29148]}] ISO/IEC/IEEE 29148:2018, \textit{Systems and software engineering — Requirements engineering}.
+    \item[{[ISO-26514]}] ISO/IEC/IEEE 26514:2008, \textit{User documentation requirements for software designers}.
+    \item[{[ISO-27001]}] ISO/IEC 27001:2022, \textit{Information security management systems — Requirements}.
+    \item[{[ISO-27002]}] ISO/IEC 27002:2022, \textit{Information security controls}.
+    \item[{[ISO-22301]}] ISO 22301:2019, \textit{Business continuity management systems — Requirements}.
+    \item[{[ISO-31000]}] ISO 31000:2018, \textit{Risk management — Guidelines}.
+    \item[{[ISO-8601]}] ISO 8601-1:2019, \textit{Date and time — Representations for information interchange}.
+    \item[{[ISO-15489]}] ISO 15489-1:2016, \textit{Information and documentation — Records management}.
+    \item[{[RFC-2119]}] Bradner, S., \textit{Key words for use in RFCs to Indicate Requirement Levels}, marzo de 1997.
+    \item[{[RFC-8174]}] Leiba, B., \textit{Ambiguity of Uppercase vs Lowercase in RFC 2119 Key Words}, mayo de 2017.
+    \item[{[RFC-1918]}] Rekhter, Y. et al., \textit{Address Allocation for Private Internets}, febrero de 1996.
+    \item[{[RFC-8446]}] Rescorla, E., \textit{The Transport Layer Security (TLS) Protocol Version 1.3}, agosto de 2018.
+    \item[{[NIST-800-207]}] Rose, S. et al., \textit{Zero Trust Architecture}, NIST SP 800-207, 2020.
+    \item[{[OWASP-ASVS]}] OWASP, \textit{Application Security Verification Standard}, v4.0.3, 2021.
+    \item[{[REPO]}] Meza, O., \textit{Enterprise Educational NAS, repositorio de código y automatización GitOps}, 2026.
+\end{description}
 
-\begin{enumerate}[label={[\arabic*]},leftmargin=*]
-    \item \textbf{ISO 9001:2015:} \textit{Quality management systems --- Requirements}. International Organization for Standardization, Ginebra, Suiza.
-    \item \textbf{ISO/IEC/IEEE 29148:2018:} \textit{Systems and software engineering --- Life cycle processes --- Requirements engineering}. IEEE Computer Society.
-    \item \textbf{ISO/IEC/IEEE 26514:2008:} \textit{Systems and software engineering --- Requirements for designers and developers of user documentation}.
-    \item \textbf{ISO/IEC 27001:2022:} \textit{Information security, cybersecurity and privacy protection --- Information security management systems --- Requirements}.
-    \item \textbf{ISO/IEC 27002:2022:} \textit{Information security, cybersecurity and privacy protection --- Information security controls}.
-    \item \textbf{ISO 22301:2019:} \textit{Security and resilience --- Business continuity management systems --- Requirements}.
-    \item \textbf{ISO 31000:2018:} \textit{Risk management --- Guidelines}. International Organization for Standardization.
-    \item \textbf{ISO 8601-1:2019:} \textit{Date and time --- Representations for information interchange --- Part 1: Basic rules}.
-    \item \textbf{ISO 15489-1:2016:} \textit{Information and documentation --- Records management --- Concepts and principles}.
-    \item \textbf{IETF RFC 2119:} Bradner, S., \textit{Key words for use in RFCs to Indicate Requirement Levels}, Harvard University, marzo de 1997.
-    \item \textbf{IETF RFC 8174:} Leiba, B., \textit{Ambiguity of Uppercase vs Lowercase in RFC 2119 Key Words}, Huawei Technologies, mayo de 2017.
-    \item \textbf{IETF RFC 1918:} Rekhter, Y. et al., \textit{Address Allocation for Private Internets}, Network Working Group, febrero de 1996.
-    \item \textbf{IETF RFC 8446:} Rescorla, E., \textit{The Transport Layer Security (TLS) Protocol Version 1.3}, agosto de 2018.
-    \item \textbf{NIST SP 800-207:} Rose, S. et al., \textit{Zero Trust Architecture}, National Institute of Standards and Technology, EE. UU., 2020.
-    \item \textbf{OWASP ASVS v4.0.3:} Open Web Application Security Project, \textit{Application Security Verification Standard}, 2021.
-    \item \textbf{Repositorio Git Institucional:} Meza, O., \textit{Enterprise Educational NAS Architecture and GitOps Automation}, 2026.
-\end{enumerate}
-
-\section{Registro de Decisiones Pendientes de Adopción}
+\section{Registro de decisiones pendientes}
 
 \begin{table}[h!]
 \centering
 \small
-\begin{tabularx}{\textwidth}{lp{5.5cm}p{3cm}X}
-\toprule
-\textbf{ID} & \textbf{Decisión Pendiente de Adopción} & \textbf{Responsable} & \textbf{Estado en la Versión 2.0} \\
-\midrule
-D-01 & Cifrado nativo de datasets ZFS en reposo & Arquitectura TI & En evaluación de impacto de CPU para versión 2.1. \\
-\textbf{D-02} & \textbf{Destino definitivo de la copia remota} & **Operaciones TI** & **RESUELTO: Cloudflare R2 con cifrado AES-256 (ADR-015).** \\
-D-03 & Integración de escáner Trivy en pipeline de CI & DevSecOps & Programado para el segundo semestre de 2027. \\
-D-04 & Evolución a clúster de alta disponibilidad multinodo & Dirección TI & Condicionado a adquisición de nuevos servidores físicos. \\
-D-05 & Periodo de retención definitiva de backups R2 & Cumplimiento & Fijado preliminarmente en 180 días renovables. \\
-\bottomrule
-\end{tabularx}
+\caption{Decisiones pendientes de adopción.}
+\label{tab:decisiones_pendientes}
+\begin{tabular}{|c|p{6.5cm}|c|p{4cm}|}
+\hline
+\textbf{\textsf{ID}} & \textbf{\textsf{Decisión pendiente}} & \textbf{\textsf{Responsable}} & \textbf{\textsf{Estado en v2.0}} \\
+\hline
+D-01 & Habilitación del cifrado nativo de datasets ZFS & Arq. TI & Evaluación de sobrecarga de CPU para v2.1. \\
+\hline
+\textbf{D-02} & \textbf{Destino definitivo de la copia externa} & \textbf{Operaciones} & \textbf{RESUELTO EN v2.0: Cloudflare R2 con cifrado simétrico AES-256 (ADR-015).} \\
+\hline
+D-03 & Escáner de vulnerabilidades en la cadena CI & Arq. TI & En proceso de evaluación de herramientas. \\
+\hline
+D-04 & Evolución a clúster multinodo & Direc. TI & Sujeto a dotación de nuevo hardware. \\
+\hline
+D-05 & Periodo de retención documental definitivo & Cumplimiento & Fijado en 10 años conforme a ISO 15489. \\
+\hline
+\end{tabular}
 \end{table}
 
-\section{Glosario Normativo Complementario}
-
-\begin{description}[leftmargin=*,style=nextline]
-    \item[Auditoría Técnica:] Proceso sistemático, independiente y documentado para obtener evidencias y evaluarlas de manera objetiva con el fin de determinar el grado de cumplimiento de los requisitos especificados.
-    \item[Conformidad:] Cumplimiento efectivo y comprobado de un requisito normativo o criterio técnico de ingeniería.
-    \item[Control de Seguridad:] Medida administrativa, física o técnica orientada a modificar o mitigar un riesgo de seguridad de la información.
-    \item[Evidencia Objetiva:] Datos y registros verificables que respaldan la existencia o veracidad de una condición o resultado operativo.
-    \item[No Conformidad:] Incumplimiento no justificado de un requisito normativo, contractual o técnico preestablecido.
-    \item[Resiliencia de Infraestructura:] Capacidad de un sistema de TI para absorber impactos, adaptarse a fallas de componentes de hardware y restaurar sus operaciones esenciales en los plazos fijados por los objetivos de continuidad.
+\section{Glosario normativo complementario}
+\begin{description}
+    \item[Auditoría:] Proceso sistemático, independiente y documentado para obtener y evaluar evidencias.
+    \item[Conformidad:] Cumplimiento demostrado de un requisito especificado en este documento.
+    \item[Control:] Medida administrativa, lógica o física que modifica o reduce el riesgo.
+    \item[Evidencia objetiva:] Datos verificables que respaldan la existencia o veracidad de un hecho técnico.
+    \item[Incidente:] Evento no planificado que interrumpe o degrada la calidad operativa de un servicio.
+    \item[No conformidad:] Incumplimiento comprobado de un requisito normativo o técnico.
+    \item[Registro:] Documento que presenta resultados obtenidos o evidencia de actividades ejecutadas.
+    \item[Riesgo:] Efecto de la incertidumbre sobre el cumplimiento de los objetivos operativos del NAS.
 \end{description}
 
 \vspace{1.5cm}
 \begin{center}
-\rule{0.6\textwidth}{0.6pt}\\[0.3cm]
-\textbf{\large\color{headerblue}FIN DEL DOCUMENTO TÉCNICO}\\[0.1cm]
-\textbf{NAS-ET-001 --- Versión 2.0 (Release Candidate / Producción)}\\[0.1cm]
-{\small Sistema de Almacenamiento Institucional en Red $|$ Fecha de Emisión: 2026-11-04}\\[0.3cm]
-\rule{0.6\textwidth}{0.6pt}
+\rule{0.6\textwidth}{0.5pt}\\[0.3cm]
+\textbf{\sffamily\color{primaryblue}FIN DEL DOCUMENTO}\\[0.1cm]
+\textsf{NAS-ET-001 $\cdot$ Versión 2.0 (Release Candidate / Producción) $\cdot$ Emitido el 2026-11-04}\\[0.2cm]
+{\footnotesize\textit{Documento generado con \LaTeX{}. La integridad del artefacto PDF puede verificarse mediante su resumen criptográfico SHA-256.}}
 \end{center}
 
 \end{document}
