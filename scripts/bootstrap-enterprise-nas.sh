@@ -75,8 +75,22 @@ ensure_ds tank/nas/postgres "10G" "8K"
 ensure_ds tank/nas/nextcloud "50G" "128K"
 ensure_ds tank/nas/samba "20G" "128K"
 sudo zfs set logbias=latency tank/nas/postgres
-sudo mkdir -p /tank/nas/.samba-private /tank/nas/.Papelera
-pass "Datasets ZFS y optimizaciones de recordsize aplicadas."
+
+# Buffer de emergencia anti-bloqueo COW (50M)
+if ! sudo zfs list -H "tank/buffer" >/dev/null 2>&1; then
+  sudo zfs create -o reservation=50M -o compression=off "tank/buffer"
+fi
+
+# Shadow Copies VSS: visibilidad del árbol de snapshots
+sudo zfs set snapdir=visible tank/nas tank/nas/profesores tank/nas/alumnos tank/nas/publico 2>/dev/null || true
+
+# Límite de memoria ZFS ARC permanente (2 GB)
+echo "options zfs zfs_arc_max=2147483648" | sudo tee /etc/modprobe.d/zfs.conf >/dev/null
+echo 2147483648 | sudo tee /sys/module/zfs/parameters/zfs_arc_max >/dev/null 2>&1 || true
+
+sudo mkdir -p /tank/nas/.samba-private /tank/nas/.Papelera /tank/nas/alumnos/entregas
+sudo chmod 1777 /tank/nas/alumnos/entregas
+pass "Datasets ZFS, buffer COW (50M), snapdir VSS y límite ARC (2GB) aplicados."
 
 info "4. Verificando e instalando K3s (Versión fijada v1.31.1+k3s1)..."
 if ! command -v k3s >/dev/null 2>&1; then
