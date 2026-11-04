@@ -76,8 +76,24 @@ spec:
                   ensure_dataset_with_quota "tank/nas/alumnos" "5G" "128K"
                   ensure_dataset_with_quota "tank/nas/publico" "5G" "128K"
 
-                  echo "[PASS] Cuotas y optimizaciones ZFS aplicadas:"
-                  zfs get -o name,property,value quota,recordsize,compression tank/nas/postgres tank/nas/profesores tank/nas/alumnos tank/nas/publico
+                  # 3. Buffer de salvaguarda anti-bloqueo del pool (Reserva de emergencia COW)
+                  if ! zfs list -H "tank/buffer" >/dev/null 2>&1; then
+                    echo "[INFO] Creando dataset buffer de emergencia tank/buffer (50M)..."
+                    zfs create -o reservation=50M -o compression=off "tank/buffer"
+                  fi
+
+                  # 4. Visibilidad de snapshots para Windows Explorer Shadow Copies (VSS)
+                  zfs set snapdir=visible tank/nas 2>/dev/null || true
+                  zfs set snapdir=visible tank/nas/profesores 2>/dev/null || true
+                  zfs set snapdir=visible tank/nas/alumnos 2>/dev/null || true
+                  zfs set snapdir=visible tank/nas/publico 2>/dev/null || true
+
+                  # 5. Modo 'Buzón Ciego' en carpeta de entregas (Sticky bit estilo /tmp escolar)
+                  mkdir -p /tank/nas/alumnos/entregas
+                  chmod 1777 /tank/nas/alumnos/entregas
+
+                  echo "[PASS] Cuotas, buffer y optimizaciones ZFS aplicadas:"
+                  zfs get -o name,property,value quota,recordsize,compression,reservation tank/nas/postgres tank/nas/profesores tank/nas/alumnos tank/nas/publico tank/buffer
               securityContext:
                 privileged: true
               resources:

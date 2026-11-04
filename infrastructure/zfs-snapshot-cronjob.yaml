@@ -26,13 +26,20 @@ spec:
             args:
             - |
               set -euo pipefail
-              SNAPSHOT_NAME="tank/nas@k8s-auto-$(date +%Y%m%d-%H%M)"
-              echo "[$(date -Iseconds)] Creating recursive snapshot: $SNAPSHOT_NAME"
-              nsenter --target 1 --mount --uts --ipc --net --pid -- zfs snapshot -r "$SNAPSHOT_NAME"
-              echo "[$(date -Iseconds)] Snapshot created successfully."
+              UTC_STAMP=$(date -u +%Y.%m.%d-%H.%M.%S)
+              SNAPSHOT_NAME="tank/nas@GMT-${UTC_STAMP}"
+              echo "[$(date -Iseconds)] Creating recursive Windows VSS compatible snapshot: $SNAPSHOT_NAME"
+              nsenter --target 1 --mount --uts --ipc --net --pid -- sh -c '
+                zfs snapshot -r "'"$SNAPSHOT_NAME"'"
+                zfs set snapdir=visible tank/nas
+                zfs set snapdir=visible tank/nas/profesores 2>/dev/null || true
+                zfs set snapdir=visible tank/nas/alumnos 2>/dev/null || true
+                zfs set snapdir=visible tank/nas/publico 2>/dev/null || true
+              '
+              echo "[$(date -Iseconds)] Snapshot created and snapdir configured successfully."
               # Cleanup: remove snapshots older than the 30 most recent, releasing sentinel holds first
               nsenter --target 1 --mount --uts --ipc --net --pid -- sh -c '
-                zfs list -t snapshot -o name -H 2>/dev/null | grep "k8s-auto-" | head -n -30 | while read -r snap; do
+                zfs list -t snapshot -o name -H 2>/dev/null | grep -E "k8s-auto-|GMT-" | head -n -30 | while read -r snap; do
                   zfs release sentinel-immutable "$snap" 2>/dev/null || true
                   zfs destroy -r "$snap" 2>/dev/null || true
                 done

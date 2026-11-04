@@ -84,7 +84,7 @@ spec:
         - "-g"
         - "delete veto files = no"
         - "-g"
-        - "vfs objects = recycle"
+        - "vfs objects = recycle shadow_copy2"
         - "-g"
         - "recycle:repository = .Papelera"
         - "-g"
@@ -93,6 +93,18 @@ spec:
         - "recycle:versions = yes"
         - "-g"
         - "recycle:touch = yes"
+        - "-g"
+        - "shadow:snapdir = .zfs/snapshot"
+        - "-g"
+        - "shadow:sort = desc"
+        - "-g"
+        - "shadow:format = GMT-%Y.%m.%d-%H.%M.%S"
+        - "-g"
+        - "shadow:snapprefix = ^GMT-[0-9]\\{4\\}\\.[0-9]\\{2\\}\\.[0-9]\\{2\\}-[0-9]\\{2\\}\\.[0-9]\\{2\\}\\.[0-9]\\{2\\}$"
+        - "-g"
+        - "shadow:delimiter = GMT-"
+        - "-g"
+        - "shadow:localtime = no"
         - "-s"
         - "profesores;/samba/profesores;yes;no;no;profesor,admin;admin;profesor,admin;Espacio Exclusivo Docente"
         - "-s"
@@ -114,6 +126,7 @@ spec:
         volumeMounts:
         - name: samba-storage
           mountPath: /samba
+          mountPropagation: HostToContainer
         - name: samba-private
           mountPath: /var/lib/samba/private
         resources:
