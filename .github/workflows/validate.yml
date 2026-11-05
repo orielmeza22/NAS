@@ -1,3 +1,4 @@
+---
 name: Validate Manifests
 
 on:
@@ -21,6 +22,12 @@ jobs:
               line-length: disable
               truthy:
                 check-keys: false
+              document-start: disable
+              indentation:
+                spaces: 2
+                indent-sequences: whatever
+              comments:
+                min-spaces-from-content: 1
 
   k8s-validate:
     name: Validate K8s Manifests

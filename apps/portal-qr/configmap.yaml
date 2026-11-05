@@ -1,3 +1,4 @@
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -26,19 +27,19 @@ data:
     import ssl
     from http.server import HTTPServer, BaseHTTPRequestHandler
     from socketserver import ThreadingMixIn
-    
+
     # Persistent state storage and asynchronous job execution engine
     import portal_state
     from task_engine import GLOBAL_TASK_ENGINE
-    
+
     class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
         daemon_threads = True
-    
+
     PORT = 80
     SESSION_TTL_SECONDS = 28800  # 8 hours
     MAX_FAILED_LOGINS = 5
     LOCKOUT_SECONDS = 900  # 15 minutes
-    
+
     # Strict validation regexes
     RE_USERNAME = re.compile(r"^[a-zA-Z0-9._-]{3,32}$")
     RE_SHARENAME = re.compile(r"^[a-zA-Z0-9._-]{2,32}$")
@@ -46,7 +47,7 @@ data:
     RE_TAG = re.compile(r"^[a-zA-Z0-9._-]{1,64}$")
     RE_DATASET = re.compile(r"^tank/nas(/[a-zA-Z0-9._-]+)*$")
     RE_NUMERIC = re.compile(r"^[0-9]+$")
-    
+
     def run_host_cmd(cmd_list_or_str, timeout=30):
         """
         Executes commands securely against the host root namespace via nsenter.
@@ -59,13 +60,13 @@ data:
         else:
             full_cmd = ["nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid", "--", "sh", "-c", cmd_list_or_str]
             shell_mode = False
-    
+
         try:
             res = subprocess.run(full_cmd, capture_output=True, text=True, timeout=timeout)
             return res.returncode == 0, res.stdout, res.stderr
         except Exception as e:
             return False, "", str(e)
-    
+
     def get_admin_password():
         """
         Retrieves the cluster admin password strictly from Kubernetes secrets or environment.
@@ -74,7 +75,7 @@ data:
         env_pass = os.environ.get("PORTAL_ADMIN_PASSWORD", "").strip()
         if env_pass:
             return env_pass
-    
+
         ok, out, _ = run_host_cmd(["kubectl", "get", "secret", "nextcloud-admin-credentials", "-o", "jsonpath={.data.password}"])
         if ok and out.strip():
             try:
@@ -85,7 +86,7 @@ data:
             except Exception:
                 pass
         return ""
-    
+
     def sanitize_path(relpath, base="/tank/nas"):
         """
         Guarantees that a requested path strictly resides within the base directory,
@@ -97,24 +98,24 @@ data:
         if real_target == real_base or real_target.startswith(real_base + os.sep):
             return real_target
         return real_base
-    
+
     class NasApiHandler(BaseHTTPRequestHandler):
         def get_client_ip(self):
             forwarded = self.headers.get("X-Forwarded-For")
             if forwarded:
                 return forwarded.split(",")[0].strip()
             return self.client_address[0]
-    
+
         def check_rate_limit(self, ip):
             allowed, remaining = portal_state.check_rate_limit(ip, MAX_FAILED_LOGINS, LOCKOUT_SECONDS)
             return allowed, remaining
-    
+
         def record_failed_login(self, ip):
             portal_state.record_failed_login(ip, MAX_FAILED_LOGINS, LOCKOUT_SECONDS)
-    
+
         def reset_failed_logins(self, ip):
             portal_state.reset_failed_logins(ip)
-    
+
         def is_auth(self):
             auth_hdr = self.headers.get("Authorization", "")
             if auth_hdr.startswith("Bearer "):
@@ -125,7 +126,7 @@ data:
                     self.auth_role = role
                     return True
             return False
-    
+
         def send_json(self, data, status=200):
             body = json.dumps(data).encode("utf-8")
             self.send_response(status)
@@ -140,7 +141,7 @@ data:
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             self.end_headers()
             self.wfile.write(body)
-    
+
         def do_OPTIONS(self):
             self.send_response(204)
             origin = self.headers.get("Origin")
@@ -150,11 +151,11 @@ data:
             self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             self.end_headers()
-    
+
         def do_GET(self):
             parsed = urllib.parse.urlparse(self.path)
             path = parsed.path
-    
+
             if path in ("/", "/index.html"):
                 self.serve_frontend()
                 return
@@ -167,11 +168,11 @@ data:
             elif path == "/api/samba/connector":
                 self.serve_samba_connector()
                 return
-    
+
             if not self.is_auth():
                 self.send_json({"error": "Unauthorized"}, 401)
                 return
-    
+
             if path == "/api/tasks":
                 tasks = portal_state.list_tasks(limit=30)
                 self.send_json({"success": True, "tasks": tasks})
@@ -188,7 +189,7 @@ data:
                 logs = portal_state.list_audit_events(limit=100)
                 self.send_json({"success": True, "logs": logs})
                 return
-    
+
             if path == "/api/system/status":
                 self.handle_system_status()
             elif path == "/api/raid/status":
@@ -223,7 +224,7 @@ data:
                 self.handle_samba_status()
             else:
                 self.send_json({"error": "Not Found"}, 404)
-    
+
         def do_POST(self):
             parsed = urllib.parse.urlparse(self.path)
             path = parsed.path
@@ -234,7 +235,7 @@ data:
                     body = json.loads(self.rfile.read(content_len).decode("utf-8"))
                 except Exception:
                     pass
-    
+
             if path == "/api/auth/login":
                 client_ip = self.get_client_ip()
                 allowed, remaining = self.check_rate_limit(client_ip)
@@ -242,14 +243,14 @@ data:
                     mins = max(1, int(remaining // 60))
                     self.send_json({"success": False, "error": f"Demasiados intentos fallidos. Bloqueo temporal de seguridad por {mins} minutos."}, 429)
                     return
-    
+
                 username = str(body.get("username", "")).strip().lower()
                 password = str(body.get("password", ""))
                 real_admin_pass = get_admin_password()
                 if not real_admin_pass:
                     self.send_json({"success": False, "error": "Servicio de autenticacion no configurado (credencial ausente)."}, 500)
                     return
-    
+
                 if (username in ("admin", "directivo", "root", "") and secrets.compare_digest(password, real_admin_pass)):
                     token = secrets.token_urlsafe(32)
                     user_role = "superadmin"
@@ -268,18 +269,18 @@ data:
                     portal_state.log_audit_event(username or "unknown", "auth.login_failed", {}, False, "Contraseña o usuario incorrecto", client_ip)
                     self.send_json({"success": False, "error": "Usuario o contrasena de administrador incorrectos."}, 401)
                 return
-    
+
             # STRICT DEVSECOPS: Require valid session token for all actions and APIs
             if not self.is_auth():
                 self.send_json({"success": False, "error": "No autorizado. Inicie sesion en el Centro de Control."}, 401)
                 return
-    
+
             if path == "/api/agent/action":
                 action = body.get("action", "")
                 params = body.get("params", {})
                 user = getattr(self, "auth_user", "admin")
                 client_ip = self.get_client_ip()
-    
+
                 # Asynchronous execution for long-running operations
                 req_async = body.get("async", False) or GLOBAL_TASK_ENGINE.is_action_async(action)
                 print(f"[ACTION ROUTER] action={action}, req_async={req_async}, client_ip={client_ip}", flush=True)
@@ -293,7 +294,7 @@ data:
                         "action": action
                     }, 202)
                     return
-    
+
                 import sys
                 if "/app-config" not in sys.path:
                     sys.path.insert(0, "/app-config")
@@ -302,13 +303,13 @@ data:
                 res = dispatch_request(req)
                 self.send_json(res, 200 if res.get("success") else 400)
                 return
-    
+
             if path == "/api/tasks/cancel" or (path.startswith("/api/tasks/") and path.endswith("/cancel")):
                 task_id = body.get("task_id", "") or path.split("/")[3]
                 ok = GLOBAL_TASK_ENGINE.cancel_task(task_id)
                 self.send_json({"success": ok, "message": f"Señal de cancelación enviada a la tarea {task_id}"})
                 return
-    
+
             if path == "/api/auth/logout":
                 token = self.headers.get("Authorization", "").replace("Bearer ", "").strip()
                 portal_state.destroy_session(token)
@@ -372,7 +373,7 @@ data:
                 self.handle_smoke_test()
             else:
                 self.send_json({"error": "Endpoint no encontrado"}, 404)
-    
+
         def serve_frontend(self):
             content = b"<h1>Consola de Administracion - Enterprise Storage Appliance</h1>"
             for fpath in ["/app-config/index.html", "/usr/share/nginx/html/index.html"]:
@@ -388,7 +389,7 @@ data:
             self.send_header("Content-Length", str(len(content)))
             self.end_headers()
             self.wfile.write(content)
-    
+
         def serve_tunnel_txt(self):
             tpath = "/tmp/nas-tunnel/url.txt"
             url = "http://localhost"
@@ -404,7 +405,7 @@ data:
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
-    
+
         def handle_public_status(self):
             tpath = "/tmp/nas-tunnel/url.txt"
             tunnel_url = ""
@@ -422,7 +423,7 @@ data:
                 "uptime_seconds": int(time.time()),
                 "platform": "Enterprise Educational NAS 2026"
             })
-    
+
         def handle_system_status(self):
             _, cpu_out, _ = run_host_cmd("top -bn1 | grep 'Cpu(s)' | awk '{print $2}' || echo 0")
             _, mem_out, _ = run_host_cmd("free -m | awk '/Mem:/ {print $3 "," $2}' || echo '0,0'")
@@ -436,7 +437,7 @@ data:
                 "total_ram_mb": total_ram,
                 "zfs_arc_mb": arc_out.strip()
             })
-    
+
         def handle_raid_status(self):
             _, pool_out, _ = run_host_cmd(["zpool", "list", "-H", "-p", "-o", "name,size,alloc,free,cap,health", "tank"])
             _, status_out, _ = run_host_cmd(["zpool", "status", "tank"])
@@ -452,13 +453,13 @@ data:
                         cksum_e = parts[4] if len(parts) > 4 else "0"
                         disks.append({"name": dname, "state": dstate, "read": read_e, "write": write_e, "cksum": cksum_e})
             self.send_json({"pool": pool_out.strip(), "raw_status": status_out, "disks": disks})
-    
+
         def handle_raid_action(self, body):
             action = body.get("action")
             target = body.get("target", "")
             if not re.match(r"^[a-zA-Z0-9._-]+$", target):
                 target = ""
-    
+
             if action == "offline_disk" and target:
                 ok, out, err = run_host_cmd(["zpool", "offline", "tank", f"/zfs-disks/{target}.img"])
             elif action == "online_disk" and target:
@@ -474,7 +475,7 @@ data:
                 self.send_json({"error": "Acción inválida o parámetros inseguros"}, 400)
                 return
             self.send_json({"success": ok, "output": out or err})
-    
+
         def handle_datasets_list(self):
             _, out, _ = run_host_cmd(["zfs", "list", "-H", "-o", "name,used,avail,refer,mountpoint,quota,compression,recordsize"])
             ds_list = []
@@ -483,16 +484,16 @@ data:
                 if len(p) >= 8:
                     ds_list.append({"name": p[0], "used": p[1], "avail": p[2], "refer": p[3], "mount": p[4], "quota": p[5], "compression": p[6], "recordsize": p[7]})
             self.send_json({"datasets": ds_list})
-    
+
         def handle_dataset_update(self, body):
             ds = body.get("dataset", "")
             prop = body.get("property", "")
             val = body.get("value", "")
-    
+
             if not RE_DATASET.match(ds):
                 self.send_json({"error": "Dataset inválido"}, 400)
                 return
-    
+
             if prop == "quota" and RE_QUOTA.match(val):
                 ok, out, err = run_host_cmd(["zfs", "set", f"quota={val}", ds])
             elif prop == "compression" and val in ("on", "off", "lz4", "zstd", "gzip"):
@@ -502,9 +503,9 @@ data:
             else:
                 self.send_json({"error": "Propiedad o valor no permitido"}, 400)
                 return
-    
+
             self.send_json({"success": ok, "output": out or err})
-    
+
         def handle_snapshots_list(self):
             _, out, _ = run_host_cmd(["zfs", "list", "-t", "snapshot", "-H", "-o", "name,used,creation", "-s", "creation"])
             snaps = []
@@ -515,50 +516,50 @@ data:
                     _, holds_out, _ = run_host_cmd(["zfs", "holds", "-H", snap_name])
                     snaps.append({"name": snap_name, "used": p[1], "creation": p[2], "is_held": bool(holds_out.strip())})
             self.send_json({"snapshots": snaps})
-    
+
         def handle_snapshot_create(self, body):
             tag = body.get("tag", "").strip() or f"manual-{int(time.time())}"
             if not RE_TAG.match(tag):
                 self.send_json({"error": "Etiqueta de snapshot inválida"}, 400)
                 return
-    
+
             # Snapshot recursivo con backup previo de base de datos
             run_host_cmd("kubectl exec deployment/nextcloud-postgres -- sh -c 'pg_dumpall -U \"$POSTGRES_USER\"' | gzip > /tank/nas/postgres/db-manual.sql.gz 2>/dev/null || true")
             ok, out, err = run_host_cmd(["zfs", "snapshot", "-r", f"tank/nas@{tag}"])
             self.send_json({"success": ok, "output": out or err})
-    
+
         def handle_snapshot_rollback(self, body):
             snap = body.get("snapshot", "").strip()
             if not re.match(r"^tank/nas(@[a-zA-Z0-9._-]+)?$", snap) and not re.match(r"^tank/nas/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+$", snap):
                 self.send_json({"error": "Nombre de snapshot inválido"}, 400)
                 return
-    
+
             repo_dir = os.environ.get("NAS_REPO_DIR", "/home/oriel/nas-gitops")
             script = os.path.join(repo_dir, "scripts/nas-recover.sh")
             ok, out, err = run_host_cmd(["bash", script, "rollback-local", snap])
             self.send_json({"success": ok, "output": out or err})
-    
+
         def handle_snapshot_hold(self, body):
             snap = body.get("snapshot", "").strip()
             hold = body.get("hold", True)
             if "@" not in snap or not snap.startswith("tank/nas"):
                 self.send_json({"error": "Snapshot inválido"}, 400)
                 return
-    
+
             action = "hold" if hold else "release"
             ok, out, err = run_host_cmd(["zfs", action, "sentinel-immutable", snap])
             self.send_json({"success": ok, "output": out or err})
-    
+
         def handle_snapshot_delete(self, body):
             snap = body.get("snapshot", "").strip()
             if "@" not in snap or not snap.startswith("tank/nas"):
                 self.send_json({"error": "Snapshot inválido"}, 400)
                 return
-    
+
             run_host_cmd(["zfs", "release", "sentinel-immutable", snap])
             ok, out, err = run_host_cmd(["zfs", "destroy", "-r", snap])
             self.send_json({"success": ok, "output": out or err})
-    
+
         def handle_r2_list(self):
             cmd = 'R2_ACC=$(kubectl -n kube-system get secret r2-backup-credentials -o jsonpath="{.data.account-id}" 2>/dev/null | base64 -d || true); ' \
                   'R2_KEY=$(kubectl -n kube-system get secret r2-backup-credentials -o jsonpath="{.data.access-key-id}" 2>/dev/null | base64 -d || true); ' \
@@ -572,73 +573,73 @@ data:
                 if len(p) >= 2:
                     files.append({"size": p[0], "name": p[1]})
             self.send_json({"r2_objects": files})
-    
+
         def handle_r2_trigger(self, body):
             cmd = "kubectl -n kube-system delete job manual-r2-backup --ignore-not-found=true && kubectl -n kube-system create job --from=cronjob/zfs-offsite-backup manual-r2-backup"
             ok, out, err = run_host_cmd(cmd)
             self.send_json({"success": ok, "output": out or err})
-    
+
         def handle_r2_restore(self, body):
             repo_dir = os.environ.get("NAS_REPO_DIR", "/home/oriel/nas-gitops")
             script = os.path.join(repo_dir, "tests/disaster-recovery-drill.sh")
             ok, out, err = run_host_cmd(["bash", script])
             self.send_json({"success": ok, "output": out or err})
-    
+
         def handle_users_list(self):
             _, out, _ = run_host_cmd("kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c 'php /var/www/html/occ user:list --output=json' 2>/dev/null || echo '{}'")
             self.send_json({"users": out.strip()})
-    
+
         def handle_user_create(self, body):
             user = body.get("username", "").strip()
             pwd = body.get("password", "").strip()
             if not RE_USERNAME.match(user) or not pwd:
                 self.send_json({"success": False, "output": "Nombre de usuario o contraseña con formato inválido (solo a-z, 0-9, . _ - de 3 a 32 caracteres)."}, 400)
                 return
-    
+
             quoted_user = shlex.quote(user)
             quoted_pwd = shlex.quote(pwd)
-    
+
             nc_cmd = f"kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c 'OC_PASS={quoted_pwd} php /var/www/html/occ user:add --password-from-env {quoted_user}'"
             ok, out, err = run_host_cmd(nc_cmd)
-    
+
             smb_cmd = f"kubectl exec deployment/samba -- sh -c 'useradd -M -s /usr/sbin/nologin {quoted_user} 2>/dev/null || true; (echo {quoted_pwd}; echo {quoted_pwd}) | smbpasswd -s -a {quoted_user}'"
             run_host_cmd(smb_cmd)
-    
+
             self.send_json({"success": ok, "output": out or err})
-    
+
         def handle_user_delete(self, body):
             user = body.get("username", "").strip()
             if not RE_USERNAME.match(user) or user == "admin":
                 self.send_json({"success": False, "output": "Operación denegada para la cuenta protegida o usuario inválido."}, 400)
                 return
-    
+
             quoted_user = shlex.quote(user)
             nc_cmd = f"kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c 'php /var/www/html/occ user:delete -n {quoted_user}'"
             ok, out, err = run_host_cmd(nc_cmd)
-    
+
             smb_cmd = f"kubectl exec deployment/samba -- smbpasswd -x {quoted_user}"
             run_host_cmd(smb_cmd)
-    
+
             self.send_json({"success": ok, "output": out or err})
-    
+
         def handle_user_password(self, body):
             user = body.get("username", "").strip()
             pwd = body.get("password", "").strip()
             if not RE_USERNAME.match(user) or not pwd:
                 self.send_json({"success": False, "output": "Parámetros insuficientes o formato no válido."}, 400)
                 return
-    
+
             quoted_user = shlex.quote(user)
             quoted_pwd = shlex.quote(pwd)
-    
+
             nc_cmd = f"kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c 'OC_PASS={quoted_pwd} php /var/www/html/occ user:resetpassword --password-from-env {quoted_user}'"
             ok, out, err = run_host_cmd(nc_cmd)
-    
+
             smb_cmd = f"kubectl exec deployment/samba -- sh -c '(echo {quoted_pwd}; echo {quoted_pwd}) | smbpasswd -s {quoted_user}'"
             run_host_cmd(smb_cmd)
-    
+
             self.send_json({"success": ok, "output": out or err})
-    
+
         def handle_user_csv(self, body):
             csv_data = body.get("csv", "")
             created = []
@@ -655,7 +656,7 @@ data:
                         run_host_cmd(smb_cmd)
                         created.append(u)
             self.send_json({"success": True, "created": created})
-    
+
         def handle_files_list(self, relpath):
             clean_path = sanitize_path(relpath)
             quoted_path = shlex.quote(clean_path)
@@ -666,74 +667,74 @@ data:
                 if len(parts) >= 8:
                     entries.append({"perms": parts[0], "size": parts[4], "date": f"{parts[5]} {parts[6]}", "name": parts[7], "is_dir": parts[0].startswith("d")})
             self.send_json({"path": clean_path, "entries": entries})
-    
+
         def handle_file_delete(self, body):
             fpath = body.get("filepath", "")
             clean_target = sanitize_path(fpath)
             if clean_target == "/tank/nas":
                 self.send_json({"error": "No está permitido eliminar la raíz del almacenamiento"}, 400)
                 return
-    
+
             quoted_target = shlex.quote(clean_target)
             cmd = f"mkdir -p /tank/nas/.Papelera && mv {quoted_target} /tank/nas/.Papelera/ 2>&1 || rm -rf {quoted_target} 2>&1"
             ok, out, err = run_host_cmd(cmd)
             self.send_json({"success": ok, "output": out or err})
-    
+
         def handle_file_restore_recycle(self, body):
             fname = body.get("filename", "")
             target_dir = body.get("target_dir", "/tank/nas/publico")
             if not re.match(r"^[a-zA-Z0-9._-]+$", fname):
                 self.send_json({"error": "Nombre de archivo inválido"}, 400)
                 return
-    
+
             clean_dir = sanitize_path(target_dir)
             quoted_source = shlex.quote(f"/tank/nas/.Papelera/{fname}")
             quoted_dest = shlex.quote(f"{clean_dir}/")
             ok, out, err = run_host_cmd(f"mv {quoted_source} {quoted_dest} 2>&1")
             self.send_json({"success": ok, "output": out or err})
-    
+
         def handle_share_create(self, body):
             name = body.get("name", "").strip()
             quota = body.get("quota", "5G").strip()
             if not RE_SHARENAME.match(name) or not RE_QUOTA.match(quota):
                 self.send_json({"error": "Nombre o cuota de recurso inválido"}, 400)
                 return
-    
+
             ok, out, err = run_host_cmd(["zfs", "create", "-o", f"quota={quota}", "-o", "compression=lz4", f"tank/nas/{name}"])
             if ok:
                 run_host_cmd(["chmod", "777", f"/tank/nas/{name}"])
             self.send_json({"success": ok, "output": out or err})
-    
+
         def handle_sessions_list(self):
             _, out, _ = run_host_cmd("kubectl exec deployment/samba -- smbstatus -b 2>/dev/null || true")
             self.send_json({"smb_sessions": out})
-    
+
         def handle_session_kill(self, body):
             pid = str(body.get("pid", "")).strip()
             if not RE_NUMERIC.match(pid):
                 self.send_json({"error": "PID inválido"}, 400)
                 return
-    
+
             # Solo permite terminar procesos que figuren como sesiones de Samba activas
             _, smb_pids, _ = run_host_cmd("kubectl exec deployment/samba -- smbstatus -b 2>/dev/null | awk '{print $1}' || true")
             active_pids = [p.strip() for p in smb_pids.splitlines() if p.strip().isdigit()]
             if pid not in active_pids:
                 self.send_json({"error": "El PID especificado no pertenece a una sesión activa de Samba."}, 403)
                 return
-    
+
             ok, out, err = run_host_cmd(["kubectl", "exec", "deployment/samba", "--", "kill", "-9", pid])
             self.send_json({"success": ok, "output": out or err})
-    
+
         def handle_security_status(self):
             _, st, _ = run_host_cmd("cat /tmp/nas-tunnel/ransomware_status 2>/dev/null || echo 1")
             _, cnt, _ = run_host_cmd("cat /tmp/nas-tunnel/ransomware_threats_blocked 2>/dev/null || echo 0")
             _, logs, _ = run_host_cmd("tail -n 20 /tmp/nas-tunnel/ransomware_events.log 2>/dev/null || echo 'Sin incidentes.'")
             self.send_json({"status": int(st.strip() or 1), "blocked_threats": int(cnt.strip() or 0), "logs": logs})
-    
+
         def handle_test_canary(self):
             ok, out, err = run_host_cmd("echo 'ransomware-simulation' > /tank/nas/alumnos/.canary_honeypot.docx")
             self.send_json({"success": ok, "message": "Infección simulada en Canary. El centinela restaurará en <5s."})
-    
+
         def handle_services_list(self):
             cmd = "kubectl get pods -A --no-headers 2>/dev/null | grep -E 'nextcloud|samba|portal-qr|sentinel|zfs-exporter' || true"
             _, out, _ = run_host_cmd(cmd)
@@ -743,32 +744,32 @@ data:
                 if len(p) >= 5:
                     pods.append({"namespace": p[0], "name": p[1], "ready": p[2], "status": p[3], "restarts": p[4]})
             self.send_json({"pods": pods})
-    
+
         def handle_service_restart(self, body):
             dep = body.get("deployment", "").strip()
             if not re.match(r"^[a-zA-Z0-9._-]+$", dep):
                 self.send_json({"error": "Nombre de deployment inválido"}, 400)
                 return
-    
+
             ok, out, err = run_host_cmd(["kubectl", "rollout", "restart", f"deployment/{dep}"])
             if not ok:
                 ok, out, err = run_host_cmd(["kubectl", "rollout", "restart", f"deployment/{dep}", "-n", "kube-system"])
             self.send_json({"success": ok, "output": out or err})
-    
+
         def handle_service_logs(self, pod):
             if not re.match(r"^[a-zA-Z0-9._-]+$", pod):
                 self.send_json({"logs": "Nombre de pod inválido"})
                 return
-    
+
             ok, out, _ = run_host_cmd(["kubectl", "logs", pod, "--all-containers", "--tail=100"])
             if not ok:
                 _, out, _ = run_host_cmd(["kubectl", "logs", "-n", "kube-system", pod, "--all-containers", "--tail=100"])
             self.send_json({"logs": out})
-    
+
         def handle_wan_status(self):
             _, out, _ = run_host_cmd("cat /tmp/nas-tunnel/url.txt 2>/dev/null || echo ''")
             self.send_json({"url": out.strip()})
-    
+
         def handle_wan_toggle(self):
             _, is_up, _ = run_host_cmd("pgrep cloudflared >/dev/null && echo 1 || echo 0")
             if is_up.strip() == "1":
@@ -780,30 +781,30 @@ data:
                 run_host_cmd(f"cloudflared tunnel --url http://127.0.0.1:80 > /tmp/nas-tunnel/cloudflared.log 2>&1 &")
                 time.sleep(3)
                 self.send_json({"status": "online", "message": "Túnel Cloudflare iniciado. El NAS vuelve a estar Online desde internet."})
-    
+
         def handle_wan_rotate(self):
             run_host_cmd(["pkill", "-9", "cloudflared"])
             time.sleep(1)
             run_host_cmd("cloudflared tunnel --url http://127.0.0.1:80 > /tmp/nas-tunnel/cloudflared.log 2>&1 &")
             self.send_json({"success": True, "output": "Túnel reiniciado."})
-    
+
         def handle_smoke_test(self):
             repo_dir = os.environ.get("NAS_REPO_DIR", "/home/oriel/nas-gitops")
             script = os.path.join(repo_dir, "tests/smoke-test.sh")
             ok, out, err = run_host_cmd(["bash", script])
             self.send_json({"success": ok, "log": out or err})
-    
+
         def handle_executive_report(self):
             _, pool, _ = run_host_cmd(["zpool", "status", "tank"])
             _, snaps, _ = run_host_cmd(["zfs", "list", "-t", "snapshot"])
             _, users, _ = run_host_cmd("kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c 'php /var/www/html/occ user:list' 2>/dev/null || true")
             report = f"# REPORTE EJECUTIVO DE SALUD Y AUDITORIA NAS\nFecha: {time.ctime()}\n\n## 1. ESTADO DE RAID-Z1\n{pool}\n\n## 2. BACKUPS Y SNAPSHOTS\n{snaps}\n\n## 3. USUARIOS ACTIVOS\n{users}\n"
             self.send_json({"report": report})
-    
+
         def handle_samba_status(self):
             _, pod_st, _ = run_host_cmd("kubectl get pod -l app.kubernetes.io/name=samba -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo 'Unknown'")
             _, version_st, _ = run_host_cmd("kubectl exec deployment/samba -- smbd -V 2>/dev/null || echo 'Version 4.12'")
-    
+
             shares = [
                 {"id": "profesores", "name": "[profesores]", "dataset": "tank/nas/profesores", "access": "Solo Docentes / Directivos"},
                 {"id": "alumnos", "name": "[alumnos]", "dataset": "tank/nas/alumnos", "access": "Estudiantes y Laboratorio"},
@@ -828,7 +829,7 @@ data:
                     "recordsize": rec,
                     "access": s["access"]
                 })
-    
+
             _, smb_out, _ = run_host_cmd("kubectl exec deployment/samba -- smbstatus -b 2>/dev/null || true")
             sessions = []
             capture = False
@@ -849,13 +850,13 @@ data:
                             "machine": parts[3],
                             "proto": parts[4] if len(parts) > 4 else "SMB3"
                         })
-    
+
             _, pdb_out, _ = run_host_cmd("kubectl exec deployment/samba -- pdbedit -L 2>/dev/null || true")
             samba_users = []
             for line in pdb_out.splitlines():
                 if ":" in line:
                     samba_users.append(line.split(":")[0])
-    
+
             self.send_json({
                 "status": pod_st.strip(),
                 "version": version_st.strip(),
@@ -868,33 +869,33 @@ data:
                     "apple_compat": "vfs_fruit (macOS nativo)"
                 }
             })
-    
+
         def handle_samba_quota(self, body):
             share = body.get("share", "").strip()
             quota = body.get("quota", "").strip()
             if not RE_SHARENAME.match(share) or not RE_QUOTA.match(quota):
                 self.send_json({"success": False, "output": "Parámetros share o quota inválidos."}, 400)
                 return
-    
+
             dataset = f"tank/nas/{share}"
             ok, out, err = run_host_cmd(["zfs", "set", f"quota={quota}", dataset])
             self.send_json({"success": ok, "output": out or err})
-    
+
         def handle_samba_restart(self):
             ok, out, err = run_host_cmd(["kubectl", "rollout", "restart", "deployment/samba"])
             self.send_json({"success": ok, "output": out or err})
-    
+
         def serve_samba_connector(self):
             bat_content = r"""@echo off
     setlocal
     title Conector de Unidades de Red - Enterprise NAS
     chcp 65001 >nul
     color 1F
-    
+
     :: Obtener IP del servidor o usar predeterminada de red
     set "SERVER_HOST=192.168.1.50"
     if "%~1" neq "" set "SERVER_HOST=%~1"
-    
+
     :MENU
     cls
     echo ==============================================================================
@@ -912,7 +913,7 @@ data:
     echo   [6] Salir
     echo.
     set /p OPCION="Ingrese una opcion (1-6) y presione Enter: "
-    
+
     if "%OPCION%"=="1" goto CONECTAR_ALUMNOS
     if "%OPCION%"=="2" goto CONECTAR_PROFESORES
     if "%OPCION%"=="3" goto CONECTAR_PUBLICO
@@ -920,7 +921,7 @@ data:
     if "%OPCION%"=="5" goto DESCONECTAR
     if "%OPCION%"=="6" exit /b 0
     goto MENU
-    
+
     :CAMBIAR_IP
     cls
     echo ==============================================================================
@@ -930,22 +931,22 @@ data:
     echo Ingrese la direccion IP del servidor NAS:
     set /p SERVER_HOST="Direccion IP: "
     goto MENU
-    
+
     :CONECTAR_ALUMNOS
     set "DRIVE=Z:"
     set "SHARE=alumnos"
     goto PEDIR_CREDENCIALES
-    
+
     :CONECTAR_PROFESORES
     set "DRIVE=P:"
     set "SHARE=profesores"
     goto PEDIR_CREDENCIALES
-    
+
     :CONECTAR_PUBLICO
     set "DRIVE=X:"
     set "SHARE=publico"
     goto PEDIR_CREDENCIALES
-    
+
     :PEDIR_CREDENCIALES
     cls
     echo ==============================================================================
@@ -960,19 +961,19 @@ data:
         pause
         goto MENU
     )
-    
+
     set /p NAS_PASS="Contrasena: "
     if "%NAS_PASS%"=="" (
         echo [ERROR] La contrasena no puede estar vacia.
         pause
         goto MENU
     )
-    
+
     echo.
     echo Conectando... por favor espere...
     net use %DRIVE% /delete /yes >nul 2>&1
     net use %DRIVE% "\%SERVER_HOST%\%SHARE%" /user:"%NAS_USER%" "%NAS_PASS%" /persistent:yes >nul 2>&1
-    
+
     if %errorlevel% equ 0 (
         echo.
         echo ==============================================================================
@@ -991,7 +992,7 @@ data:
     echo.
     pause
     goto MENU
-    
+
     :DESCONECTAR
     cls
     echo Desconectando unidades Z:, P:, X:...
@@ -1009,7 +1010,7 @@ data:
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
-    
+
     if __name__ == "__main__":
         # Register safe action catalog with asynchronous TaskEngine
         try:
@@ -1019,23 +1020,23 @@ data:
             GLOBAL_TASK_ENGINE.register_handlers(ACTION_CATALOG)
         except Exception as e:
             print(f"Advertencia: no se pudo vincular ACTION_CATALOG con TaskEngine: {e}")
-    
+
         server = ThreadedHTTPServer(("0.0.0.0", PORT), NasApiHandler)
-        
+
         cert_dir = "/tmp/nas-tls"
         os.makedirs(cert_dir, exist_ok=True)
         cert_file = os.path.join(cert_dir, "portal.crt")
         key_file = os.path.join(cert_dir, "portal.key")
-        
+
         if not (os.path.exists(cert_file) and os.path.exists(key_file)):
             cmd = f'openssl req -x509 -newkey rsa:2048 -nodes -keyout "{key_file}" -out "{cert_file}" -days 730 -subj "/CN=nas.escuela.local"'
             subprocess.run(cmd, shell=True, check=True)
             os.chmod(key_file, 0o600)
-        
+
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(certfile=cert_file, keyfile=key_file)
         server.socket = context.wrap_socket(server.socket, server_side=True)
-        
+
         print(f"Enterprise NAS Control Center OS listening securely on https://0.0.0.0:{PORT}...")
         server.serve_forever()
   portal_state.py: |
@@ -1050,13 +1051,13 @@ data:
     import json
     import sqlite3
     import threading
-    
+
     # Use HostPath tunnel volume if present, fallback to local var directory
     STATE_DIR = "/tmp/nas-tunnel" if os.path.exists("/tmp/nas-tunnel") else "/tmp"
     DB_PATH = os.path.join(STATE_DIR, "portal_state.db")
-    
+
     _db_lock = threading.Lock()
-    
+
     def _get_connection():
         """Returns a SQLite connection with WAL mode and reasonable timeout for concurrency."""
         conn = sqlite3.connect(DB_PATH, timeout=15.0)
@@ -1064,7 +1065,7 @@ data:
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA synchronous=NORMAL;")
         return conn
-    
+
     def init_db():
         """Initializes schema tables if not existing."""
         os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
@@ -1126,7 +1127,7 @@ data:
                 CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_events(id DESC);
             """)
             conn.commit()
-    
+
     # --- SESSIONS ---
     def create_session(token, username, role, client_ip, ttl_seconds=28800):
         now = time.time()
@@ -1137,7 +1138,7 @@ data:
                 (token, username, role, client_ip, now, expires)
             )
             conn.commit()
-    
+
     def validate_session(token):
         now = time.time()
         with _db_lock, _get_connection() as conn:
@@ -1149,18 +1150,18 @@ data:
                 conn.commit()
                 return False, None, None
             return True, row["username"], row["role"]
-    
+
     def destroy_session(token):
         with _db_lock, _get_connection() as conn:
             conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
             conn.commit()
-    
+
     def cleanup_expired_sessions():
         now = time.time()
         with _db_lock, _get_connection() as conn:
             conn.execute("DELETE FROM sessions WHERE expires_at < ?", (now,))
             conn.commit()
-    
+
     # --- RATE LIMITING / BRUTE FORCE ---
     def check_rate_limit(client_ip, max_attempts=5, lockout_seconds=900):
         now = time.time()
@@ -1183,7 +1184,7 @@ data:
                 conn.commit()
                 return False, lockout_seconds
             return True, 0
-    
+
     def record_failed_login(client_ip, max_attempts=5, lockout_seconds=900):
         now = time.time()
         with _db_lock, _get_connection() as conn:
@@ -1195,12 +1196,12 @@ data:
                 locked_until = (now + lockout_seconds) if new_attempts >= max_attempts else 0
                 conn.execute("UPDATE failed_logins SET attempts = ?, last_attempt = ?, locked_until = ? WHERE ip = ?", (new_attempts, now, locked_until, client_ip))
             conn.commit()
-    
+
     def reset_failed_logins(client_ip):
         with _db_lock, _get_connection() as conn:
             conn.execute("DELETE FROM failed_logins WHERE ip = ?", (client_ip,))
             conn.commit()
-    
+
     # --- ASYNC TASKS ---
     def create_task(task_id, action, params, user):
         now = time.time()
@@ -1212,7 +1213,7 @@ data:
                 (task_id, action, params_str, user, now)
             )
             conn.commit()
-    
+
     def update_task_progress(task_id, progress=None, phase=None, append_log=None):
         with _db_lock, _get_connection() as conn:
             row = conn.execute("SELECT progress, phase, log FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
@@ -1230,7 +1231,7 @@ data:
                 (new_prog, new_phase, new_log, task_id)
             )
             conn.commit()
-    
+
     def finish_task(task_id, status, exit_code, result_dict, append_log=None):
         now = time.time()
         result_str = json.dumps(result_dict if isinstance(result_dict, dict) else {"raw": str(result_dict)})
@@ -1245,19 +1246,19 @@ data:
                 (status, "Completado" if status == "completed" else "Fallido", now, exit_code, result_str, final_log, task_id)
             )
             conn.commit()
-    
+
     def get_task(task_id):
         with _db_lock, _get_connection() as conn:
             row = conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
             if not row:
                 return None
             return dict(row)
-    
+
     def list_tasks(limit=30):
         with _db_lock, _get_connection() as conn:
             rows = conn.execute("SELECT task_id, action, user, status, progress, phase, started_at, finished_at, exit_code FROM tasks ORDER BY started_at DESC LIMIT ?", (limit,)).fetchall()
             return [dict(r) for r in rows]
-    
+
     # --- AUDIT LOGS ---
     def log_audit_event(user, action, params, success, message, client_ip):
         now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -1268,12 +1269,12 @@ data:
                 (now_iso, user or "admin", action, json.dumps(sanitized_params), 1 if success else 0, str(message), client_ip or "local")
             )
             conn.commit()
-    
+
     def list_audit_events(limit=100):
         with _db_lock, _get_connection() as conn:
             rows = conn.execute("SELECT * FROM audit_events ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
             return [dict(r) for r in rows]
-    
+
     # Auto-initialize on import
     init_db()
   task_engine.py: |
@@ -1291,9 +1292,9 @@ data:
     import threading
     import queue
     import traceback
-    
+
     import portal_state
-    
+
     # Identify heavy or long-running operations that should be handled asynchronously
     ASYNC_ACTIONS = {
         "zfs.pool.scrub_start",
@@ -1306,30 +1307,30 @@ data:
         "users.import_csv",
         "system.drop_caches",
     }
-    
+
     class TaskEngine:
         def __init__(self, max_workers=2):
             self.queue = queue.Queue()
             self.lock = threading.Lock()
             self.cancel_flags = set()
             self.handlers_catalog = {}
-            
+
             # Start background worker threads
             self.workers = []
             for i in range(max_workers):
                 t = threading.Thread(target=self._worker_loop, daemon=True, name=f"TaskWorker-{i}")
                 t.start()
                 self.workers.append(t)
-    
+
         def register_handlers(self, handlers):
             """Registers the action handlers catalog from modules_catalog."""
             with self.lock:
                 self.handlers_catalog.update(handlers)
-    
+
         def is_action_async(self, action):
             """Checks if an action is naturally asynchronous or long-running."""
             return action in ASYNC_ACTIONS
-    
+
         def submit_task(self, action, params, user="admin", client_ip="local"):
             """Submits an action to the background queue and returns the unique task ID."""
             task_id = f"task_{secrets.token_hex(6)}"
@@ -1337,7 +1338,7 @@ data:
             portal_state.log_audit_event(user, action, params, True, f"Tarea asíncrona '{action}' encolada con ID {task_id}", client_ip)
             self.queue.put((task_id, action, params, user, client_ip))
             return task_id
-    
+
         def cancel_task(self, task_id):
             """Signals cancellation for a running task."""
             with self.lock:
@@ -1347,11 +1348,11 @@ data:
                 portal_state.finish_task(task_id, "cancelled", 130, {"status": "Tarea cancelada por el operador."}, "\n[!] Operación cancelada por el usuario.")
                 return True
             return False
-    
+
         def is_cancelled(self, task_id):
             with self.lock:
                 return task_id in self.cancel_flags
-    
+
         def _worker_loop(self):
             while True:
                 task_id, action, params, user, client_ip = self.queue.get()
@@ -1365,22 +1366,22 @@ data:
                     with self.lock:
                         self.cancel_flags.discard(task_id)
                     self.queue.task_done()
-    
+
         def _run_task(self, task_id, action, params, user, client_ip):
             portal_state.update_task_progress(task_id, progress=5, phase="Ejecutando...", append_log=f"[{time.strftime('%H:%M:%S')}] Iniciando acción: {action}\n")
-    
+
             handler = self.handlers_catalog.get(action)
             if not handler:
                 portal_state.finish_task(task_id, "failed", 1, {"error": f"Acción '{action}' no encontrada en el catálogo."}, f"Error: Acción '{action}' no soportada.\n")
                 portal_state.log_audit_event(user, action, params, False, "Acción desconocida", client_ip)
                 return
-    
+
             # Progress tracking callback wrapper for handlers that support it
             def progress_cb(pct, phase_str, log_line=None):
                 if self.is_cancelled(task_id):
                     raise InterruptedError("Operación cancelada")
                 portal_state.update_task_progress(task_id, progress=pct, phase=phase_str, append_log=(log_line + "\n") if log_line else None)
-    
+
             try:
                 # Check if handler accepts progress_cb kwarg
                 import inspect
@@ -1389,26 +1390,26 @@ data:
                     ok, result = handler(params, progress_cb=progress_cb)
                 else:
                     ok, result = handler(params)
-    
+
                 if self.is_cancelled(task_id):
                     return
-    
+
                 status = "completed" if ok else "failed"
                 exit_code = 0 if ok else 1
                 log_suffix = f"\n[{time.strftime('%H:%M:%S')}] Tarea finalizada con estado: {status.upper()}.\n"
                 if isinstance(result, dict) and "output" in result:
                     log_suffix = f"\nSalida del comando:\n{result['output']}\n" + log_suffix
-    
+
                 portal_state.finish_task(task_id, status, exit_code, result, log_suffix)
                 portal_state.log_audit_event(user, action, params, ok, f"Tarea {task_id} finalizada ({status})", client_ip)
-    
+
             except InterruptedError:
                 portal_state.finish_task(task_id, "cancelled", 130, {"status": "Cancelado"}, "\n[!] Operación interrumpida por el operador.\n")
             except Exception as e:
                 err_details = f"Excepción durante la ejecución: {str(e)}\n{traceback.format_exc()}"
                 portal_state.finish_task(task_id, "failed", 1, {"error": str(e)}, err_details)
                 portal_state.log_audit_event(user, action, params, False, f"Error en tarea {task_id}: {str(e)}", client_ip)
-    
+
     # Global singleton
     GLOBAL_TASK_ENGINE = TaskEngine(max_workers=2)
   nas_agentd.py: |
@@ -1428,10 +1429,10 @@ data:
     import re
     import hmac
     import hashlib
-    
+
     SOCKET_PATH = "/run/nas-agentd/agent.sock"
     AUDIT_LOG_PATH = "/var/log/nas-agentd-audit.log"
-    
+
     # Strict parameter validation regex patterns
     RE_DATASET = re.compile(r"^tank/nas(/[a-zA-Z0-9._-]+)*$")
     RE_SNAP_TAG = re.compile(r"^[a-zA-Z0-9._-]{1,64}$")
@@ -1441,19 +1442,19 @@ data:
     RE_PODNAME = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
     RE_NAMESPACE = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
     RE_DEV_PATH = re.compile(r"^/dev/(sd[a-z][0-9]?|vd[a-z][0-9]?|nvme[0-9]n[0-9](p[0-9])?|disk/by-id/[a-zA-Z0-9._-]+)$")
-    
+
     def run_cmd(cmd_list, timeout=20, input_data=None):
         # If running inside container with hostPID, nsenter into host namespace 1
         processed_cmd = list(cmd_list)
         if processed_cmd and processed_cmd[0] == "kubectl":
             processed_cmd = ["env", "KUBECONFIG=/etc/rancher/k3s/k3s.yaml", "/usr/local/bin/kubectl"] + processed_cmd[1:]
-    
+
         if os.path.exists("/proc/1/ns/mnt"):
             full_cmd = ["nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid", "--"] + processed_cmd
         else:
             full_cmd = processed_cmd
         return subprocess.run(full_cmd, input=input_data, capture_output=True, text=True, timeout=timeout)
-    
+
     def audit_log(user, action, params, success, message=""):
         entry = {
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -1469,12 +1470,12 @@ data:
                 f.write(json.dumps(entry) + "\n")
         except Exception as e:
             sys.stderr.write(f"Failed to write audit log: {e}\n")
-    
+
     # Action Catalog Handlers (Typed, Safe Executables)
     def action_zfs_pool_status(params):
         res = run_cmd(["zpool", "status", "tank"], timeout=10)
         return res.returncode == 0, {"stdout": res.stdout, "stderr": res.stderr}
-    
+
     def action_zfs_snapshot_create(params):
         dataset = params.get("dataset", "tank/nas")
         tag = params.get("tag", "")
@@ -1485,7 +1486,7 @@ data:
         snap_target = f"{dataset}@{tag}"
         res = run_cmd(["zfs", "snapshot", "-r", snap_target], timeout=15)
         return res.returncode == 0, {"snapshot": snap_target, "output": res.stdout}
-    
+
     def action_zfs_snapshot_rollback(params):
         dataset = params.get("dataset", "tank/nas")
         tag = params.get("tag", "")
@@ -1494,7 +1495,7 @@ data:
         target = f"{dataset}@{tag}"
         res = run_cmd(["zfs", "rollback", "-r", target], timeout=20)
         return res.returncode == 0, {"target": target, "output": res.stdout}
-    
+
     def action_zfs_set_quota(params):
         dataset = params.get("dataset", "")
         quota = params.get("quota", "")
@@ -1502,7 +1503,7 @@ data:
             return False, {"error": "Invalid dataset or quota specification"}
         res = run_cmd(["zfs", "set", f"quota={quota}", dataset], timeout=10)
         return res.returncode == 0, {"dataset": dataset, "quota": quota}
-    
+
     def action_zfs_scrub(params):
         subaction = params.get("subaction", "start")
         if subaction not in ("start", "stop", "status"):
@@ -1513,7 +1514,7 @@ data:
         cmd = ["zpool", "scrub", "-s", "tank"] if subaction == "stop" else ["zpool", "scrub", "tank"]
         res = run_cmd(cmd, timeout=10)
         return res.returncode == 0, {"action": subaction, "output": res.stdout}
-    
+
     def action_storage_smart_status(params):
         device = params.get("device", "")
         if not RE_DEV_PATH.match(device):
@@ -1524,14 +1525,14 @@ data:
         except Exception:
             data = {"raw": res.stdout}
         return res.returncode in (0, 4), {"device": device, "smart": data}
-    
+
     def action_system_power(params):
         command = params.get("command", "")
         if command not in ("reboot", "poweroff"):
             return False, {"error": "Invalid power command"}
         res = run_cmd(["systemctl", command], timeout=10)
         return res.returncode == 0, {"status": f"Initiated {command}"}
-    
+
     def action_system_status(params):
         mem_info = {}
         if os.path.exists("/proc/meminfo"):
@@ -1542,9 +1543,9 @@ data:
                         mem_info[parts[0].strip()] = parts[1].strip()
         loadavg = os.getloadavg() if hasattr(os, "getloadavg") else (0, 0, 0)
         return True, {"loadavg": loadavg, "mem": mem_info}
-    
+
     from modules_catalog import MODULE_HANDLERS
-    
+
     ACTION_CATALOG = {
         "zfs.pool.status": action_zfs_pool_status,
         "zfs.snapshot.create": action_zfs_snapshot_create,
@@ -1557,16 +1558,16 @@ data:
     }
     # Merge all 17 modules into the active action catalog
     ACTION_CATALOG.update(MODULE_HANDLERS)
-    
+
     def dispatch_request(req):
         user = req.get("user", "anonymous")
         action = req.get("action", "")
         params = req.get("params", {})
-        
+
         if action not in ACTION_CATALOG:
             audit_log(user, action, params, False, "Action not found in catalog")
             return {"success": False, "error": f"Action '{action}' is not in the safe catalog"}
-            
+
         handler = ACTION_CATALOG[action]
         try:
             ok, result = handler(params)
@@ -1575,17 +1576,17 @@ data:
         except Exception as e:
             audit_log(user, action, params, False, str(e))
             return {"success": False, "error": f"Internal execution exception: {str(e)}"}
-    
+
     def serve():
         if os.path.exists(SOCKET_PATH):
             os.remove(SOCKET_PATH)
         os.makedirs(os.path.dirname(SOCKET_PATH), exist_ok=True)
-        
+
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         server.bind(SOCKET_PATH)
         os.chmod(SOCKET_PATH, 0o660)
         server.listen(16)
-        
+
         while True:
             conn, _ = server.accept()
             try:
@@ -1601,7 +1602,7 @@ data:
                 conn.sendall(json.dumps(err_resp).encode("utf-8"))
             finally:
                 conn.close()
-    
+
     if __name__ == "__main__":
         if len(sys.argv) > 1 and sys.argv[1] == "--oneshot":
             raw = sys.stdin.read()
@@ -1623,10 +1624,10 @@ data:
     import re
     import shutil
     import shlex
-    
+
     AUDIT_LOG_PATH = "/var/log/nas-agentd-audit.log"
     ROLLBACK_TIMER_FILE = "/tmp/nas-net-rollback.json"
-    
+
     # Expresiones regulares de validacion estricta
     RE_DATASET = re.compile(r"^tank/nas(/[a-zA-Z0-9._-]+)*$")
     RE_SNAP_TAG = re.compile(r"^[a-zA-Z0-9._-]{1,64}$")
@@ -1635,19 +1636,19 @@ data:
     RE_QUOTA = re.compile(r"^([0-9]+[KMGTkmgt]?|none)$")
     RE_DEV_PATH = re.compile(r"^/dev/(sd[a-z][0-9]?|vd[a-z][0-9]?|sr[0-9]?|nvme[0-9]n[0-9](p[0-9])?|disk/by-id/[a-zA-Z0-9._-]+)$")
     RE_IP = re.compile(r"^([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?$")
-    
+
     def run_cmd(cmd_list, timeout=30, input_data=None):
         """Ejecuta comandos en el namespace root del host usando nsenter y KUBECONFIG."""
         processed_cmd = list(cmd_list)
         if processed_cmd and processed_cmd[0] == "kubectl":
             processed_cmd = ["env", "KUBECONFIG=/etc/rancher/k3s/k3s.yaml", "/usr/local/bin/kubectl"] + processed_cmd[1:]
-    
+
         if os.path.exists("/proc/1/ns/mnt"):
             full_cmd = ["nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid", "--"] + processed_cmd
         else:
             full_cmd = processed_cmd
         return subprocess.run(full_cmd, input=input_data, capture_output=True, text=True, timeout=timeout)
-    
+
     def audit_log(user, action, params, success, message=""):
         """Registra eventos de auditoria y seguridad en /var/log/nas-agentd-audit.log."""
         entry = {
@@ -1664,7 +1665,7 @@ data:
                 f.write(json.dumps(entry) + "\n")
         except Exception:
             pass
-    
+
     # ==============================================================================
     # SECCION 1: ESTADO GENERAL DEL SERVIDOR & RENDIMIENTO
     # ==============================================================================
@@ -1675,7 +1676,7 @@ data:
                 load = [float(x) for x in f.read().split()[:3]]
         except Exception:
             load = [0.0, 0.0, 0.0]
-    
+
         mem = {}
         try:
             with open("/proc/meminfo", "r") as f:
@@ -1685,21 +1686,21 @@ data:
                         mem[parts[0].strip()] = parts[1].strip().split()[0]
         except Exception:
             pass
-    
+
         try:
             with open("/proc/uptime", "r") as f:
                 uptime_sec = float(f.read().split()[0])
         except Exception:
             uptime_sec = 0.0
-    
+
         return True, {"loadavg": load, "mem": mem, "uptime_seconds": uptime_sec}
-    
+
     def act_system_drop_caches(p):
         """Libera paginas en cache del kernel de Linux para recuperar RAM libre."""
         res = run_cmd(["sync"])
         res2 = run_cmd(["bash", "-c", "echo 3 > /proc/sys/vm/drop_caches"])
         return True, {"status": "Memoria RAM liberada correctamente. Búferes del kernel vaciados."}
-    
+
     def act_system_top_processes(p):
         """Lista los 10 procesos con mayor uso de procesador y memoria en el servidor."""
         res = run_cmd(["ps", "aux", "--sort=-%cpu"])
@@ -1716,22 +1717,22 @@ data:
                     "command": parts[10][:60]
                 })
         return True, {"processes": procs}
-    
+
     def act_zfs_pool_status(p):
         """Consulta la topologia, paridad y salud en tiempo real del pool ZFS tank."""
         res = run_cmd(["zpool", "status", "tank"])
         return True, {"stdout": res.stdout or "Pool tank activo"}
-    
+
     def act_zfs_pool_scrub_start(p):
         """Inicia la verificacion profunda de sectores y paridad en el pool de almacenamiento."""
         res = run_cmd(["zpool", "scrub", "tank"])
         return res.returncode == 0, {"status": "Verificación de integridad iniciada en pool tank. Se repararán sectores automáticamente."}
-    
+
     def act_zfs_pool_scrub_stop(p):
         """Detiene la verificacion de sectores para liberar velocidad de disco."""
         res = run_cmd(["zpool", "scrub", "-s", "tank"])
         return res.returncode == 0, {"status": "Verificación de disco detenida correctamente."}
-    
+
     def act_zfs_arc_set_max(p):
         """Ajusta en caliente el limite maximo de memoria RAM que puede usar ZFS."""
         mb = int(p.get("max_mb", 1024))
@@ -1739,7 +1740,7 @@ data:
         bytes_val = mb * 1024 * 1024
         res = run_cmd(["bash", "-c", f"echo {bytes_val} > /sys/module/zfs/parameters/zfs_arc_max"])
         return True, {"zfs_arc_max_bytes": bytes_val, "status": f"Límite de memoria ZFS ARC fijado en {mb} MB."}
-    
+
     # ==============================================================================
     # SECCION 2: SERVICIOS Y PROGRAMAS (MICROSERVICIOS K8S)
     # ==============================================================================
@@ -1765,14 +1766,14 @@ data:
         except Exception:
             pass
         return True, {"services": services}
-    
+
     def act_services_restart(p):
         """Reinicia un microservicio ordenadamente."""
         svc = p.get("service", "nextcloud")
         ns = p.get("namespace", "default")
         res = run_cmd(["kubectl", "rollout", "restart", f"deployment/{svc}", "-n", ns])
         return res.returncode == 0, {"status": f"Servicio {svc} reiniciado correctamente.", "output": res.stdout}
-    
+
     def act_services_scale(p):
         """Pausa (0 replicas) o reanuda (1 replica) un microservicio."""
         svc = p.get("service", "nextcloud")
@@ -1781,7 +1782,7 @@ data:
         res = run_cmd(["kubectl", "scale", f"deployment/{svc}", f"--replicas={replicas}", "-n", ns])
         msg = f"Servicio {svc} {'iniciado' if replicas > 0 else 'pausado'} exitosamente."
         return res.returncode == 0, {"status": msg, "output": res.stdout}
-    
+
     def act_services_logs(p):
         """Obtiene las ultimas lineas de logs de un microservicio."""
         svc = p.get("service", "nextcloud")
@@ -1789,7 +1790,7 @@ data:
         lines_count = int(p.get("lines", 80))
         res = run_cmd(["kubectl", "logs", f"deployment/{svc}", "-n", ns, f"--tail={lines_count}"])
         return True, {"service": svc, "logs": res.stdout or res.stderr or "No hay logs disponibles en este momento."}
-    
+
     def act_services_cascade_restart(p):
         """Ejecuta un reinicio en cascada respetando dependencias: DB -> Nextcloud -> Samba."""
         res1 = run_cmd(["kubectl", "rollout", "restart", "deployment/nextcloud-postgres", "-n", "default"])
@@ -1798,7 +1799,7 @@ data:
         time.sleep(2)
         res3 = run_cmd(["kubectl", "rollout", "restart", "deployment/samba", "-n", "default"])
         return True, {"status": "Reinicio en cascada completado: Base de Datos -> Nextcloud -> Servidor Samba."}
-    
+
     # ==============================================================================
     # SECCION 3: REGISTRO DE ACTIVIDAD Y SEGURIDAD (AUDITORIA & SENTINEL)
     # ==============================================================================
@@ -1817,14 +1818,14 @@ data:
             except Exception:
                 pass
         return True, {"entries": entries}
-    
+
     def act_audit_logs_rotate(p):
         """Rota y archiva el registro de actividad para liberar espacio."""
         if os.path.exists(AUDIT_LOG_PATH):
             backup_path = f"{AUDIT_LOG_PATH}.{int(time.time())}.bak"
             shutil.move(AUDIT_LOG_PATH, backup_path)
         return True, {"status": "Registro de actividad archivado con éxito. Se inició un nuevo archivo en blanco."}
-    
+
     def act_sentinel_unban(p):
         """Quita el bloqueo de red a una direccion IP que quedo fuera por reintentos."""
         ip = p.get("ip", "")
@@ -1833,7 +1834,7 @@ data:
         run_cmd(["iptables", "-D", "INPUT", "-s", ip, "-j", "DROP"])
         run_cmd(["iptables", "-D", "FORWARD", "-s", ip, "-j", "DROP"])
         return True, {"status": f"Dirección IP {ip} desbloqueada exitosamente."}
-    
+
     # ==============================================================================
     # SECCION 4: DISCOS Y ALMACENAMIENTO (RAID)
     # ==============================================================================
@@ -1845,7 +1846,7 @@ data:
         except Exception:
             data = {"raw": res.stdout}
         return True, data
-    
+
     def act_storage_smart_test(p):
         """Ejecuta una prueba de diagnostico fisico sobre un disco rigido."""
         dev = p.get("device", "/dev/sda")
@@ -1856,21 +1857,21 @@ data:
         if "Unavailable" in out or "lacks SMART" in out or "VBOX" in out or "unable to fetch" in out.lower():
             return True, {"status": f"Disco {dev} verificado: Unidad virtualizada. Integridad de almacenamiento OK.", "virtual": True}
         return True, {"status": f"Prueba de salud SMART ({ttype}) completada para {dev}.", "output": out}
-    
+
     def act_zfs_disk_offline(p):
         """Pone un disco fuera de linea para su extraccion fisica."""
         dev = p.get("device", "")
         if not RE_DEV_PATH.match(dev): return False, {"error": "Dispositivo no válido"}
         res = run_cmd(["zpool", "offline", "tank", dev])
         return res.returncode == 0, {"status": f"Disco {dev} puesto fuera de línea de forma segura."}
-    
+
     def act_zfs_disk_online(p):
         """Vuelve a conectar e integrar un disco rigido al pool."""
         dev = p.get("device", "")
         if not RE_DEV_PATH.match(dev): return False, {"error": "Dispositivo no válido"}
         res = run_cmd(["zpool", "online", "tank", dev])
         return res.returncode == 0, {"status": f"Disco {dev} reactivado e integrado al arreglo."}
-    
+
     def act_zfs_disk_replace(p):
         """Inicia el reemplazo de un disco danado por un nuevo disco rigido."""
         old_dev = p.get("old_dev", "")
@@ -1878,7 +1879,7 @@ data:
         if not RE_DEV_PATH.match(new_dev): return False, {"error": "Ruta de nuevo disco inválida"}
         res = run_cmd(["zpool", "replace", "tank", old_dev, new_dev])
         return res.returncode == 0, {"status": f"Reemplazo iniciado: Copiando paridad hacia {new_dev}...", "output": res.stdout}
-    
+
     # ==============================================================================
     # SECCION 5: CARPETAS PRINCIPALES Y LIMITES DE ESPACIO (DATASETS & CUOTAS)
     # ==============================================================================
@@ -1900,7 +1901,7 @@ data:
                     "quota": parts[6]
                 })
         return True, {"datasets": datasets}
-    
+
     def act_zfs_dataset_create(p):
         """Crea una nueva carpeta principal de almacenamiento con compresion."""
         ds = p.get("dataset", "").strip()
@@ -1914,7 +1915,7 @@ data:
         cmd.append(ds)
         res = run_cmd(cmd)
         return res.returncode == 0, {"status": f"Carpeta principal {ds} creada con compresión {comp}."}
-    
+
     def act_zfs_dataset_set_quota(p):
         """Modifica el limite maximo de almacenamiento para una carpeta."""
         ds = p.get("dataset", "").strip()
@@ -1923,7 +1924,7 @@ data:
             return False, {"error": "Parámetros de cuota o carpeta no válidos."}
         res = run_cmd(["zfs", "set", f"quota={quota}", ds])
         return res.returncode == 0, {"status": f"Límite de espacio fijado en {quota} para {ds}."}
-    
+
     def act_zfs_dataset_delete(p):
         """Elimina una carpeta principal de almacenamiento con verificacion estricta."""
         ds = p.get("dataset", "").strip()
@@ -1931,7 +1932,7 @@ data:
             return False, {"error": "Por seguridad institucional no se permite borrar la carpeta raíz de datos."}
         res = run_cmd(["zfs", "destroy", "-r", ds])
         return res.returncode == 0, {"status": f"Carpeta principal {ds} y sus subcarpetas eliminadas correctamente."}
-    
+
     # ==============================================================================
     # SECCION 6: ADMINISTRADOR DE ARCHIVOS WEB & PERMISOS
     # ==============================================================================
@@ -1954,7 +1955,7 @@ data:
                 except Exception:
                     pass
         return True, {"path": clean_path, "items": items}
-    
+
     def act_files_mkdir(p):
         """Crea un nuevo subdirectorio."""
         path = p.get("path", "").strip()
@@ -1962,7 +1963,7 @@ data:
         if not clean_path.startswith("/tank/nas"): return False, {"error": "Ruta no autorizada."}
         os.makedirs(clean_path, exist_ok=True)
         return True, {"status": f"Directorio creado exitosamente en {clean_path}."}
-    
+
     def act_files_delete(p):
         """Elimina un archivo o carpeta."""
         path = p.get("path", "").strip()
@@ -1974,13 +1975,13 @@ data:
         elif os.path.isfile(clean_path):
             os.remove(clean_path)
         return True, {"status": f"Elemento {os.path.basename(clean_path)} eliminado correctamente."}
-    
+
     def act_files_repair_permissions(p):
         """Repara y normaliza permisos POSIX institucionales para Nextcloud y Samba."""
         res = run_cmd(["chown", "-R", "33:33", "/tank/nas"])
         res2 = run_cmd(["chmod", "-R", "u=rwX,g=rwX,o=rX", "/tank/nas"])
         return True, {"status": "Permisos institucionales reparados: Propietario www-data y acceso de red normalizado."}
-    
+
     # ==============================================================================
     # SECCION 7: USUARIOS Y CONTRASENAS (IDENTIDAD DUAL NEXTCLOUD + SAMBA)
     # ==============================================================================
@@ -2004,7 +2005,7 @@ data:
                     gname = line_s.split(":", 1)[1].strip()
                     if gname: current_user["groups"].append(gname)
         return True, {"users": users}
-    
+
     def act_users_sync_nextcloud(p):
         """Crea y sincroniza un nuevo usuario con credenciales en Nextcloud y Samba."""
         user = str(p.get("username", "")).strip()
@@ -2013,7 +2014,7 @@ data:
         group = str(p.get("group", "alumnos")).strip()
         if not RE_USERNAME.match(user) or not pwd:
             return False, {"error": "Usuario o clave inválida (3-32 caracteres alfanuméricos)."}
-    
+
         script_nc = f"""set -e
     export NC_USER={shlex.quote(user)}
     export NC_PASS={shlex.quote(pwd)}
@@ -2024,7 +2025,7 @@ data:
     su -m -s /bin/sh www-data -c 'OC_PASS="$OC_PASS" php occ user:add --password-from-env --display-name="$NC_DISP" --group="$NC_GROUP" "$NC_USER"'
     """
         res_nc = run_cmd(["kubectl", "exec", "-i", "-n", "default", "deployment/nextcloud", "--", "sh"], input_data=script_nc, timeout=35)
-    
+
         script_smb = f"""set -e
     export SMB_USER={shlex.quote(user)}
     export SMB_PASS={shlex.quote(pwd)}
@@ -2035,7 +2036,7 @@ data:
     (echo "$SMB_PASS"; echo "$SMB_PASS") | smbpasswd -a -s "$SMB_USER" 2>&1
     """
         res_smb = run_cmd(["kubectl", "exec", "-i", "-n", "default", "deployment/samba", "--", "sh"], input_data=script_smb, timeout=20)
-    
+
         if res_nc.returncode != 0:
             full_out = f"{res_nc.stdout or ''} {res_nc.stderr or ''}"
             if "already exists" in full_out.lower():
@@ -2050,13 +2051,13 @@ data:
                 res_reset = run_cmd(["kubectl", "exec", "-i", "-n", "default", "deployment/nextcloud", "--", "sh"], input_data=script_nc_reset, timeout=25)
                 if res_reset.returncode == 0:
                     return True, {"status": f"El usuario {user} ya existía. Sus credenciales y grupo fueron actualizados exitosamente."}
-            
+
             # Rollback compensation (Saga pattern): undo Samba & Linux user creation if Nextcloud fails
             run_cmd(["kubectl", "exec", "-n", "default", "deployment/samba", "--", "sh", "-c", f"smbpasswd -x {shlex.quote(user)} 2>/dev/null; deluser {shlex.quote(user)} 2>/dev/null || true"])
             return False, {"error": f"Fallo al registrar en Nextcloud: {full_out.strip()}. Se revirtieron los cambios en Samba."}
-    
+
         return True, {"status": f"Usuario {user} ({display}) creado y sincronizado con éxito en Nextcloud y carpetas de red Samba."}
-    
+
     def act_users_import_csv(p, progress_cb=None):
         """
         Importa masivamente usuarios escolares desde CSV o JSON con trazabilidad y reversión.
@@ -2064,7 +2065,7 @@ data:
         """
         csv_raw = p.get("csv", "")
         users_list = p.get("users", [])
-        
+
         rows_to_process = []
         if users_list and isinstance(users_list, list):
             rows_to_process = users_list
@@ -2081,32 +2082,32 @@ data:
                         "display_name": parts[2] if len(parts) > 2 else parts[0],
                         "group": parts[3] if len(parts) > 3 else "alumnos"
                     })
-    
+
         if not rows_to_process:
             return False, {"error": "No se encontraron filas válidas para importar. Formato: usuario,contraseña,nombre_completo,grupo"}
-    
+
         total = len(rows_to_process)
         created = 0
         failed = 0
         errors = []
-    
+
         for idx, u in enumerate(rows_to_process):
             u_name = str(u.get("username", "")).strip()
             u_pass = str(u.get("password", "")).strip()
             u_disp = str(u.get("display_name", u_name)).strip() or u_name
             u_grp = str(u.get("group", "alumnos")).strip()
-    
+
             pct = int((idx / total) * 100)
             if progress_cb:
                 progress_cb(pct, f"Procesando ({idx+1}/{total}): {u_name}", f"Iniciando alta de usuario: {u_name}...")
-    
+
             ok, res = act_users_sync_nextcloud({
                 "username": u_name,
                 "password": u_pass,
                 "display_name": u_disp,
                 "group": u_grp
             })
-    
+
             if ok:
                 created += 1
                 if progress_cb:
@@ -2117,10 +2118,10 @@ data:
                 errors.append(f"{u_name}: {err_msg}")
                 if progress_cb:
                     progress_cb(pct, f"Fallo ({idx+1}/{total}): {u_name}", f"✗ Error en {u_name}: {err_msg}")
-    
+
         if progress_cb:
             progress_cb(100, "Importación completada", f"Resumen: {created} creados, {failed} fallidos.")
-    
+
         return (created > 0 or total == 0), {
             "total": total,
             "created": created,
@@ -2128,31 +2129,31 @@ data:
             "errors": errors,
             "status": f"Importación finalizada: {created} usuarios sincronizados, {failed} con errores."
         }
-    
+
     def act_users_reset_password(p):
         """Restablece la contrasena de un usuario en ambos servicios."""
         user = str(p.get("username", "")).strip()
         pwd = str(p.get("password", ""))
         if not RE_USERNAME.match(user) or not pwd: return False, {"error": "Usuario o contraseña inválida"}
-    
+
         script_nc = f"""set -e
     export NC_USER={shlex.quote(user)}
     export OC_PASS={shlex.quote(pwd)}
     su -m -s /bin/sh www-data -c 'OC_PASS="$OC_PASS" php occ user:resetpassword --password-from-env "$NC_USER"'
     """
         res_nc = run_cmd(["kubectl", "exec", "-i", "-n", "default", "deployment/nextcloud", "--", "sh"], input_data=script_nc, timeout=30)
-    
+
         script_smb = f"""set -e
     export SMB_USER={shlex.quote(user)}
     export SMB_PASS={shlex.quote(pwd)}
     (echo "$SMB_PASS"; echo "$SMB_PASS") | smbpasswd -s "$SMB_USER" 2>&1
     """
         res_smb = run_cmd(["kubectl", "exec", "-i", "-n", "default", "deployment/samba", "--", "sh"], input_data=script_smb, timeout=20)
-    
+
         if res_nc.returncode != 0:
             return False, {"error": f"Fallo al cambiar contraseña: {res_nc.stderr or res_nc.stdout}"}
         return True, {"status": f"Contraseña del usuario {user} actualizada correctamente en Nextcloud y Samba."}
-    
+
     def act_users_delete(p):
         """Elimina permanentemente una cuenta de usuario."""
         user = str(p.get("username", "")).strip()
@@ -2160,7 +2161,7 @@ data:
         run_cmd(["kubectl", "exec", "-n", "default", "deployment/nextcloud", "--", "su", "-s", "/bin/sh", "www-data", "-c", f"php occ user:delete {shlex.quote(user)}"])
         run_cmd(["kubectl", "exec", "-n", "default", "deployment/samba", "--", "sh", "-c", f"smbpasswd -x {shlex.quote(user)} 2>/dev/null; deluser {shlex.quote(user)} 2>/dev/null || true"])
         return True, {"status": f"Cuenta de usuario {user} eliminada de Nextcloud y Samba."}
-    
+
     def act_users_toggle_status(p):
         """Suspende o rehabilita una cuenta de usuario."""
         user = str(p.get("username", "")).strip()
@@ -2169,7 +2170,7 @@ data:
         res = run_cmd(["kubectl", "exec", "-n", "default", "deployment/nextcloud", "--", "su", "-s", "/bin/sh", "www-data", "-c", f"php occ user:{action} {shlex.quote(user)}"])
         state_str = "habilitada" if enable else "suspendida"
         return True, {"status": f"Cuenta de usuario {user} {state_str} con éxito."}
-    
+
     # ==============================================================================
     # SECCION 8: CARPETAS COMPARTIDAS EN RED (SAMBA / WINDOWS)
     # ==============================================================================
@@ -2182,17 +2183,17 @@ data:
             {"name": "publico", "path": "/samba/publico", "readonly": False, "recycle": True, "desc": "Material institucional de libre acceso"}
         ]
         return True, {"shares": shares}
-    
+
     def act_samba_sessions(p):
         """Obtiene las computadoras y usuarios conectados en este momento."""
         res = run_cmd(["kubectl", "exec", "-n", "default", "deployment/samba", "--", "smbstatus", "-b"])
         return True, {"sessions_raw": res.stdout or "No hay clientes Windows conectados actualmente."}
-    
+
     def act_samba_reload(p):
         """Recarga la configuracion de Samba en caliente sin desconectar usuarios."""
         res = run_cmd(["kubectl", "exec", "-n", "default", "deployment/samba", "--", "smbcontrol", "smbd", "reload-config"])
         return True, {"status": "Configuración de carpetas de red recargada en caliente correctamente."}
-    
+
     # ==============================================================================
     # SECCION 9: CONFIGURACION DE RED E INTERNET (CON SEGURO DE ROLLBACK)
     # ==============================================================================
@@ -2200,7 +2201,7 @@ data:
         """Muestra la IP y enlaces activos en el servidor."""
         res = run_cmd(["ip", "-br", "addr", "show"])
         return True, {"interfaces": res.stdout or "interfaces activas"}
-    
+
     def act_network_apply_with_rollback(p):
         """Aplica configuracion de red con seguro de 60 segundos."""
         ip = p.get("ip", "")
@@ -2210,13 +2211,13 @@ data:
         with open(ROLLBACK_TIMER_FILE, "w") as f:
             json.dump({"timestamp": time.time(), "ip": ip, "status": "pending_confirm"}, f)
         return True, {"status": f"Nueva IP {ip} aplicada. Confirme dentro de 60s o se restaurará la IP anterior automáticamente."}
-    
+
     def act_network_confirm(p):
         """Fija la IP como definitiva y cancela el temporizador de rollback."""
         if os.path.exists(ROLLBACK_TIMER_FILE):
             os.remove(ROLLBACK_TIMER_FILE)
         return True, {"status": "Configuración de red confirmada de forma permanente."}
-    
+
     # ==============================================================================
     # SECCION 10: PUNTOS DE RESTAURACION (SNAPSHOTS ZFS)
     # ==============================================================================
@@ -2234,28 +2235,28 @@ data:
                     "creation": parts[2]
                 })
         return True, {"snapshots": snaps}
-    
+
     def act_snapshots_create(p):
         """Crea un nuevo punto de restauracion inmediato en 1 segundo."""
         tag = p.get("tag", "").strip() or time.strftime("%Y%m%d_%H%M%S")
         if not RE_SNAP_TAG.match(tag): return False, {"error": "Etiqueta de snapshot no válida."}
         res = run_cmd(["zfs", "snapshot", f"tank/nas@{tag}"])
         return res.returncode == 0, {"status": f"Punto de restauración tank/nas@{tag} creado con éxito."}
-    
+
     def act_snapshots_rollback(p):
         """Vuelve los archivos al estado exacto que tenian en ese snapshot."""
         name = p.get("name", "").strip()
         if not name.startswith("tank/nas@"): return False, {"error": "Nombre de snapshot inválido."}
         res = run_cmd(["zfs", "rollback", "-r", name])
         return res.returncode == 0, {"status": f"Restauración completada: Archivos devueltos al punto {name}."}
-    
+
     def act_snapshots_destroy(p):
         """Elimina un punto de restauracion antiguo para recuperar espacio."""
         name = p.get("name", "").strip()
         if not name.startswith("tank/nas@"): return False, {"error": "Nombre de snapshot inválido."}
         res = run_cmd(["zfs", "destroy", name])
         return res.returncode == 0, {"status": f"Snapshot {name} eliminado correctamente."}
-    
+
     # ==============================================================================
     # SECCION 11: COPIA EN LA NUBE & LLAVES DE RESCATE (CLOUDFLARE R2)
     # ==============================================================================
@@ -2264,13 +2265,13 @@ data:
         out_file = "/tmp/enterprise-nas-emergency-kit.tar.enc"
         res = run_cmd(["bash", "/home/oriel/nas-gitops/scripts/export-master-keys.sh", out_file])
         return True, {"file": out_file, "status": "Kit de llaves maestras de rescate generado exitosamente."}
-    
+
     def act_backup_r2_trigger(p):
         """Dispara inmediatamente la sincronizacion encriptada a Cloudflare R2."""
         job_name = f"r2-manual-{int(time.time())}"
         res = run_cmd(["kubectl", "create", "job", job_name, "--from=cronjob/zfs-offsite-backup", "-n", "kube-system"])
         return True, {"status": f"Copia de seguridad en la nube (R2) iniciada bajo la tarea {job_name}."}
-    
+
     # ==============================================================================
     # SECCION 12: PRUEBA DE RECUPERACION ANTE FALLOS (SIMULACRO DR / RTO)
     # ==============================================================================
@@ -2285,7 +2286,7 @@ data:
             "status": f"Prueba completada en {rto_seconds} segundos. Sistema 100% recuperable.",
             "log": res.stdout or "Simulacro ejecutado exitosamente."
         }
-    
+
     # ==============================================================================
     # SECCION 13: BATERIA DE EMERGENCIA (UPS / NUT)
     # ==============================================================================
@@ -2304,11 +2305,11 @@ data:
             "battery.runtime": "45 minutos",
             "input.voltage": "220.4 V"
         }
-    
+
     def act_ups_test_battery(p):
         """Ejecuta un autodiagnostico de descarga rapida de la bateria."""
         return True, {"status": "Prueba rápida de batería iniciada. Diagnóstico completado: Batería en estado ÓPTIMO."}
-    
+
     # ==============================================================================
     # SECCION 14: CONSOLA DE COMANDOS (TERMINAL DE RESCATE)
     # ==============================================================================
@@ -2322,7 +2323,7 @@ data:
             return False, {"error": "Comando no autorizado por seguridad. Solo se permiten comandos de diagnóstico del sistema."}
         res = run_cmd(shlex.split(cmd_str), timeout=15)
         return True, {"output": (res.stdout or res.stderr or "Comando ejecutado sin salida").strip()}
-    
+
     # ==============================================================================
     # SECCION 15: CERTIFICADOS DE SEGURIDAD (HTTPS / SSL)
     # ==============================================================================
@@ -2334,7 +2335,7 @@ data:
             "-subj", "/C=AR/ST=BA/L=CABA/O=Enterprise NAS/CN=Enterprise NAS Root CA"
         ], timeout=15)
         return True, {"status": "Certificado Raíz SSL de la escuela generado con éxito (vigencia: 5 años)."}
-    
+
     def act_pki_download_ca(p):
         """Retorna el contenido del certificado .crt para instalar en netbooks."""
         ca_path = "/tank/nas/pki/ca.crt"
@@ -2343,7 +2344,7 @@ data:
                 cert_data = f.read()
             return True, {"cert": cert_data, "filename": "Enterprise-NAS-CA.crt"}
         return False, {"error": "Certificado CA no encontrado en /tank/nas/pki/ca.crt"}
-    
+
     # ==============================================================================
     # SECCION 16: MANTENIMIENTO DEL SISTEMA Y BASE DE DATOS
     # ==============================================================================
@@ -2351,7 +2352,7 @@ data:
         """Reindexa todos los archivos en la base de datos de Nextcloud."""
         res = run_cmd(["kubectl", "exec", "-n", "default", "deployment/nextcloud", "--", "su", "-s", "/bin/sh", "www-data", "-c", "php occ files:scan --all"], timeout=60)
         return True, {"status": "Escaneo y reindexación de archivos completada exitosamente.", "output": res.stdout}
-    
+
     def act_occ_maintenance_toggle(p):
         """Activa o desactiva la pantalla de mantenimiento para los usuarios."""
         enable = p.get("enable", True)
@@ -2359,12 +2360,12 @@ data:
         res = run_cmd(["kubectl", "exec", "-n", "default", "deployment/nextcloud", "--", "su", "-s", "/bin/sh", "www-data", "-c", f"php occ maintenance:mode {mode_arg}"])
         state_str = "ACTIVADO (sitio bloqueado por mantenimiento)" if enable else "DESACTIVADO (acceso normal restablecido)"
         return True, {"status": f"Modo de mantenimiento {state_str}."}
-    
+
     def act_postgres_vacuum(p):
         """Desfragmenta y optimiza las tablas de la base de datos PostgreSQL."""
         res = run_cmd(["kubectl", "exec", "-n", "default", "deployment/nextcloud-postgres", "--", "vacuumdb", "-U", "nextcloud", "-d", "nextcloud", "-z"], timeout=40)
         return True, {"status": "Base de datos PostgreSQL optimizada y compactada con éxito."}
-    
+
     # ==============================================================================
     # SECCION 17: TAREAS AUTOMATICAS PROGRAMADAS (CRONJOBS)
     # ==============================================================================
@@ -2384,7 +2385,7 @@ data:
         except Exception:
             pass
         return True, {"cronjobs": items}
-    
+
     def act_cron_trigger_now(p):
         """Dispara de inmediato una tarea programada."""
         name = p.get("name", "zfs-offsite-backup")
@@ -2392,7 +2393,7 @@ data:
         job_name = f"manual-{name}-{int(time.time())}"
         res = run_cmd(["kubectl", "create", "job", job_name, f"--from=cronjob/{name}", "-n", ns])
         return True, {"status": f"Tarea programada {name} ejecutada en este momento (Job: {job_name})."}
-    
+
     # ==============================================================================
     # DESPACHADOR CENTRAL DE ACCIONES (17 MODULOS)
     # ==============================================================================
@@ -2405,38 +2406,38 @@ data:
         "zfs.pool.scrub_start": act_zfs_pool_scrub_start,
         "zfs.pool.scrub_stop": act_zfs_pool_scrub_stop,
         "zfs.arc.set_max": act_zfs_arc_set_max,
-    
+
         # 2. Servicios y Programas (K8s)
         "services.list": act_services_list,
         "services.restart": act_services_restart,
         "services.scale": act_services_scale,
         "services.logs": act_services_logs,
         "services.cascade_restart": act_services_cascade_restart,
-    
+
         # 3. Registro de Actividad y Seguridad
         "audit.logs.list": act_audit_logs_list,
         "audit.logs.rotate": act_audit_logs_rotate,
         "sentinel.unban": act_sentinel_unban,
-    
+
         # 4. Discos y Almacenamiento (RAID)
         "storage.disks.list": act_storage_disks_list,
         "storage.smart.test": act_storage_smart_test,
         "zfs.disk.offline": act_zfs_disk_offline,
         "zfs.disk.online": act_zfs_disk_online,
         "zfs.disk.replace": act_zfs_disk_replace,
-    
+
         # 5. Carpetas Principales y Limites (Datasets & Cuotas)
         "zfs.dataset.list": act_zfs_dataset_list,
         "zfs.dataset.create": act_zfs_dataset_create,
         "zfs.dataset.set_quota": act_zfs_dataset_set_quota,
         "zfs.dataset.delete": act_zfs_dataset_delete,
-    
+
         # 6. Administrador de Archivos Web
         "files.list_all": act_files_list_all,
         "files.mkdir": act_files_mkdir,
         "files.delete": act_files_delete,
         "files.repair_permissions": act_files_repair_permissions,
-    
+
         # 7. Usuarios y Contraseñas
         "users.list": act_users_list,
         "users.sync_nextcloud": act_users_sync_nextcloud,
@@ -2444,46 +2445,46 @@ data:
         "users.reset_password": act_users_reset_password,
         "users.delete": act_users_delete,
         "users.toggle_status": act_users_toggle_status,
-    
+
         # 8. Carpetas Compartidas en Red (Samba / Windows)
         "samba.shares.list": act_samba_shares_list,
         "samba.sessions": act_samba_sessions,
         "samba.reload": act_samba_reload,
-    
+
         # 9. Configuracion de Red e Internet
         "network.status": act_network_status,
         "network.apply": act_network_apply_with_rollback,
         "network.confirm": act_network_confirm,
-    
+
         # 10. Puntos de Restauracion (Snapshots)
         "snapshots.list": act_snapshots_list,
         "snapshots.create": act_snapshots_create,
         "snapshots.rollback": act_snapshots_rollback,
         "snapshots.destroy": act_snapshots_destroy,
-    
+
         # 11. Copia en la Nube y Llaves de Rescate
         "backup.export_emergency_kit": act_backup_export_emergency_kit,
         "backup.r2.trigger": act_backup_r2_trigger,
-    
+
         # 12. Prueba de Recuperacion ante Fallos (DR Drill)
         "dr.run_drill": act_dr_run_drill,
-    
+
         # 13. Bateria de Emergencia (UPS)
         "ups.status": act_ups_status,
         "ups.test_battery": act_ups_test_battery,
-    
+
         # 14. Consola de Comandos (Terminal de Rescate)
         "shell.exec": act_shell_exec,
-    
+
         # 15. Certificados de Seguridad (HTTPS / SSL)
         "pki.generate_ca": act_pki_generate_ca,
         "pki.download_ca": act_pki_download_ca,
-    
+
         # 16. Mantenimiento del Sistema y Base de Datos
         "occ.files_scan": act_occ_files_scan,
         "occ.maintenance_toggle": act_occ_maintenance_toggle,
         "postgres.vacuum": act_postgres_vacuum,
-    
+
         # 17. Tareas Automaticas Programadas
         "cron.list": act_cron_list,
         "cron.trigger_now": act_cron_trigger_now,
@@ -2500,10 +2501,10 @@ data:
     import struct
     import base64
     import secrets
-    
+
     ROLE_SUPERADMIN = "superadmin"
     ROLE_OPERATOR = "operator"
-    
+
     ROLE_PERMISSIONS = {
         ROLE_SUPERADMIN: {
             "zfs.*",
@@ -2525,12 +2526,12 @@ data:
             "backups.snapshots.list"
         }
     }
-    
+
     def generate_totp_secret():
         """Generates a standard Base32 encoded 160-bit secret."""
         raw = secrets.token_bytes(20)
         return base64.b32encode(raw).decode('utf-8').replace('=', '')
-    
+
     def verify_totp(secret, token, window=1):
         """
         Verifies a 6-digit TOTP token against secret using HMAC-SHA1.
@@ -2543,7 +2544,7 @@ data:
             secret_bytes = base64.b32decode(secret + '=' * ((8 - len(secret) % 8) % 8), casefold=True)
         except Exception:
             return False
-            
+
         current_time_step = int(time.time() // 30)
         for step_offset in range(-window, window + 1):
             step = current_time_step + step_offset
@@ -2554,7 +2555,7 @@ data:
             if code == token:
                 return True
         return False
-    
+
     def check_permission(user_role, required_action):
         """Validates whether user_role has permission for required_action."""
         perms = ROLE_PERMISSIONS.get(user_role, set())
@@ -2602,7 +2603,7 @@ data:
         }
         * { margin:0; padding:0; box-sizing:border-box; font-family:var(--font-sans); }
         body { background:var(--bg-base); color:var(--text); font-size:13px; line-height:1.5; min-height:100vh; }
-    
+
         /* PANTALLA DE LOGIN GATEKEEPER */
         #login-view {
           position:fixed; inset:0; background:radial-gradient(circle at top, #1e293b 0%, #090d16 100%);
@@ -2618,7 +2619,7 @@ data:
         .login-subtitle { font-size:12px; color:var(--text-muted); margin-bottom:24px; line-height:1.4; }
         .login-alert { padding:10px 14px; border-radius:6px; font-size:12px; margin-bottom:18px; display:none; }
         .login-alert-danger { background:rgba(239,68,68,0.15); border:1px solid #ef4444; color:#fca5a5; }
-    
+
         /* LAYOUT PRINCIPAL */
         #app-layout { display:none; min-height:100vh; flex-direction:row; }
         aside { width:270px; background:var(--bg-sidebar); border-right:1px solid var(--border); display:flex; flex-direction:column; flex-shrink:0; }
@@ -2630,7 +2631,7 @@ data:
         .nav-item:hover { background:rgba(255,255,255,0.05); color:var(--text); }
         .nav-item.active { background:var(--accent); color:#fff; font-weight:600; }
         .sidebar-footer { padding:14px 20px; border-top:1px solid var(--border); font-size:11px; color:var(--text-muted); background:rgba(0,0,0,0.2); }
-    
+
         /* AREA DE CONTENIDO */
         .app-main { flex:1; display:flex; flex-direction:column; overflow-y:auto; min-width:0; }
         header { background:var(--bg-sidebar); border-bottom:1px solid var(--border); padding:12px 24px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; }
@@ -2639,16 +2640,16 @@ data:
         .badge-ok { background:rgba(16,185,129,0.15); color:var(--success); border:1px solid var(--success); }
         .badge-warn { background:rgba(245,158,11,0.15); color:var(--warning); border:1px solid var(--warning); }
         .header-actions { display:flex; align-items:center; gap:8px; }
-    
+
         .content-body { padding:24px; max-width:1400px; width:100%; margin:0 auto; }
         .page-section { display:none; }
         .page-section.active { display:block; animation:fadeIn 0.15s ease-in; }
         @keyframes fadeIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
-    
+
         .section-header { margin-bottom:20px; border-bottom:1px solid var(--border); padding-bottom:12px; }
         .section-title { font-size:19px; font-weight:700; color:#fff; }
         .section-subtitle { font-size:12px; color:var(--text-muted); margin-top:3px; }
-    
+
         /* TARJETAS, BOTONES Y ACCIONES */
         .grid-3 { display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:16px; margin-bottom:20px; }
         .grid-2 { display:grid; grid-template-columns:repeat(auto-fit, minmax(360px, 1fr)); gap:16px; margin-bottom:20px; }
@@ -2656,13 +2657,13 @@ data:
         .card-title { font-size:13px; font-weight:700; color:#93c5fd; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center; }
         .metric-value { font-size:26px; font-weight:700; color:#fff; line-height:1.2; margin:4px 0; }
         .metric-label { font-size:11px; color:var(--text-muted); }
-    
+
         /* ACCIONES EXPLICATIVAS (ACTION CARDS) */
         .action-box { background:rgba(15,23,42,0.6); border:1px solid var(--border); border-radius:6px; padding:14px; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center; gap:16px; }
         .action-info { flex:1; }
         .action-name { font-size:13px; font-weight:600; color:#fff; margin-bottom:3px; }
         .action-desc { font-size:11px; color:var(--text-muted); line-height:1.4; }
-    
+
         .btn { background:var(--bg-card); color:var(--text); border:1px solid var(--border); padding:8px 14px; border-radius:6px; cursor:pointer; font-size:12px; font-weight:500; transition:all 0.15s; display:inline-flex; align-items:center; gap:6px; text-decoration:none; }
         .btn:hover { background:var(--bg-card-hover); border-color:#475569; }
         .btn-primary { background:var(--accent); border-color:var(--accent); color:#fff; }
@@ -2674,14 +2675,14 @@ data:
         .btn-warning { background:#92400e; border-color:#d97706; color:#fef3c7; }
         .btn-warning:hover { background:#b45309; }
         .btn-sm { padding:5px 9px; font-size:11px; border-radius:4px; }
-    
+
         /* TABLAS INTERACTIVAS */
         .table-box { overflow-x:auto; border:1px solid var(--border); border-radius:6px; background:var(--bg-sidebar); margin-bottom:16px; }
         table { width:100%; border-collapse:collapse; text-align:left; }
         th { background:#1e293b; padding:10px 14px; font-size:11px; text-transform:uppercase; color:var(--text-muted); font-weight:600; border-bottom:1px solid var(--border); }
         td { padding:10px 14px; border-bottom:1px solid #1e293b; font-size:12px; vertical-align:middle; }
         tr:hover td { background:rgba(255,255,255,0.02); }
-    
+
         /* FORMULARIOS Y CONTROLES */
         .form-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:12px; margin-bottom:14px; }
         .form-group { margin-bottom:12px; }
@@ -2689,26 +2690,26 @@ data:
         .form-control { width:100%; background:var(--bg-base); border:1px solid var(--border); border-radius:6px; padding:8px 12px; color:#fff; font-size:12px; transition:border-color 0.15s; }
         .form-control:focus { outline:none; border-color:var(--border-accent); }
         select.form-control { cursor:pointer; }
-    
+
         .terminal-window { background:#030712; border:1px solid var(--border); border-radius:8px; padding:16px; font-family:var(--font-mono); font-size:12px; color:#4ade80; min-height:220px; max-height:420px; overflow-y:auto; white-space:pre-wrap; }
-    
+
         /* MODAL UNIVERSAL (LOGS Y CONFIRMACION) */
         .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.75); display:none; align-items:center; justify-content:center; z-index:9000; padding:20px; }
         .modal-content { background:#0f172a; border:1px solid #334155; border-radius:10px; width:100%; max-width:760px; max-height:90vh; display:flex; flex-direction:column; overflow:hidden; }
         .modal-header { padding:16px 20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; font-weight:700; color:#fff; }
         .modal-body { padding:20px; overflow-y:auto; flex:1; }
         .modal-footer { padding:14px 20px; border-top:1px solid var(--border); display:flex; justify-content:flex-end; gap:10px; }
-    
+
         .toast { position:fixed; bottom:24px; right:24px; background:#1e293b; border:1px solid #475569; padding:12px 20px; border-radius:6px; color:#fff; font-size:12px; z-index:9999; display:none; box-shadow:0 10px 25px -5px rgba(0,0,0,0.5); }
       </style>
     </head>
     <body>
-    
+
       <!-- BANNER DE RECONEXION ANTE CAIDA DE RED -->
       <div id="offline-banner" style="display:none; background:#dc2626; color:#fff; text-align:center; padding:10px 16px; font-weight:700; font-size:13px; position:fixed; top:0; left:0; right:0; z-index:9999999; box-shadow:0 4px 12px rgba(0,0,0,0.5);">
         ⚠️ Conexión perdida con el servidor escolar. Intentando reconectar automáticamente...
       </div>
-    
+
       <!-- PANTALLA DE LOGIN GATEKEEPER -->
       <div id="login-view">
         <div class="login-card">
@@ -2718,7 +2719,7 @@ data:
           </div>
           <div class="login-subtitle">Servidor Institucional de Almacenamiento y Microservicios. Ingrese con sus credenciales de administrador para operar el sistema.</div>
           <div id="login-error" class="login-alert login-alert-danger"></div>
-          
+
           <form onsubmit="handleLoginSubmit(event)">
             <div class="form-group">
               <label class="form-label">Usuario Administrador</label>
@@ -2736,52 +2737,52 @@ data:
           </form>
         </div>
       </div>
-    
+
       <!-- APLICACION PRINCIPAL (PROTEGIDA POR SESION) -->
       <div id="app-layout">
-        
+
         <!-- SIDEBAR -->
         <aside>
           <div class="sidebar-brand">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
             <span>NAS Control Center</span>
           </div>
-    
+
           <div class="sidebar-nav">
             <div class="nav-group">Estado y Monitoreo</div>
             <div class="nav-item active" onclick="navigate('dashboard', this)">1. Estado General del Servidor</div>
             <div class="nav-item" onclick="navigate('services', this)">2. Servicios y Programas</div>
             <div class="nav-item" onclick="navigate('audit', this)">3. Registro de Actividad y Seguridad</div>
-    
+
             <div class="nav-group">Almacenamiento y Archivos</div>
             <div class="nav-item" onclick="navigate('disks', this)">4. Discos y Almacenamiento (RAID)</div>
             <div class="nav-item" onclick="navigate('datasets', this)">5. Carpetas Principales y Límites</div>
             <div class="nav-item" onclick="navigate('files', this)">6. Administrador de Archivos</div>
-    
+
             <div class="nav-group">Red y Cuentas</div>
             <div class="nav-item" onclick="navigate('users', this)">7. Usuarios y Contraseñas</div>
             <div class="nav-item" onclick="navigate('samba', this)">8. Carpetas Compartidas en Red</div>
             <div class="nav-item" onclick="navigate('network', this)">9. Configuración de Red e Internet</div>
-    
+
             <div class="nav-group">Copias y Respaldo</div>
             <div class="nav-item" onclick="navigate('snapshots', this)">10. Puntos de Restauración</div>
             <div class="nav-item" onclick="navigate('backup', this)">11. Copia en la Nube y Rescate</div>
             <div class="nav-item" onclick="navigate('dr', this)">12. Prueba de Recuperación ante Fallos</div>
             <div class="nav-item" onclick="navigate('ups', this)">13. Batería de Emergencia (UPS)</div>
-    
+
             <div class="nav-group">Mantenimiento y Sistema</div>
             <div class="nav-item" onclick="navigate('terminal', this)">14. Consola de Comandos</div>
             <div class="nav-item" onclick="navigate('pki', this)">15. Certificados de Seguridad (SSL)</div>
             <div class="nav-item" onclick="navigate('maintenance', this)">16. Mantenimiento del Sistema</div>
             <div class="nav-item" onclick="navigate('cron', this)">17. Tareas Automáticas</div>
           </div>
-    
+
           <div class="sidebar-footer">
             <div>Enterprise NAS Appliance v2.0</div>
             <div style="color:#64748b; margin-top:2px;">Debian 12 + OpenZFS + K3s</div>
           </div>
         </aside>
-    
+
         <!-- CUERPO PRINCIPAL -->
         <div class="app-main">
           <header>
@@ -2799,16 +2800,16 @@ data:
               <button class="btn btn-sm" onclick="handleLogout()" style="margin-left:6px; border-color:#475569;">Cerrar Sesión</button>
             </div>
           </header>
-    
+
           <div class="content-body">
-            
+
             <!-- 1. ESTADO GENERAL DEL SERVIDOR -->
             <section id="sec-dashboard" class="page-section active">
               <div class="section-header">
                 <div class="section-title">1. Estado General del Servidor</div>
                 <div class="section-subtitle">Monitoreo de rendimiento del procesador, uso de memoria RAM y salud del almacenamiento en vivo.</div>
               </div>
-    
+
               <div class="grid-3">
                 <div class="card">
                   <div class="card-title">Carga del Procesador (CPU)</div>
@@ -2826,11 +2827,11 @@ data:
                   <div class="metric-label">Arreglo OpenZFS con protección de paridad</div>
                 </div>
               </div>
-    
+
               <!-- PANEL DE CONTROL OPERATIVO DIRECTO -->
               <div class="card">
                 <div class="card-title">Herramientas Operativas de Memoria y Discos</div>
-                
+
                 <div class="action-box">
                   <div class="action-info">
                     <div class="action-name">Revisar Salud de los Discos (Scrub ZFS)</div>
@@ -2841,7 +2842,7 @@ data:
                     <button class="btn btn-sm" onclick="execCmd('zfs.pool.scrub_stop')">Detener</button>
                   </div>
                 </div>
-    
+
                 <div class="action-box">
                   <div class="action-info">
                     <div class="action-name">Liberar Memoria RAM Inmediata</div>
@@ -2849,7 +2850,7 @@ data:
                   </div>
                   <button class="btn btn-warning btn-sm" onclick="execCmd('system.drop_caches')">Liberar Memoria Ahora</button>
                 </div>
-    
+
                 <div class="action-box">
                   <div class="action-info">
                     <div class="action-name">Ajustar Límite de Memoria ZFS ARC en Caliente</div>
@@ -2866,13 +2867,13 @@ data:
                   </div>
                 </div>
               </div>
-    
+
               <div class="card">
                 <div class="card-title">Detalle del Arreglo de Almacenamiento (zpool status)</div>
                 <div id="dash-zpool-output" class="terminal-window" style="min-height:160px; max-height:240px;">Consultando estado físico...</div>
               </div>
             </section>
-    
+
             <!-- 2. SERVICIOS Y PROGRAMAS (MICROSERVICIOS K8S) -->
             <section id="sec-services" class="page-section">
               <div class="section-header" style="display:flex; justify-content:space-between; align-items:flex-end;">
@@ -2885,7 +2886,7 @@ data:
                   <button class="btn btn-warning btn-sm" onclick="execCmd('services.cascade_restart')">Reinicio en Cascada Completo</button>
                 </div>
               </div>
-    
+
               <div class="table-box">
                 <table>
                   <thead>
@@ -2902,7 +2903,7 @@ data:
                 </table>
               </div>
             </section>
-    
+
             <!-- 3. REGISTRO DE ACTIVIDAD Y SEGURIDAD -->
             <section id="sec-audit" class="page-section">
               <div class="section-header" style="display:flex; justify-content:space-between; align-items:flex-end;">
@@ -2915,7 +2916,7 @@ data:
                   <button class="btn btn-sm btn-warning" onclick="execCmd('audit.logs.rotate')">Archivar Registro Actual</button>
                 </div>
               </div>
-    
+
               <div class="card">
                 <div class="card-title">Desbloquear Computadora de la Red (IP Bloqueada)</div>
                 <div class="action-desc" style="margin-bottom:12px;">Si una computadora escolar fue bloqueada por ingresar muchas veces la contraseña mal, puede restaurarle el acceso ingresando su dirección IP aquí:</div>
@@ -2924,7 +2925,7 @@ data:
                   <button class="btn btn-success btn-sm" onclick="execCmd('sentinel.unban', {ip: document.getElementById('unban-ip-input').value})">Desbloquear IP</button>
                 </div>
               </div>
-    
+
               <div class="table-box">
                 <table>
                   <thead>
@@ -2942,14 +2943,14 @@ data:
                 </table>
               </div>
             </section>
-    
+
             <!-- 4. DISCOS Y ALMACENAMIENTO (RAID) -->
             <section id="sec-disks" class="page-section">
               <div class="section-header">
                 <div class="section-title">4. Discos y Almacenamiento (RAID)</div>
                 <div class="section-subtitle">Diagnóstico físico de discos rígidos (SMART) y reemplazo de unidades dañadas sin pérdida de datos.</div>
               </div>
-    
+
               <div class="table-box">
                 <table>
                   <thead>
@@ -2966,7 +2967,7 @@ data:
                   </tbody>
                 </table>
               </div>
-    
+
               <div class="card">
                 <div class="card-title">Asistente de Reemplazo de Disco Dañado</div>
                 <div class="action-desc" style="margin-bottom:14px;">Permite transferir y reconstruir los datos de paridad desde un disco con fallas hacia una nueva unidad rígida conectada:</div>
@@ -2985,7 +2986,7 @@ data:
                 </button>
               </div>
             </section>
-    
+
             <!-- 5. CARPETAS PRINCIPALES Y LIMITES (DATASETS & CUOTAS) -->
             <section id="sec-datasets" class="page-section">
               <div class="section-header" style="display:flex; justify-content:space-between; align-items:flex-end;">
@@ -2995,7 +2996,7 @@ data:
                 </div>
                 <button class="btn btn-primary btn-sm" onclick="loadDatasetsView()">Actualizar Lista</button>
               </div>
-    
+
               <div class="table-box">
                 <table>
                   <thead>
@@ -3013,7 +3014,7 @@ data:
                   </tbody>
                 </table>
               </div>
-    
+
               <div class="card">
                 <div class="card-title">Crear Nueva Carpeta Principal (Dataset)</div>
                 <div class="form-grid">
@@ -3037,7 +3038,7 @@ data:
                 <button class="btn btn-success" onclick="createDatasetSubmit()">Crear Espacio de Almacenamiento</button>
               </div>
             </section>
-    
+
             <!-- 6. ADMINISTRADOR DE ARCHIVOS WEB -->
             <section id="sec-files" class="page-section">
               <div class="section-header" style="display:flex; justify-content:space-between; align-items:flex-end;">
@@ -3050,14 +3051,14 @@ data:
                   <button class="btn btn-sm btn-primary" onclick="loadFilesView('/tank/nas')">Volver a Raíz</button>
                 </div>
               </div>
-    
+
               <div class="card" style="margin-bottom:14px; padding:12px 16px;">
                 <div style="display:flex; align-items:center; gap:8px; font-family:var(--font-mono); font-size:12px;">
                   <span>Ruta actual:</span>
                   <span id="files-current-path" style="color:#93c5fd; font-weight:600;">/tank/nas</span>
                 </div>
               </div>
-    
+
               <div class="table-box">
                 <table>
                   <thead>
@@ -3074,7 +3075,7 @@ data:
                 </table>
               </div>
             </section>
-    
+
             <!-- 7. USUARIOS Y CONTRASENAS -->
             <section id="sec-users" class="page-section">
               <div class="section-header" style="display:flex; justify-content:space-between; align-items:flex-end;">
@@ -3087,7 +3088,7 @@ data:
                   <button class="btn btn-primary btn-sm" onclick="loadUsersView()">Actualizar Lista</button>
                 </div>
               </div>
-    
+
               <!-- LISTA VIVA DE USUARIOS EXISTENTES -->
               <div class="card">
                 <div class="card-title">Cuentas Registradas en el Servidor</div>
@@ -3108,7 +3109,7 @@ data:
                   </table>
                 </div>
               </div>
-    
+
               <!-- FORMULARIOS DE ALTA Y RESTABLECIMIENTO -->
               <div class="grid-2">
                 <div class="card">
@@ -3135,7 +3136,7 @@ data:
                   </div>
                   <button class="btn btn-primary" onclick="createUserSubmit()" style="width:100%; justify-content:center;">Crear y Sincronizar Usuario</button>
                 </div>
-    
+
                 <div class="card">
                   <div class="card-title">Cambiar Contraseña Olvidada</div>
                   <div class="action-desc" style="margin-bottom:12px;">Actualiza inmediatamente la contraseña del usuario en Nextcloud y carpetas de red:</div>
@@ -3153,7 +3154,7 @@ data:
                 </div>
               </div>
             </section>
-    
+
             <!-- 8. CARPETAS COMPARTIDAS EN RED (SAMBA / WINDOWS) -->
             <section id="sec-samba" class="page-section">
               <div class="section-header" style="display:flex; justify-content:space-between; align-items:flex-end;">
@@ -3163,7 +3164,7 @@ data:
                 </div>
                 <button class="btn btn-sm btn-primary" onclick="execCmd('samba.reload')">Recargar Configuración en Caliente</button>
               </div>
-    
+
               <div class="table-box">
                 <table>
                   <thead>
@@ -3180,7 +3181,7 @@ data:
                   </tbody>
                 </table>
               </div>
-    
+
               <div class="card">
                 <div class="card-title">Computadoras Conectadas Actualmente (Sesiones de Red)</div>
                 <div style="margin-bottom:12px; display:flex; justify-content:flex-end;">
@@ -3189,20 +3190,20 @@ data:
                 <div id="samba-sessions-output" class="terminal-window" style="min-height:140px; max-height:220px;">Consultando sesiones activas...</div>
               </div>
             </section>
-    
+
             <!-- 9. CONFIGURACION DE RED E INTERNET -->
             <section id="sec-network" class="page-section">
               <div class="section-header">
                 <div class="section-title">9. Configuración de Red e Internet</div>
                 <div class="section-subtitle">Configuración de dirección IP del servidor con seguro de auto-restauración de 60 segundos.</div>
               </div>
-    
+
               <div class="card">
                 <div class="card-title">Direcciones e Interfaces de Red Activas</div>
                 <div id="net-interfaces-output" class="terminal-window" style="min-height:100px; max-height:160px; margin-bottom:16px;">Leyendo interfaces físicas...</div>
                 <button class="btn btn-sm" onclick="loadNetworkView()">Actualizar Interfaces</button>
               </div>
-    
+
               <div class="card">
                 <div class="card-title">Cambiar Dirección IP con Seguro Anti-Desconexión</div>
                 <div class="action-desc" style="margin-bottom:14px;">Si ingresa una IP equivocada y pierde conexión, el servidor volverá a su IP anterior automáticamente a los 60 segundos:</div>
@@ -3222,7 +3223,7 @@ data:
                 </div>
               </div>
             </section>
-    
+
             <!-- 10. PUNTOS DE RESTAURACION (SNAPSHOTS ZFS) -->
             <section id="sec-snapshots" class="page-section">
               <div class="section-header" style="display:flex; justify-content:space-between; align-items:flex-end;">
@@ -3232,7 +3233,7 @@ data:
                 </div>
                 <button class="btn btn-primary btn-sm" onclick="loadSnapshotsView()">Actualizar Lista</button>
               </div>
-    
+
               <div class="card">
                 <div class="card-title">Crear Punto de Restauración Inmediato</div>
                 <div style="display:flex; gap:10px; max-width:500px;">
@@ -3240,7 +3241,7 @@ data:
                   <button class="btn btn-success btn-sm" onclick="createSnapshotSubmit()">Guardar Punto Ahora</button>
                 </div>
               </div>
-    
+
               <div class="table-box">
                 <table>
                   <thead>
@@ -3257,21 +3258,21 @@ data:
                 </table>
               </div>
             </section>
-    
+
             <!-- 11. COPIA EN LA NUBE Y RESCATE (CLOUDFLARE R2) -->
             <section id="sec-backup" class="page-section">
               <div class="section-header">
                 <div class="section-title">11. Copia en la Nube y Llaves de Rescate</div>
                 <div class="section-subtitle">Copias de seguridad fuera de la escuela (Cloudflare R2) y descarga del kit maestro de llaves.</div>
               </div>
-    
+
               <div class="grid-2">
                 <div class="card">
                   <div class="card-title">Llaves Maestras de Rescate (Emergency Kit)</div>
                   <div class="action-desc" style="margin-bottom:16px;">Descargue a su computadora el archivo encriptado que permite restaurar el servidor completo si el equipo físico sufriera un siniestro o robo:</div>
                   <button class="btn btn-primary" onclick="execCmd('backup.export_emergency_kit')">Generar Kit de Llaves Maestras</button>
                 </div>
-    
+
                 <div class="card">
                   <div class="card-title">Copia de Seguridad en la Nube (R2)</div>
                   <div class="action-desc" style="margin-bottom:16px;">Inicia una copia de seguridad inmediata con cifrado militar hacia los servidores seguros de Cloudflare:</div>
@@ -3279,33 +3280,33 @@ data:
                 </div>
               </div>
             </section>
-    
+
             <!-- 12. PRUEBA DE RECUPERACION ANTE FALLOS -->
             <section id="sec-dr" class="page-section">
               <div class="section-header">
                 <div class="section-title">12. Prueba de Recuperación ante Fallos</div>
                 <div class="section-subtitle">Simulacro en caliente que cronometra cuánto tarda la escuela en estar operativa ante una falla total.</div>
               </div>
-    
+
               <div class="card">
                 <div class="card-title">Simulacro de Resiliencia Física</div>
                 <div class="action-desc" style="margin-bottom:14px;">Ejecuta el protocolo completo de verificación de 5 fases (Almacenamiento $\to$ Llaves de Desencriptado $\to$ Contenedores $\to$ Base de Datos $\to$ Red):</div>
                 <button class="btn btn-primary" onclick="runDrillSubmit()">Iniciar Simulacro con Cronómetro</button>
               </div>
-    
+
               <div class="card">
                 <div class="card-title">Resultado y Registro del Simulacro</div>
                 <div id="dr-output-box" class="terminal-window">Presione "Iniciar Simulacro" para comenzar la prueba de recuperación...</div>
               </div>
             </section>
-    
+
             <!-- 13. BATERIA DE EMERGENCIA (UPS / NUT) -->
             <section id="sec-ups" class="page-section">
               <div class="section-header">
                 <div class="section-title">13. Batería de Emergencia (UPS)</div>
                 <div class="section-subtitle">Monitoreo de energía eléctrica y protección de apagado automático ante cortes de luz prolongados.</div>
               </div>
-    
+
               <div class="grid-3">
                 <div class="card">
                   <div class="card-title">Estado de Alimentación</div>
@@ -3323,21 +3324,21 @@ data:
                   <div class="metric-label">Tiempo de trabajo con corte de luz</div>
                 </div>
               </div>
-    
+
               <div class="card">
                 <div class="card-title">Prueba Física de la Batería</div>
                 <div class="action-desc" style="margin-bottom:14px;">Realiza una descarga rápida controlada para comprobar que la batería de la UPS responda correctamente:</div>
                 <button class="btn btn-primary btn-sm" onclick="execCmd('ups.test_battery')">Ejecutar Autodiagnóstico de Batería</button>
               </div>
             </section>
-    
+
             <!-- 14. CONSOLA DE COMANDOS (TERMINAL DE RESCATE) -->
             <section id="sec-terminal" class="page-section">
               <div class="section-header">
                 <div class="section-title">14. Consola de Comandos (Terminal de Diagnóstico)</div>
                 <div class="section-subtitle">Consola de rescate segura para consultas directas del estado del sistema operativo.</div>
               </div>
-    
+
               <div class="card">
                 <div class="card-title">Comandos Rápidos del Sistema</div>
                 <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px;">
@@ -3347,33 +3348,33 @@ data:
                   <button class="btn btn-sm" onclick="runShellCmd('zpool status')">Salud RAID (zpool status)</button>
                   <button class="btn btn-sm" onclick="runShellCmd('kubectl get pods -A')">Lista de Contenedores</button>
                 </div>
-                
+
                 <div style="display:flex; gap:10px;">
                   <input type="text" id="terminal-input" class="form-control" placeholder="Escriba un comando de diagnóstico (ej: zfs list)" onkeydown="if(event.key==='Enter') runCustomShellCmd()">
                   <button class="btn btn-primary btn-sm" onclick="runCustomShellCmd()">Ejecutar</button>
                 </div>
               </div>
-    
+
               <div class="card">
                 <div class="card-title">Salida de la Terminal</div>
                 <div id="terminal-output" class="terminal-window">Listo para ejecutar comandos de diagnóstico...</div>
               </div>
             </section>
-    
+
             <!-- 15. CERTIFICADOS DE SEGURIDAD (HTTPS / SSL) -->
             <section id="sec-pki" class="page-section">
               <div class="section-header">
                 <div class="section-title">15. Certificados de Seguridad (HTTPS / SSL)</div>
                 <div class="section-subtitle">Descarga del certificado raíz institucional para que las computadoras escolares confíen en el portal sin carteles rojos.</div>
               </div>
-    
+
               <div class="grid-2">
                 <div class="card">
                   <div class="card-title">Certificado Raíz para Netbooks (.crt)</div>
                   <div class="action-desc" style="margin-bottom:16px;">Descargue e instale este certificado en las computadoras de alumnos y docentes para que el navegador reconozca el servidor como seguro:</div>
                   <button class="btn btn-success" onclick="downloadCaCertSubmit()">Descargar Certificado para Netbooks (.crt)</button>
                 </div>
-    
+
                 <div class="card">
                   <div class="card-title">Renovación de Certificados SSL/TLS</div>
                   <div class="action-desc" style="margin-bottom:16px;">Regenera las credenciales criptográficas del servidor con 5 años de vigencia:</div>
@@ -3381,14 +3382,14 @@ data:
                 </div>
               </div>
             </section>
-    
+
             <!-- 16. MANTENIMIENTO DEL SISTEMA Y BASE DE DATOS -->
             <section id="sec-maintenance" class="page-section">
               <div class="section-header">
                 <div class="section-title">16. Mantenimiento del Sistema y Base de Datos</div>
                 <div class="section-subtitle">Rutinas de optimización, reindexado de archivos y cartel de mantenimiento para Nextcloud.</div>
               </div>
-    
+
               <div class="grid-2">
                 <div class="card">
                   <div class="card-title">Cartel de Mantenimiento (Nextcloud)</div>
@@ -3398,21 +3399,21 @@ data:
                     <button class="btn btn-success btn-sm" onclick="execCmd('occ.maintenance_toggle', {enable: false})">Desactivar y Volver a Normal</button>
                   </div>
                 </div>
-    
+
                 <div class="card">
                   <div class="card-title">Optimizar Base de Datos (PostgreSQL)</div>
                   <div class="action-desc" style="margin-bottom:14px;">Desfragmenta las tablas de la base de datos y recalcula índices para acelerar las búsquedas de archivos:</div>
                   <button class="btn btn-primary btn-sm" onclick="execCmd('postgres.vacuum')">Optimizar Base de Datos Ahora</button>
                 </div>
               </div>
-    
+
               <div class="card">
                 <div class="card-title">Reindexar Archivos Externos (files:scan)</div>
                 <div class="action-desc" style="margin-bottom:14px;">Si copió archivos directamente por disco o red y no aparecen en la web, presione este botón para que el servidor los indexe:</div>
                 <button class="btn btn-primary btn-sm" onclick="execCmd('occ.files_scan')">Escanear y Reindexar Archivos</button>
               </div>
             </section>
-    
+
             <!-- 17. TAREAS AUTOMATICAS PROGRAMADAS -->
             <section id="sec-cron" class="page-section">
               <div class="section-header" style="display:flex; justify-content:space-between; align-items:flex-end;">
@@ -3422,7 +3423,7 @@ data:
                 </div>
                 <button class="btn btn-primary btn-sm" onclick="loadCronView()">Actualizar Tareas</button>
               </div>
-    
+
               <div class="table-box">
                 <table>
                   <thead>
@@ -3440,11 +3441,11 @@ data:
                 </table>
               </div>
             </section>
-    
+
           </div>
         </div>
       </div>
-    
+
       <!-- MODAL UNIVERSAL PARA LOGS EN VIVO -->
       <div id="modal-logs" class="modal-overlay">
         <div class="modal-content">
@@ -3460,7 +3461,7 @@ data:
           </div>
         </div>
       </div>
-    
+
       <!-- MODAL DE CONFIRMACION DE SEGURIDAD -->
       <div id="modal-confirm" class="modal-overlay">
         <div class="modal-content" style="max-width:440px;">
@@ -3477,7 +3478,7 @@ data:
           </div>
         </div>
       </div>
-    
+
       <!-- MODAL BANDEJA DE TAREAS EN SEGUNDO PLANO -->
       <div id="modal-task-tray" class="modal-overlay">
         <div class="modal-content" style="max-width:850px;">
@@ -3513,7 +3514,7 @@ data:
           </div>
         </div>
       </div>
-    
+
       <!-- MODAL DETALLE Y LOG EN VIVO DE TAREA ASÍNCRONA -->
       <div id="modal-task-detail" class="modal-overlay">
         <div class="modal-content" style="max-width:750px;">
@@ -3537,7 +3538,7 @@ data:
           </div>
         </div>
       </div>
-    
+
       <!-- MODAL IMPORTACION MASIVA CSV DE USUARIOS -->
       <div id="modal-import-csv" class="modal-overlay">
         <div class="modal-content" style="max-width:680px;">
@@ -3562,10 +3563,10 @@ data:
           </div>
         </div>
       </div>
-    
+
       <!-- NOTIFICACION TOAST -->
       <div id="toast" class="toast"></div>
-    
+
       <script>
         // =========================================================================
         // SEGURIDAD & AUTENTICACION MANDATORIA (GATEKEEPER)
@@ -3573,7 +3574,7 @@ data:
         function getAuthToken() {
           return sessionStorage.getItem('nas_auth_token') || '';
         }
-    
+
         function checkAuthState() {
           const token = getAuthToken();
           const loginView = document.getElementById('login-view');
@@ -3590,14 +3591,14 @@ data:
             appLayout.style.display = 'none';
           }
         }
-    
+
         async function handleLoginSubmit(e) {
           e.preventDefault();
           const u = document.getElementById('login-user').value.trim();
           const p = document.getElementById('login-pass').value;
           const errBox = document.getElementById('login-error');
           errBox.style.display = 'none';
-    
+
           try {
             const res = await fetch('/api/auth/login', {
               method: 'POST',
@@ -3618,7 +3619,7 @@ data:
             errBox.style.display = 'block';
           }
         }
-    
+
         function handleLogout() {
           const token = getAuthToken();
           if (token) {
@@ -3631,7 +3632,7 @@ data:
           sessionStorage.removeItem('nas_auth_user');
           checkAuthState();
         }
-    
+
         // =========================================================================
         // NAVEGACION ENTRE SECCIONES
         // =========================================================================
@@ -3641,7 +3642,7 @@ data:
           const target = document.getElementById('sec-' + secId);
           if (target) target.classList.add('active');
           if (btn) btn.classList.add('active');
-    
+
           // Carga perezosa segun la seccion seleccionada
           if (secId === 'services') loadServicesView();
           if (secId === 'audit') loadAuditLogs();
@@ -3655,17 +3656,17 @@ data:
           if (secId === 'ups') loadUpsView();
           if (secId === 'cron') loadCronView();
         }
-    
+
         function showToast(msg) {
           const el = document.getElementById('toast');
           el.innerText = msg;
           el.style.display = 'block';
           setTimeout(() => { el.style.display = 'none'; }, 4000);
         }
-    
+
         function openModal(id) { document.getElementById(id).style.display = 'flex'; }
         function closeModal(id) { document.getElementById(id).style.display = 'none'; }
-    
+
         // =========================================================================
         // COMUNICACION CON EL BACKEND (REST API CON TOKEN BEARER)
         // =========================================================================
@@ -3684,20 +3685,20 @@ data:
               },
               body: JSON.stringify({action: action, params: params || {}})
             });
-    
+
             if (res.status === 401) {
               handleLogout();
               alert('Su sesión ha expirado. Por favor ingrese sus credenciales nuevamente.');
               return;
             }
-    
+
             const data = await res.json();
             if (data && data.async && data.task_id) {
               showToast('⏳ ' + (data.message || 'Tarea iniciada en segundo plano...'));
               trackAsyncTask(data.task_id, action);
               return data;
             }
-    
+
             if (!isSilent) {
               if (data && data.success) {
                 const statusMsg = (data.data && data.data.status) || 'Acción completada con éxito.';
@@ -3712,18 +3713,18 @@ data:
             if (!isSilent) showToast('Error de conexión: ' + err.message);
           }
         }
-    
+
         // =========================================================================
         // GESTOR DE TAREAS ASINCRONAS EN SEGUNDO PLANO
         // =========================================================================
         let currentViewingTaskId = null;
         let taskTrayPollInterval = null;
-    
+
         function openTaskTray() {
           refreshTasksTray();
           openModal('modal-task-tray');
         }
-    
+
         async function refreshTasksTray() {
           const token = getAuthToken();
           if (!token) return;
@@ -3735,7 +3736,7 @@ data:
             }
           } catch (e) {}
         }
-    
+
         function renderTasksTable(tasks) {
           const tbody = document.getElementById('tbl-tasks-body');
           if (!tbody) return;
@@ -3769,7 +3770,7 @@ data:
           });
           updateTaskTrayBadge(runningCount);
         }
-    
+
         function updateTaskTrayBadge(runningCount) {
           const btn = document.getElementById('btn-task-tray');
           const lbl = document.getElementById('lbl-task-tray');
@@ -3782,7 +3783,7 @@ data:
             }
           }
         }
-    
+
         function trackAsyncTask(taskId, action) {
           updateTaskTrayBadge(1);
           viewTaskDetails(taskId, action);
@@ -3814,7 +3815,7 @@ data:
           };
           setTimeout(poll, 1200);
         }
-    
+
         function viewTaskDetails(taskId, action) {
           currentViewingTaskId = taskId;
           document.getElementById('modal-task-title').innerText = `Seguimiento: ${action} (${taskId})`;
@@ -3825,7 +3826,7 @@ data:
           openModal('modal-task-detail');
           fetchTaskDetail(taskId);
         }
-    
+
         async function fetchTaskDetail(taskId) {
           const token = getAuthToken();
           if (!token) return;
@@ -3839,22 +3840,22 @@ data:
             }
           } catch (e) {}
         }
-    
+
         function updateTaskDetailModal(t) {
           document.getElementById('modal-task-phase').innerText = t.phase || 'Ejecutando...';
           document.getElementById('modal-task-progress-bar').style.width = (t.progress || 0) + '%';
           const logEl = document.getElementById('modal-task-log');
           logEl.innerText = t.log || '(Sin registros adicionales aún)';
           logEl.scrollTop = logEl.scrollHeight;
-    
+
           const badge = document.getElementById('modal-task-status-badge');
           badge.className = 'badge ' + (t.status === 'completed' ? 'badge-ok' : (t.status === 'running' ? 'badge-warn' : 'badge-danger'));
           badge.innerText = t.status.toUpperCase();
-    
+
           const cancelBtn = document.getElementById('btn-cancel-task');
           cancelBtn.style.display = (t.status === 'running') ? 'inline-block' : 'none';
         }
-    
+
         async function cancelCurrentTask() {
           if (!currentViewingTaskId) return;
           const token = getAuthToken();
@@ -3867,7 +3868,7 @@ data:
           showToast('Señal de cancelación enviada.');
           fetchTaskDetail(currentViewingTaskId);
         }
-    
+
         async function submitCsvImport() {
           const txt = document.getElementById('txt-csv-users').value.trim();
           if (!txt) {
@@ -3878,7 +3879,7 @@ data:
           await execCmd('users.import_csv', { csv: txt });
           document.getElementById('txt-csv-users').value = '';
         }
-    
+
         // Detector de caídas de red y reconexión transparente
         window.addEventListener('offline', () => {
           document.getElementById('offline-banner').style.display = 'block';
@@ -3887,7 +3888,7 @@ data:
           document.getElementById('offline-banner').style.display = 'none';
           showToast('✓ Conexión con el servidor escolar restablecida.');
         });
-    
+
         // =========================================================================
         // 1. ESTADO GENERAL & TELEMETRIA
         // =========================================================================
@@ -3901,7 +3902,7 @@ data:
           pollTimer = setInterval(pollTelemetry, 3500);
           taskPollTimer = setInterval(refreshTasksTray, 4000);
         }
-    
+
         async function pollTelemetry() {
           try {
             const res = await execCmd('system.status', {}, true);
@@ -3917,7 +3918,7 @@ data:
                 document.getElementById('dash-ram-sub').innerText = 'Total: ' + (tot/1048576).toFixed(1) + ' GB | Libre: ' + (avail/1048576).toFixed(1) + ' GB';
               }
             }
-    
+
             const zfsRes = await execCmd('zfs.pool.status', {}, true);
             if (zfsRes && zfsRes.data && zfsRes.data.stdout) {
               document.getElementById('dash-zpool-output').innerText = zfsRes.data.stdout;
@@ -3928,7 +3929,7 @@ data:
             }
           } catch (e) {}
         }
-    
+
         // =========================================================================
         // 2. SERVICIOS Y PROGRAMAS (K8S)
         // =========================================================================
@@ -3948,7 +3949,7 @@ data:
                   <div style="display:flex; gap:6px;">
                     <button class="btn btn-sm btn-primary" onclick="showServiceLogs('${s.name}', '${s.namespace}')">Ver Logs</button>
                     <button class="btn btn-sm" onclick="execCmd('services.restart', {service: '${s.name}', namespace: '${s.namespace}'})">Reiniciar</button>
-                    ${isRunning ? 
+                    ${isRunning ?
                       `<button class="btn btn-sm btn-warning" onclick="execCmd('services.scale', {service: '${s.name}', namespace: '${s.namespace}', replicas: 0})">Pausar</button>` :
                       `<button class="btn btn-sm btn-success" onclick="execCmd('services.scale', {service: '${s.name}', namespace: '${s.namespace}', replicas: 1})">Iniciar</button>`}
                   </div>
@@ -3958,7 +3959,7 @@ data:
             });
           }
         }
-    
+
         async function showServiceLogs(name, ns) {
           document.getElementById('modal-logs-title').innerText = `Registros de ${name} (Espacio: ${ns})`;
           document.getElementById('modal-logs-body').innerText = 'Consultando registros del contenedor...';
@@ -3968,7 +3969,7 @@ data:
             document.getElementById('modal-logs-body').innerText = res.data.logs || 'Sin registros.';
           }
         }
-    
+
         // =========================================================================
         // 3. REGISTRO DE ACTIVIDAD
         // =========================================================================
@@ -3994,7 +3995,7 @@ data:
             });
           }
         }
-    
+
         // =========================================================================
         // 4. DISCOS Y ALMACENAMIENTO (RAID)
         // =========================================================================
@@ -4023,7 +4024,7 @@ data:
             });
           }
         }
-    
+
         // =========================================================================
         // 5. CARPETAS PRINCIPALES Y LIMITES (DATASETS & CUOTAS)
         // =========================================================================
@@ -4052,7 +4053,7 @@ data:
             });
           }
         }
-    
+
         async function createDatasetSubmit() {
           const ds = document.getElementById('ds-create-name').value.trim();
           const comp = document.getElementById('ds-create-comp').value;
@@ -4061,21 +4062,21 @@ data:
           await execCmd('zfs.dataset.create', {dataset: ds, compression: comp, quota: q});
           loadDatasetsView();
         }
-    
+
         function promptQuotaChange(ds) {
           const q = prompt(`Ingrese el nuevo límite de espacio para ${ds} (ej: 20G, 50G o none):`, 'none');
           if (q !== null) {
             execCmd('zfs.dataset.set_quota', {dataset: ds, quota: q.trim()}).then(loadDatasetsView);
           }
         }
-    
+
         function confirmDeleteDataset(ds) {
           const confirmStr = prompt(`ADVERTENCIA: Se eliminará la carpeta ${ds} y todos sus archivos.\nPara confirmar, escriba exactamente: ELIMINAR`);
           if (confirmStr === 'ELIMINAR') {
             execCmd('zfs.dataset.delete', {dataset: ds}).then(loadDatasetsView);
           }
         }
-    
+
         // =========================================================================
         // 6. ADMINISTRADOR DE ARCHIVOS WEB
         // =========================================================================
@@ -4095,7 +4096,7 @@ data:
               const sz = item.is_dir ? '--' : (item.size > 1048576 ? (item.size/1048576).toFixed(1) + ' MB' : Math.round(item.size/1024) + ' KB');
               tr.innerHTML = `
                 <td style="font-weight:600; color:#fff;">
-                  ${item.is_dir ? 
+                  ${item.is_dir ?
                     `<a href="javascript:void(0)" onclick="loadFilesView('${fullPath}')" style="color:#60a5fa; text-decoration:none;">📁 ${item.name}</a>` :
                     `📄 ${item.name}`}
                 </td>
@@ -4109,7 +4110,7 @@ data:
             });
           }
         }
-    
+
         function confirmDeleteFile(p) {
           if (confirm(`¿Desea eliminar permanentemente: ${p}?`)) {
             execCmd('files.delete', {path: p}).then(() => {
@@ -4118,7 +4119,7 @@ data:
             });
           }
         }
-    
+
         // =========================================================================
         // 7. USUARIOS Y CONTRASENAS (IDENTIDAD DUAL)
         // =========================================================================
@@ -4149,7 +4150,7 @@ data:
             });
           }
         }
-    
+
         async function createUserSubmit() {
           const u = document.getElementById('usr-name').value.trim();
           const d = document.getElementById('usr-disp').value.trim() || u;
@@ -4163,7 +4164,7 @@ data:
           document.getElementById('usr-pass').value = '';
           loadUsersView();
         }
-    
+
         async function resetUserSubmit() {
           const u = document.getElementById('rst-name').value.trim();
           const p = document.getElementById('rst-pass').value;
@@ -4171,20 +4172,20 @@ data:
           await execCmd('users.reset_password', {username: u, password: p});
           document.getElementById('rst-pass').value = '';
         }
-    
+
         function promptResetPassword(u) {
           const newP = prompt(`Ingrese la nueva contraseña para el usuario ${u}:`);
           if (newP) {
             execCmd('users.reset_password', {username: u, password: newP}).then(loadUsersView);
           }
         }
-    
+
         function confirmDeleteUser(u) {
           if (confirm(`¿Está seguro de que desea eliminar permanentemente al usuario ${u} de Nextcloud y Samba?`)) {
             execCmd('users.delete', {username: u}).then(loadUsersView);
           }
         }
-    
+
         // =========================================================================
         // 8. CARPETAS COMPARTIDAS EN RED (SAMBA)
         // =========================================================================
@@ -4206,14 +4207,14 @@ data:
             });
           }
         }
-    
+
         async function loadSambaSessions() {
           const res = await execCmd('samba.sessions', {}, true);
           if (res && res.data) {
             document.getElementById('samba-sessions-output').innerText = res.data.sessions_raw || 'Sin sesiones activas.';
           }
         }
-    
+
         // =========================================================================
         // 9. CONFIGURACION DE RED
         // =========================================================================
@@ -4223,7 +4224,7 @@ data:
             document.getElementById('net-interfaces-output').innerText = res.data.interfaces || 'Sin datos de red.';
           }
         }
-    
+
         function applyNetworkWithTimer() {
           const ip = document.getElementById('net-ip').value.trim();
           const gw = document.getElementById('net-gw').value.trim();
@@ -4232,7 +4233,7 @@ data:
             execCmd('network.apply', {ip: ip, gateway: gw});
           }
         }
-    
+
         // =========================================================================
         // 10. PUNTOS DE RESTAURACION (SNAPSHOTS)
         // =========================================================================
@@ -4262,26 +4263,26 @@ data:
             });
           }
         }
-    
+
         async function createSnapshotSubmit() {
           const tag = document.getElementById('snap-create-tag').value.trim();
           await execCmd('snapshots.create', {tag: tag});
           document.getElementById('snap-create-tag').value = '';
           loadSnapshotsView();
         }
-    
+
         function confirmRollback(name) {
           if (confirm(`ADVERTENCIA: Restaurar al snapshot ${name} revertirá todos los archivos y bases de datos a esa fecha exacta. ¿Desea proceder?`)) {
             execCmd('snapshots.rollback', {name: name});
           }
         }
-    
+
         function confirmDestroySnapshot(name) {
           if (confirm(`¿Desea eliminar el snapshot ${name}?`)) {
             execCmd('snapshots.destroy', {name: name}).then(loadSnapshotsView);
           }
         }
-    
+
         // =========================================================================
         // 12. SIMULACRO DE RECUPERACION (DR)
         // =========================================================================
@@ -4293,7 +4294,7 @@ data:
             box.innerText = `TIEMPO DE RECUPERACION (RTO): ${res.data.rto_seconds} SEGUNDOS\nRESULTADO: ${res.data.passed ? 'EXITOSO (100% OPERATIVO)' : 'FALLO'}\n\n${res.data.log}`;
           }
         }
-    
+
         // =========================================================================
         // 13. BATERIA DE EMERGENCIA (UPS)
         // =========================================================================
@@ -4305,7 +4306,7 @@ data:
             document.getElementById('ups-runtime-val').innerText = res.data['battery.runtime'] || '45 Minutos';
           }
         }
-    
+
         // =========================================================================
         // 14. TERMINAL DE DIAGNOSTICO
         // =========================================================================
@@ -4316,12 +4317,12 @@ data:
             document.getElementById('terminal-output').innerText = res.data.output || 'Sin salida.';
           }
         }
-    
+
         function runCustomShellCmd() {
           const cmd = document.getElementById('terminal-input').value.trim();
           if (cmd) runShellCmd(cmd);
         }
-    
+
         // =========================================================================
         // 15. CERTIFICADOS DE SEGURIDAD (SSL / PKI)
         // =========================================================================
@@ -4342,7 +4343,7 @@ data:
             alert('No se pudo descargar el certificado.');
           }
         }
-    
+
         // =========================================================================
         // 17. TAREAS AUTOMATICAS (CRONJOBS)
         // =========================================================================
@@ -4366,7 +4367,7 @@ data:
             });
           }
         }
-    
+
         // =========================================================================
         // ACCIONES DE ENERGIA (REBOOT / POWEROFF)
         // =========================================================================
@@ -4379,7 +4380,7 @@ data:
           };
           openModal('modal-confirm');
         }
-    
+
         // =========================================================================
         // INICIALIZACION
         // =========================================================================

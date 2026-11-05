@@ -1,3 +1,4 @@
+---
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -32,12 +33,12 @@ spec:
               echo "============================================================"
               echo "[$(date -Iseconds)] INICIANDO AUDITORÍA PREVENTIVA S.M.A.R.T."
               echo "============================================================"
-              
+
               mkdir -p /tmp/nas-tunnel
               REPORT="/tmp/nas-tunnel/smart_health_report.txt"
               STATUS_FILE="/tmp/nas-tunnel/smart_status"
               echo "AUDITORÍA S.M.A.R.T. — $(date -Iseconds)" > "$REPORT"
-              
+
               # Ejecutar en el host para acceder a los dispositivos físicos /dev/sd*
               nsenter --target 1 --mount --uts --ipc --net --pid -- bash -c '
                 if ! command -v smartctl >/dev/null 2>&1; then
@@ -48,7 +49,7 @@ spec:
                 ALL_HEALTHY=1
                 # Detectar discos asignados al pool tank
                 DISKS=$(zpool status tank 2>/dev/null | grep -E "(sd[a-z]|nvme[0-9]n[0-9]|vd[a-z])" | awk "{print \$1}" | tr -d "0-9" | sort -u || true)
-                
+
                 if [ -z "$DISKS" ]; then
                   echo "[INFO] No se detectaron discos físicos dedicados (entorno virtual o loopback)."
                   echo "OK_VIRTUAL" > /tmp/nas-tunnel/smart_status

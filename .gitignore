@@ -21,3 +21,7 @@ Thumbs.db
 # Helm
 charts/*/charts/
 *.tgz
+
+# Python
+__pycache__/
+*.pyc
