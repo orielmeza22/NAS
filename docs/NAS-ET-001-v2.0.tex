@@ -1252,6 +1252,32 @@ El sistema se considerará apto para producción cuando:
     \item El escaneo de manifiestos y secretos no presente hallazgos abiertos en el repositorio.
 \end{enumerate}
 
+
+\subsection{13.4 Registro de incidencias detectadas y soluciones aplicadas}
+De conformidad con los principios de auditoría de ISO 9001:2015, se registran las no conformidades e inconvenientes técnicos reales detectados durante las pruebas de laboratorio, junto con las acciones correctivas aplicadas para alcanzar la conformidad técnica:
+
+\begin{table}[h!]
+\centering
+\small
+\caption{Incidencias técnicas detectadas en laboratorio y medidas correctivas.}
+\label{tab:incidencias_soluciones}
+\begin{tabular}{|c|p{4cm}|p{4.5cm}|p{4.8cm}|}
+\hline
+\textbf{\textsf{N.º}} & \textbf{\textsf{Incidencia / Falla Detectada}} & \textbf{\textsf{Causa Raíz Identificada}} & \textbf{\textsf{Solución Técnica Aplicada}} \\
+\hline
+1 & Falla en validación de CI (Kubeconform y Yamllint) en GitHub Actions. & Manifiestos de SealedSecret contenían la clave \texttt{creationTimestamp: null} no admitida por el esquema estricto; finales de línea CRLF de Windows. & Se eliminaron los campos inválidos de los 4 manifiestos cifrados, se normalizaron los saltos a UNIX (\texttt{\\n}) y se configuró \texttt{.yamllint}. CI finalizó en verde (Run ID: 41958526392). \\
+\hline
+2 & Fuga de montaje en pod de Samba (almacenamiento no persistía en ZFS). & El PVC \texttt{samba-pvc} estaba enlazado a un volumen residual ext4 (\texttt{local-path}) en lugar del dataset OpenZFS. & Reasociación explícita de \texttt{samba-pvc} hacia \texttt{samba-pv} con la directiva \texttt{mountPropagation: HostToContainer} sobre \texttt{/tank/nas}. \\
+\hline
+3 & Evasión de la directiva de filtrado \texttt{veto files} en Samba. & El script de entrada (\textit{entrypoint}) de la imagen Docker sobreescribía la variable global con patrones por defecto de macOS. & Inyección de la variable de entorno \texttt{VETO=no} en el manifiesto \texttt{deployment.yaml}, forzando el bloqueo global de \texttt{.exe}, \texttt{.bat} y scripts. \\
+\hline
+4 & Riesgo de agotamiento de memoria RAM por ZFS ARC. & Por defecto, el módulo ZFS del kernel consume hasta el 50\% de la RAM física en caché ARC, amenazando con caídas OOM en Kubernetes. & Fijación persistente del parámetro \texttt{options zfs zfs_arc_max=2147483648} (2 GB) en \texttt{/etc/modprobe.d/zfs.conf}. \\
+\hline
+5 & Bloqueo operativo de comandos \texttt{rm} al llenar el pool al 100\%. & En arquitectura Copy-on-Write (COW), borrar archivos requiere escribir nuevos metadatos; sin espacio libre, el sistema se congela. & Creación del dataset de sacrificio \texttt{tank/buffer} (50 MB). Su destrucción inmediata libera espacio para permitir el borrado de archivos temporales. \\
+\hline
+\end{tabular}
+\end{table}
+
 \newpage
 \section{Conformidad normativa y limitaciones conocidas}
 
@@ -1278,6 +1304,8 @@ L-03 & Escaneo de vulnerabilidades de imágenes en pipeline. & Incorporación pr
 L-04 & Réplica externa asíncrona; RPO de hasta 24 h en la nube. & Mitigado mediante instantáneas locales cada hora (RPO local $\le 1$ h) y retención por 30 días. \\
 \hline
 \textbf{L-05} & \textbf{Restauración de archivos requería consola (v1.0).} & \textbf{RESUELTO AL 100\% EN v2.0: Implementación de VSS Shadow Copies (vfs\_shadow\_copy2) permitiendo autoservicio desde Windows Explorer.} \\
+\hline
+L-06 & Nextcloud en modo standby declarativo. & Para no sobrecargar los 8 GB de RAM física del host educativo, Nextcloud y PostgreSQL se mantienen empaquetados y versionados en Helm pero en escala cero (\texttt{replicas: 0}), priorizando Samba como motor de archivos principal. \\
 \hline
 \end{tabular}
 \end{table}
