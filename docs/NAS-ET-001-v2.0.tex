@@ -108,28 +108,30 @@
 \pagenumbering{roman}
 
 \begin{center}
-    {\huge\textbf{\sffamily\color{primaryblue}Especificación Técnica}}\\[0.2cm]
-    {\Large\textbf{\sffamily Plataforma NAS Empresarial Cloud-Native}}\\[0.15cm]
-    {\normalsize\textsf{Almacenamiento, Colaboración y Recuperación ante Desastres basados en Infraestructura Inmutable y GitOps}}\\[0.4cm]
+    {\huge\textbf{\sffamily\color{primaryblue}Especificación Técnica e Informe de Infraestructura}}\\[0.2cm]
+    {\Large\textbf{\sffamily Servidor de Almacenamiento Centralizado (NAS)}}\\[0.15cm]
+    {\normalsize\textsf{Servicios de Archivos SMB, Permisos, Respaldos OpenZFS y Automatización GitOps}}\\[0.4cm]
 
     \textsf{\textbf{Código documental:}} NAS-ET-001\quad$|$\quad
-    \textsf{\textbf{Versión:}} 2.0 (Release Candidate / Producción)\\[0.1cm]
-    \textsf{\textbf{Fecha de emisión:}} 2026-11-04 (ISO 8601)\quad$|$\quad
-    \textsf{\textbf{Clasificación:}} \textbf{\textcolor{alertred}{CONFIDENCIAL — Nivel 3}}\quad$|$\quad
-    \textsf{\textbf{Retención:}} 10 años (ISO 15489)\\[0.3cm]
+    \textsf{\textbf{Versión:}} 2.0 (Producción / Verificada)\\[0.1cm]
+    \textsf{\textbf{Fecha de emisión:}} 2026-11-07 (ISO 8601)\quad$|$\quad
+    \textsf{\textbf{Clasificación:}} \textbf{\textcolor{primaryblue}{DOCUMENTACIÓN TÉCNICA INSTITUCIONAL}}\quad$|$\quad
+    \textsf{\textbf{Retención:}} 5 años (ISO 15489)\\[0.3cm]
 
     \small
     \begin{tabular}{|p{4.2cm}|p{11.5cm}|}
         \hline
         \multicolumn{2}{|c|}{\textbf{\textsf{CONTROL DE EMISIÓN}}} \\
         \hline
-        \textbf{\textsf{Titular}} & Arquitectura de Tecnologías de la Información \\
+        \textbf{\textsf{Institución / Carrera}} & IESETyFP — Tecnicatura Superior en Soporte Técnico \\
         \hline
-        \textbf{\textsf{Elaborado por}} & Oriel Meza — Arquitecto de Soluciones / Administrador de Sistemas \\
+        \textbf{\textsf{Espacio Curricular}} & Soporte Técnico II (Trabajo Integrador Final - TIF) \\
         \hline
-        \textbf{\textsf{Dirigido a}} & Comités de TI, CISO, Auditoría Interna, Órganos de Contratación \\
+        \textbf{\textsf{Elaborado por}} & Oriel Meza y Brisa Riquelme — Administradores del Proyecto \\
         \hline
-        \textbf{\textsf{Validez}} & Vigente hasta su próxima revisión o 12 meses \\
+        \textbf{\textsf{Revisado y Evaluado por}} & Lic. Pablo Nicolás Sasowski — Docente Titular \\
+        \hline
+        \textbf{\textsf{Validez}} & Trabajo Integrador Final / Ciclo Lectivo 2026 \\
         \hline
     \end{tabular}
     \\[0.2cm]
@@ -140,7 +142,7 @@
 \section*{Aviso Legal y Control Documental}
 
 \subsection*{1. Propiedad intelectual y licencia}
-Este documento y los artefactos de software que describe son propiedad intelectual de su titular. El código fuente se distribuye bajo licencia MIT; la presente documentación técnica queda sujeta a reserva de derechos para fines de auditoría, licitación y evaluación técnica. Queda prohibida su reproducción total o parcial sin autorización expresa y por escrito.
+Este documento y los artefactos de infraestructura descritos forman parte del Trabajo Integrador Final de la carrera de Soporte Técnico II en el IESETyFP. El código fuente y los manifiestos de configuración se distribuyen bajo licencia de uso institucional con fines educativos, de soporte técnico y de implementación en laboratorio.
 
 \subsection*{2. Clasificación y manejo de la información}
 Esquema de clasificación de la información (ISO/IEC 27001, A.5.12).
@@ -152,7 +154,7 @@ Esquema de clasificación de la información (ISO/IEC 27001, A.5.12).
 \hline
 \multicolumn{2}{|c|}{\textbf{\textsf{ESQUEMA DE CLASIFICACIÓN}}} \\
 \hline
-\textbf{\textsf{Nivel}} & \textbf{Nivel 3 — Confidencial} \\
+\textbf{\textsf{Nivel}} & \textbf{Uso Institucional y Académico — Soporte Técnico II} \\
 \hline
 \textbf{\textsf{Definición}} & Información cuya divulgación no autorizada podría causar daño moderado a la organización o a terceros. \\
 \hline
@@ -214,13 +216,11 @@ Aprobaciones formales del documento.
 \hline
 \textbf{\textsf{Rol}} & \textbf{\textsf{Nombre}} & \textbf{\textsf{Fecha}} & \textbf{\textsf{Firma}} \\
 \hline
-Elaboró — Arquitecto de Soluciones / Sysadmin & Oriel Meza & 2026-11-04 & \textit{O. Meza} \\
+Elaboró — Administrador de Infraestructura & Oriel Meza & 2026-11-07 & \textit{O. Meza} \\
 \hline
-Revisó — Oficial de Seguridad (CISO) & Antigravity AI & 2026-11-04 & \textit{A. AI} \\
+Elaboró — Gestión de Servicios y Pruebas & Brisa Riquelme & 2026-11-07 & \textit{B. Riquelme} \\
 \hline
-Revisó — Responsable de Operaciones & Operaciones TI & 2026-11-04 & \textit{Op. TI} \\
-\hline
-Aprobó — Director de TI / CIO & Dirección TI & 2026-11-04 & \textit{Dir. TI} \\
+Revisó y Evaluó — Docente Titular & Lic. Pablo Nicolás Sasowski & 2026-11-07 & \textit{P. Sasowski} \\
 \hline
 \end{tabular}
 \end{table}
@@ -239,17 +239,13 @@ Lista de distribución controlada.
 \hline
 \textbf{\textsf{N.º}} & \textbf{\textsf{Destinatario / Área}} & \textbf{\textsf{Formato}} & \textbf{\textsf{Controlada}} \\
 \hline
-01 & Dirección de Tecnologías de la Información & PDF firmado & Sí \\
+01 & Repositorio central en GitHub (control de versiones) & Git blob & Sí \\
 \hline
-02 & Oficial de Seguridad de la Información (CISO) & PDF firmado & Sí \\
+02 & Cátedra de Soporte Técnico II (IESETyFP) & PDF & Sí \\
 \hline
-03 & Área de Operaciones e Infraestructura & PDF & Sí \\
+03 & Alumnos autores del proyecto (Oriel Meza, Brisa Riquelme) & PDF & Sí \\
 \hline
-04 & Auditoría Interna / Cumplimiento & PDF & Sí \\
-\hline
-05 & Órgano de Contratación (licitaciones) & PDF & Sí \\
-\hline
-06 & Copias de consulta operativa & Impresa & No \\
+04 & Servidor NAS local (/tank/nas/documentacion) & PDF & Sí \\
 \hline
 \end{tabular}
 \end{table}
@@ -310,7 +306,7 @@ Fecha: 2026-11-04 $\cdot$ Hash SHA-256 del documento verificado en repositorio
 \newpage
 
 % ==============================================================================
-% ACRÓNIMOS Y RESUMEN EJECUTIVO
+% ACRÓNIMOS Y RESUMEN TÉCNICO
 % ==============================================================================
 \section*{Acrónimos y Abreviaturas}
 \addcontentsline{toc}{section}{Acrónimos y Abreviaturas}
@@ -364,11 +360,11 @@ ZFS & Sistema de archivos transaccional con integridad Merkle y sumas Fletcher4.
 \end{table}
 
 \newpage
-\section*{Resumen Ejecutivo}
-\addcontentsline{toc}{section}{Resumen Ejecutivo}
+\section*{Resumen Técnico del Sistema}
+\addcontentsline{toc}{section}{Resumen Técnico del Sistema}
 
 \begin{normativabox}{}
-\textbf{Propósito del documento:} Este documento constituye la especificación técnica normativa de la plataforma NAS Empresarial: define de forma unívoca y auditable la arquitectura, los requisitos, los controles de seguridad, los compromisos de continuidad y los procedimientos operativos, y sirve como evidencia documental ante auditorías, licitaciones públicas y comités de inversión tecnológica.
+\textbf{Propósito del documento:} Este documento constituye la especificación técnica y memoria de pruebas de la infraestructura NAS institucional: define la arquitectura de red y almacenamiento, los permisos de usuarios, los controles de seguridad contra malware, la continuidad operativa mediante OpenZFS y las evidencias verificadas para la evaluación del Trabajo Integrador Final (TIF).
 \end{normativabox}
 
 \subsection*{Planteamiento del problema}
@@ -415,8 +411,8 @@ Evidencia de cambio & Registros dispersos & \textbf{Historial Git inmutable} \\
 \end{tabular}
 \end{table}
 
-\subsection*{Conclusión ejecutiva}
-La plataforma satisface los requisitos de ingeniería y ofrece una posición de cumplimiento demostrable frente a ISO/IEC 27001:2022 e ISO 22301:2019, reduciendo el coste total de propiedad al apoyarse en hardware estándar y software de código abierto.
+\subsection*{Conclusión técnica}
+La plataforma implementa una solución de almacenamiento y servicios de archivos adaptada a las restricciones reales de un laboratorio escolar, ofreciendo trazabilidad, aislamiento entre alumnos mediante permisos del sistema de archivos y respaldo continuo con herramientas de código abierto.
 
 \newpage
 % ==============================================================================
@@ -1118,7 +1114,7 @@ Las alertas se definen como código y se canalizan hacia el registro del sistema
 \label{tab:raci}
 \begin{tabular}{|p{6.5cm}|c|c|c|c|}
 \hline
-\textbf{\textsf{Actividad}} & \textbf{\textsf{Arq. TI}} & \textbf{\textsf{Operac.}} & \textbf{\textsf{CISO}} & \textbf{\textsf{Direc. TI}} \\
+\textbf{\textsf{Actividad}} & \textbf{\textsf{Admin Infra}} & \textbf{\textsf{Servicios}} & \textbf{\textsf{Seguridad}} & \textbf{\textsf{Docente Evaluador}} \\
 \hline
 Diseño de la arquitectura & R/A & C & C & I \\
 \hline
@@ -1361,7 +1357,7 @@ L-06 & Nextcloud en modo standby declarativo. & Para no sobrecargar los 8 GB de 
 \end{table}
 
 \subsection{14.3 Mantenimiento del documento}
-Este documento debe revisarse ante cualquier cambio arquitectónico relevante o nuevo ADR; tras cada simulacro semestral de recuperación; periódicamente con frecuencia máxima de doce meses; y a solicitud del CISO o de Auditoría Interna.
+Este documento debe revisarse ante cualquier cambio arquitectónico relevante o nuevo ADR; tras cada simulacro semestral de recuperación; periódicamente con frecuencia máxima de doce meses; o a solicitud de la cátedra de Soporte Técnico II.
 
 \newpage
 \appendix
