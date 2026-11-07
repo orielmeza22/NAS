@@ -1321,7 +1321,7 @@ De conformidad con los principios de auditoría de ISO 9001:2015, se registran l
 \hline
 3 & Evasión de la directiva de filtrado \texttt{veto files} en Samba. & El script de entrada (\textit{entrypoint}) de la imagen Docker sobreescribía la variable global con patrones por defecto de macOS. & Inyección de la variable de entorno \texttt{VETO=no} en el manifiesto \texttt{deployment.yaml}, forzando el bloqueo global de \texttt{.exe}, \texttt{.bat} y scripts. \\
 \hline
-4 & Riesgo de agotamiento de memoria RAM por ZFS ARC. & Por defecto, el módulo ZFS del kernel consume hasta el 50\% de la RAM física en caché ARC, amenazando con caídas OOM en Kubernetes. & Fijación persistente del parámetro \texttt{options zfs zfs_arc_max=2147483648} (2 GB) en \texttt{/etc/modprobe.d/zfs.conf}. \\
+4 & Riesgo de agotamiento de memoria RAM por ZFS ARC. & Por defecto, el módulo ZFS del kernel consume hasta el 50\% de la RAM física en caché ARC, amenazando con caídas OOM en Kubernetes. & Fijación persistente del parámetro \texttt{options zfs zfs\_arc\_max=2147483648} (2 GB) en \texttt{/etc/modprobe.d/zfs.conf}. \\
 \hline
 5 & Bloqueo operativo de comandos \texttt{rm} al llenar el pool al 100\%. & En arquitectura Copy-on-Write (COW), borrar archivos requiere escribir nuevos metadatos; sin espacio libre, el sistema se congela. & Creación del dataset de sacrificio \texttt{tank/buffer} (50 MB). Su destrucción inmediata libera espacio para permitir el borrado de archivos temporales. \\
 \hline
