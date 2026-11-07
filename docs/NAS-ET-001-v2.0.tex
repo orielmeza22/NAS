@@ -7,6 +7,10 @@
 \usepackage{lmodern}
 \usepackage{microtype}
 
+% --- Inclusión de Figuras y Capturas ---
+\usepackage{graphicx}
+\graphicspath{{img/}}
+
 % --- Geometría y Márgenes ---
 \usepackage[top=2.2cm, bottom=2.2cm, left=2.2cm, right=2.2cm, headheight=14pt, footskip=1.1cm]{geometry}
 
@@ -623,6 +627,13 @@ La plataforma se organiza en cuatro planos lógicos aislados con responsabilidad
     \item \textbf{Plano de Continuidad y Observabilidad:} Demonio Sentinel de detección de ransomware, recolección de métricas Prometheus y pipeline diario de exportación cifrada AES-256 hacia Cloudflare R2.
 \end{enumerate}
 
+\begin{figure}[h!]
+\centering
+\includegraphics[width=0.88\textwidth]{img/fig01_dashboard_general.png}
+\caption{Centro de control web: supervisión en tiempo real de infraestructura, telemetría y estado de servicios.}
+\label{fig:dashboard_general}
+\end{figure}
+
 \subsection{5.3 Registro de decisiones de arquitectura (ADR)}
 
 \begin{table}[h!]
@@ -694,6 +705,13 @@ Respaldo en la nube & Cloudflare R2 & API S3 & Almacenamiento remoto de flujos c
 
 \subsection{6.1 Modelo de seguridad}
 La plataforma adopta el modelo Zero Trust conforme a NIST SP 800-207 sobre cinco pilares: identidad, dispositivo, red (sin superficie entrante en WAN y microsegmentación), aplicación (contenedores sin privilegios) y datos (cifrado en tránsito, sumas de verificación e instantáneas inmutables).
+
+\begin{figure}[h!]
+\centering
+\includegraphics[width=0.88\textwidth]{img/fig03_gestion_usuarios_permisos.png}
+\caption{Consola de administración de identidades: control de roles (docentes/alumnos), estado de cuentas y cuotas SMB.}
+\label{fig:gestion_usuarios}
+\end{figure}
 
 \subsection{6.2 Matriz de conformidad ISO/IEC 27001:2022 (Anexo A)}
 
@@ -862,6 +880,13 @@ Alimentación & Suministro convencional & UPS (SAI) con autonomía $\ge 15$ min 
 \textbf{Requisito de memoria ECC:} En producción con datos institucionales críticos se recomienda memoria ECC: OpenZFS corrige la corrupción a nivel de bloque magnético, pero no previene alteraciones de bits en la memoria volátil antes de calcular las sumas de verificación.
 \end{normativabox}
 
+\begin{figure}[h!]
+\centering
+\includegraphics[width=0.88\textwidth]{img/fig02_panel_almacenamiento_zfs.png}
+\caption{Supervisión operativa de OpenZFS: estado de salud del pool tank, arreglo RAID-Z1 y asignación de datasets.}
+\label{fig:almacenamiento_zfs}
+\end{figure}
+
 \subsection{8.2 Estructura del repositorio}
 Estructura del repositorio Git (fuente única de verdad):
 
@@ -965,6 +990,13 @@ kubectl apply -f apps/portal-qr/
 \end{verbatim}
 \end{stepbox}
 
+\begin{figure}[h!]
+\centering
+\includegraphics[width=0.85\textwidth]{img/fig05_aprovisionamiento_csv.png}
+\caption{Enrolamiento y alta masiva de alumnos mediante archivo estructurado CSV desde el portal web.}
+\label{fig:aprovisionamiento_csv}
+\end{figure}
+
 \subsection{9.2 Operación rutinaria}
 \begin{stepbox}{Instantáneas y replicación}
 \begin{verbatim}
@@ -982,6 +1014,13 @@ zfs rollback tank/nas@nombre-de-la-instantanea
 ./scripts/nas-backup.sh
 \end{verbatim}
 \end{stepbox}
+
+\begin{figure}[h!]
+\centering
+\includegraphics[width=0.88\textwidth]{img/fig04_taskengine_cola_asincrona.png}
+\caption{Monitor de tareas en segundo plano (TaskEngine): cola asíncrona no bloqueante de procesos del sistema.}
+\label{fig:taskengine}
+\end{figure}
 
 \subsection{9.3 Verificación automatizada del despliegue}
 \begin{stepbox}{Batería de pruebas de humo}
@@ -1242,6 +1281,15 @@ TC-18 & Desbloqueo COW tank/buffer & Destrucción de dataset libera 50 MB en poo
 
 \subsection{13.2 Registro de evidencias}
 Cada caso debe documentarse con: identificador, fecha y hora (ISO 8601), entorno, procedimiento aplicado, salida capturada, resultado (Conforme / No conforme) y firma del responsable.
+
+Como soporte de auditoría técnica y conformidad con ISO/IEC/IEEE 29119-3 y la cláusula 7.5 de ISO 9001:2015, se incorporan en el cuerpo del informe las evidencias fotográficas de ejecución en entorno de laboratorio:
+\begin{itemize}
+    \item \textbf{Evidencia EV-01:} Supervisión general de infraestructura y conectividad (Figura~\ref{fig:dashboard_general}).
+    \item \textbf{Evidencia EV-02:} Control de acceso, identidades y permisos SMB (Figura~\ref{fig:gestion_usuarios}).
+    \item \textbf{Evidencia EV-03:} Panel de almacenamiento OpenZFS RAID-Z1 y cuotas (Figura~\ref{fig:almacenamiento_zfs}).
+    \item \textbf{Evidencia EV-04:} Aprovisionamiento desatendido por CSV de cuentas escolares (Figura~\ref{fig:aprovisionamiento_csv}).
+    \item \textbf{Evidencia EV-05:} Ejecución asíncrona y auditoría de tareas con TaskEngine (Figura~\ref{fig:taskengine}).
+\end{itemize}
 
 \subsection{13.3 Criterios de aceptación global}
 El sistema se considerará apto para producción cuando:
