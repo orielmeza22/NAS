@@ -703,6 +703,13 @@ Respaldo en la nube & Cloudflare R2 & API S3 & Almacenamiento remoto de flujos c
 \end{tabular}
 \end{table}
 
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.88\textwidth]{img/fig06_servicios_activos.png}
+\caption{Vista de servicios y contenedores del servidor en el Centro de Control (monitoreo de estado, logs y control de ejecución).}
+\label{fig:servicios_activos}
+\end{figure}
+
 \subsection{5.5 Dimensionamiento real de recursos y resiliencia física}
 Para garantizar la estabilidad operativa en el hardware disponible en el instituto (nodo único con 8 GB de RAM física), la arquitectura se evaluó bajo cuatro escenarios físicos reales:
 \begin{enumerate}
@@ -772,6 +779,13 @@ A.8.32 & Gestión de cambios & Flujo GitOps con solicitudes de cambio y trazabil
     \item \textbf{Buzón ciego de alumnos:} Permiso especial \texttt{chmod 1777 /tank/nas/alumnos/entregas}.
     \item \textbf{Agente Sentinel:} Inspección inotify sobre \texttt{.canary\_honeypot.docx} y congelamiento inmutable (\texttt{zfs hold}).
 \end{itemize}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.92\textwidth]{img/fig07_samba_almacenamiento_vss.png}
+\caption{Operación de Samba SMB: recursos en red, aislamiento con Sticky Bit (1777), rechazo de ejecutables (veto files), datasets ZFS y restauración de versiones anteriores vía Windows VSS.}
+\label{fig:samba_vss}
+\end{figure}
 
 \begin{criticonbox}
 Está terminantemente prohibido incorporar credenciales, claves maestras o tokens en texto claro al repositorio Git. Toda clave privada debe gestionarse mediante procedimientos de cifrado asimétrico o custodia física.
@@ -1300,6 +1314,9 @@ Como soporte de auditoría técnica y conformidad con ISO/IEC/IEEE 29119-3 y la 
     \item \textbf{Evidencia EV-03:} Panel de almacenamiento OpenZFS RAID-Z1 y cuotas (Figura~\ref{fig:almacenamiento_zfs}).
     \item \textbf{Evidencia EV-04:} Aprovisionamiento desatendido por CSV de cuentas escolares (Figura~\ref{fig:aprovisionamiento_csv}).
     \item \textbf{Evidencia EV-05:} Ejecución asíncrona y auditoría de tareas con TaskEngine (Figura~\ref{fig:taskengine}).
+    \item \textbf{Evidencia EV-06:} Supervisión y control de servicios contenedorizados (Figura~\ref{fig:servicios_activos}).
+    \item \textbf{Evidencia EV-07:} Almacenamiento en Samba SMB, buzón ciego 1777, bloqueo \texttt{veto files} y restauración VSS (Figura~\ref{fig:samba_vss}).
+    \item \textbf{Evidencia EV-08:} Pipeline de Integración Continua (GitHub Actions) validado en verde (Figura~\ref{fig:github_ci}).
 \end{itemize}
 
 \subsection{13.3 Criterios de aceptación global}
@@ -1336,6 +1353,13 @@ De conformidad con los principios de auditoría de ISO 9001:2015, se registran l
 \hline
 \end{tabular}
 \end{table}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.90\textwidth]{img/fig08_github_actions_ci.png}
+\caption{Validación automatizada en GitHub Actions (CI): comprobación sin errores de yamllint, esquemas Kubernetes/SealedSecrets con kubeconform y escaneo de secretos.}
+\label{fig:github_ci}
+\end{figure}
 
 \newpage
 \section{Conformidad normativa y limitaciones conocidas}
