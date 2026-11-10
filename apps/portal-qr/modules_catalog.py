@@ -11,18 +11,22 @@ import subprocess
 import re
 import shutil
 import shlex
+import threading
+import tempfile
 
 AUDIT_LOG_PATH = "/var/log/nas-agentd-audit.log"
-ROLLBACK_TIMER_FILE = "/tmp/nas-net-rollback.json"
+ROLLBACK_TIMER_FILE = "/tmp/nas-tunnel/nas-net-rollback.json" if os.path.exists("/tmp/nas-tunnel") else os.path.join(tempfile.gettempdir(), "nas-net-rollback.json")
 
 # Expresiones regulares de validacion estricta
 RE_DATASET = re.compile(r"^tank/nas(/[a-zA-Z0-9._-]+)*$")
 RE_SNAP_TAG = re.compile(r"^[a-zA-Z0-9._-]{1,64}$")
+RE_FULL_SNAPSHOT = re.compile(r"^tank/nas(/[a-zA-Z0-9._-]+)*@[a-zA-Z0-9._-]{1,64}$")
 RE_USERNAME = re.compile(r"^[a-zA-Z0-9._-]{3,32}$")
 RE_SHARENAME = re.compile(r"^[a-zA-Z0-9._-]{2,32}$")
 RE_QUOTA = re.compile(r"^([0-9]+[KMGTkmgt]?|none)$")
 RE_DEV_PATH = re.compile(r"^/dev/(sd[a-z][0-9]?|vd[a-z][0-9]?|sr[0-9]?|nvme[0-9]n[0-9](p[0-9])?|disk/by-id/[a-zA-Z0-9._-]+)$")
 RE_IP = re.compile(r"^([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?$")
+RE_IFACE = re.compile(r"^[a-zA-Z0-9._-]{2,16}$")
 
 def run_cmd(cmd_list, timeout=30, input_data=None):
     """Ejecuta comandos en el namespace root del host usando nsenter y KUBECONFIG."""
@@ -264,15 +268,31 @@ def act_storage_disks_list(p):
     return True, data
 
 def act_storage_smart_test(p):
-    """Ejecuta una prueba de diagnostico fisico sobre un disco rigido."""
-    dev = p.get("device", "/dev/sda")
-    ttype = p.get("type", "short")
-    if not RE_DEV_PATH.match(dev): dev = "/dev/sda"
-    res = run_cmd(["smartctl", f"-t{ttype}", "-T", "permissive", dev])
-    out = (res.stdout or "") + (res.stderr or "")
-    if "Unavailable" in out or "lacks SMART" in out or "VBOX" in out or "unable to fetch" in out.lower():
-        return True, {"status": f"Disco {dev} verificado: Unidad virtualizada. Integridad de almacenamiento OK.", "virtual": True}
-    return True, {"status": f"Prueba de salud SMART ({ttype}) completada para {dev}.", "output": out}
+    """Ejecuta una prueba de diagnostico fisico SMART real; devuelve False si el disco no soporta SMART."""
+    dev = str(p.get("device", "/dev/sda")).strip()
+    ttype = str(p.get("type", "short")).strip()
+    if ttype not in ("short", "long", "conveyance"):
+        return False, {"error": "Tipo de prueba SMART inválido (permitidos: short, long, conveyance)."}
+    if not RE_DEV_PATH.match(dev):
+        return False, {"error": "Ruta de dispositivo de bloque no válida."}
+    res = run_cmd(["smartctl", "-H", f"-t{ttype}", dev])
+    out = ((res.stdout or "") + "\n" + (res.stderr or "")).strip()
+    lower_out = out.lower()
+    if (
+        res.returncode not in (0, 4)
+        or "unavailable" in lower_out
+        or "lacks smart" in lower_out
+        or "vbox" in lower_out
+        or "unable to fetch" in lower_out
+        or "smart support is: unavailable" in lower_out
+    ):
+        return False, {
+            "supported": False,
+            "virtual": True,
+            "error": f"El dispositivo {dev} no soporta telemetría física SMART (unidad virtual o controladora sin passthrough).",
+            "output": out,
+        }
+    return True, {"supported": True, "status": f"Prueba física SMART ({ttype}) iniciada en {dev}.", "output": out}
 
 def act_zfs_disk_offline(p):
     """Pone un disco fuera de linea para su extraccion fisica."""
@@ -428,7 +448,7 @@ def act_files_delete(p):
 
 
 def act_files_repair_permissions(p):
-    """Repara permisos POSIX diferenciados por sector sin romper el aislamiento entre alumnos y docentes."""
+    """Repara permisos POSIX diferenciados por sector verificando el código de retorno de cada operación."""
     cmds = [
         ["chmod", "0750", "/tank/nas/profesores"],
         ["chmod", "0755", "/tank/nas/alumnos"],
@@ -437,8 +457,13 @@ def act_files_repair_permissions(p):
         ["chown", "-R", "33:33", "/tank/nas/nextcloud"],
         ["chmod", "-R", "u=rwX,g=rX,o=", "/tank/nas/nextcloud"],
     ]
+    errors = []
     for c in cmds:
-        run_cmd(c)
+        res = run_cmd(c)
+        if res.returncode != 0:
+            errors.append(f"{' '.join(c)}: {(res.stderr or res.stdout or 'error').strip()}")
+    if errors:
+        return False, {"error": "Fallo al reparar permisos en uno o más sectores: " + "; ".join(errors)}
     return True, {"status": "Permisos institucionales reparados por sector (profesores 0750, entregas Sticky Bit 1777, nextcloud 33:33)."}
 
 # ==============================================================================
@@ -619,17 +644,30 @@ export SMB_PASS={shlex.quote(pwd)}
     return True, {"status": f"Contraseña del usuario {user} actualizada correctamente en Nextcloud y Samba."}
 
 def act_users_delete(p):
-    """Elimina permanentemente una cuenta de usuario."""
+    """Elimina permanentemente una cuenta de usuario verificando ambos motores (Nextcloud y Samba)."""
     user = str(p.get("username", "")).strip()
     if not RE_USERNAME.match(user):
         return False, {"error": "Nombre de usuario inválido."}
     if user == "admin":
         return False, {"error": "Por seguridad no se puede eliminar la cuenta de administrador principal."}
-    res_nc = run_cmd(["kubectl", "exec", "-n", "default", "deployment/nextcloud", "--", "su", "-s", "/bin/sh", "www-data", "-c", f"php occ user:delete -- {shlex.quote(user)}"])
-    res_smb = run_cmd(["kubectl", "exec", "-n", "default", "deployment/samba", "--", "sh", "-c", f"smbpasswd -x {shlex.quote(user)} 2>/dev/null; deluser {shlex.quote(user)} 2>/dev/null || true"])
-    ok = (res_nc.returncode == 0 or res_smb.returncode == 0)
-    if not ok:
-        return False, {"error": f"No se pudo eliminar la cuenta {user}: {res_nc.stderr or res_smb.stderr}"}
+    res_nc = run_cmd([
+        "kubectl", "exec", "-n", "default", "deployment/nextcloud", "--",
+        "su", "-s", "/bin/sh", "www-data", "-c", f"php occ user:delete -- {shlex.quote(user)}"
+    ])
+    smb_del_script = f"""set -e
+export SMB_USER={shlex.quote(user)}
+smbpasswd -x "$SMB_USER"
+deluser "$SMB_USER" 2>/dev/null || userdel "$SMB_USER" 2>/dev/null || true
+"""
+    res_smb = run_cmd(["kubectl", "exec", "-i", "-n", "default", "deployment/samba", "--", "sh"], input_data=smb_del_script)
+    if res_nc.returncode != 0 or res_smb.returncode != 0:
+        return False, {
+            "error": (
+                f"Eliminación incompleta para {user} "
+                f"(Nextcloud rc={res_nc.returncode}: {(res_nc.stderr or res_nc.stdout).strip()}, "
+                f"Samba rc={res_smb.returncode}: {(res_smb.stderr or res_smb.stdout).strip()})"
+            )
+        }
     return True, {"status": f"Cuenta de usuario {user} eliminada de Nextcloud y Samba."}
 
 def act_users_toggle_status(p):
@@ -649,13 +687,50 @@ def act_users_toggle_status(p):
 # SECCION 8: CARPETAS COMPARTIDAS EN RED (SAMBA / WINDOWS)
 # ==============================================================================
 def act_samba_shares_list(p):
-    """Lista los recursos compartidos configurados para la red escolar."""
-    shares = [
-        {"name": "profesores", "path": "/tank/nas/profesores", "readonly": False, "recycle": True, "desc": "Espacio exclusivo para material docente"},
-        {"name": "alumnos", "path": "/tank/nas/alumnos", "readonly": False, "recycle": True, "desc": "Recurso general de alumnos (lectura alumnos, escritura docentes)"},
-        {"name": "entregas", "path": "/tank/nas/alumnos/entregas", "readonly": False, "recycle": False, "desc": "Buzón de entregas con aislamiento Sticky Bit (1777)"},
-        {"name": "publico", "path": "/tank/nas/publico", "readonly": False, "recycle": True, "desc": "Material institucional de libre acceso"}
-    ]
+    """Lista los recursos compartidos activos parseando la configuracion real de Samba (testparm -s)."""
+    res = run_cmd(["kubectl", "exec", "-n", "default", "deployment/samba", "--", "testparm", "-s"])
+    if res.returncode != 0 or not (res.stdout or "").strip():
+        return False, {
+            "error": f"No se pudo consultar la configuración activa de Samba (testparm): {(res.stderr or res.stdout or 'sin respuesta').strip()}",
+            "shares": [],
+        }
+
+    shares = []
+    current = None
+    ignored_sections = {"global", "printers", "print$", "ipc$"}
+    for raw_line in res.stdout.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or line.startswith(";"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            sec_name = line[1:-1].strip()
+            if sec_name.lower() in ignored_sections:
+                current = None
+            else:
+                current = {
+                    "name": sec_name,
+                    "path": "",
+                    "readonly": True,
+                    "recycle": False,
+                    "shadow_copy": False,
+                    "desc": f"Recurso SMB [{sec_name}]",
+                }
+                shares.append(current)
+        elif current is not None and "=" in line:
+            k, v = [x.strip() for x in line.split("=", 1)]
+            kl = k.lower()
+            vl = v.lower()
+            if kl == "path":
+                current["path"] = v
+            elif kl in ("read only", "readonly"):
+                current["readonly"] = vl in ("yes", "true", "1")
+            elif kl == "writable" or kl == "writeable":
+                current["readonly"] = vl not in ("yes", "true", "1")
+            elif kl == "vfs objects":
+                current["recycle"] = "recycle" in vl
+                current["shadow_copy"] = "shadow_copy2" in vl
+            elif kl == "comment":
+                current["desc"] = v
     return True, {"shares": shares}
 
 def act_samba_sessions(p):
@@ -676,19 +751,93 @@ def act_samba_reload(p):
 def act_network_status(p):
     """Muestra la IP y enlaces activos en el servidor."""
     res = run_cmd(["ip", "-br", "addr", "show"])
-    return True, {"interfaces": res.stdout or "interfaces activas"}
+    return res.returncode == 0, {"interfaces": res.stdout or ""}
+
+
+def _auto_rollback_network():
+    """Restaura la IP anterior si el administrador no confirmó el cambio en 60 segundos."""
+    if not os.path.exists(ROLLBACK_TIMER_FILE):
+        return
+    try:
+        with open(ROLLBACK_TIMER_FILE, "r", encoding="utf-8") as f:
+            state = json.load(f)
+        iface = state.get("iface", "")
+        old_ip = state.get("old_ip", "")
+        old_gw = state.get("old_gw", "")
+        if iface and old_ip and RE_IFACE.match(iface) and RE_IP.match(old_ip):
+            run_cmd(["ip", "addr", "replace", old_ip, "dev", iface])
+            if old_gw and RE_IP.match(old_gw):
+                run_cmd(["ip", "route", "replace", "default", "via", old_gw, "dev", iface])
+    except Exception:
+        pass
+    finally:
+        try:
+            if os.path.exists(ROLLBACK_TIMER_FILE):
+                os.remove(ROLLBACK_TIMER_FILE)
+        except Exception:
+            pass
+
 
 def act_network_apply_with_rollback(p):
-    """Aplica configuracion de red con seguro de 60 segundos."""
-    ip = p.get("ip", "")
-    gw = p.get("gateway", "")
+    """Aplica configuracion de red real sobre la interfaz activa con seguro de reversion a los 60s."""
+    ip = str(p.get("ip", "")).strip()
+    gw = str(p.get("gateway", "")).strip()
+    iface = str(p.get("interface", "")).strip()
     if not RE_IP.match(ip) or (gw and not RE_IP.match(gw)):
         return False, {"error": "Formato de dirección IP o puerta de enlace no válido."}
+    ip_cidr = ip if "/" in ip else f"{ip}/24"
+
+    if not iface:
+        route_res = run_cmd(["ip", "-o", "-4", "route", "show", "to", "default"])
+        if route_res.returncode != 0 or not (route_res.stdout or "").strip():
+            return False, {"error": f"No se pudo detectar la interfaz de red primaria: {(route_res.stderr or route_res.stdout).strip()}"}
+        parts = route_res.stdout.strip().split()
+        if "dev" in parts:
+            dev_idx = parts.index("dev")
+            if dev_idx + 1 < len(parts):
+                iface = parts[dev_idx + 1]
+        if "via" in parts and not gw:
+            via_idx = parts.index("via")
+            if via_idx + 1 < len(parts):
+                gw = parts[via_idx + 1]
+
+    if not iface or not RE_IFACE.match(iface):
+        return False, {"error": "Interfaz de red inválida o no detectada."}
+
+    cur_res = run_cmd(["ip", "-o", "-4", "addr", "show", "dev", iface])
+    old_ip = ""
+    if cur_res.returncode == 0 and (cur_res.stdout or "").strip():
+        cparts = cur_res.stdout.strip().split()
+        if "inet" in cparts:
+            inet_idx = cparts.index("inet")
+            if inet_idx + 1 < len(cparts):
+                old_ip = cparts[inet_idx + 1]
+
+    apply_res = run_cmd(["ip", "addr", "replace", ip_cidr, "dev", iface])
+    if apply_res.returncode != 0:
+        return False, {"error": f"Fallo al aplicar IP {ip_cidr} en {iface}: {(apply_res.stderr or apply_res.stdout).strip()}"}
+
+    if gw:
+        gw_res = run_cmd(["ip", "route", "replace", "default", "via", gw, "dev", iface])
+        if gw_res.returncode != 0:
+            if old_ip:
+                run_cmd(["ip", "addr", "replace", old_ip, "dev", iface])
+            return False, {"error": f"Fallo al configurar puerta de enlace {gw}: {(gw_res.stderr or gw_res.stdout).strip()}"}
+
     os.makedirs(os.path.dirname(ROLLBACK_TIMER_FILE), exist_ok=True)
     with open(ROLLBACK_TIMER_FILE, "w", encoding="utf-8") as f:
-        json.dump({"timestamp": time.time(), "ip": ip, "status": "pending_confirm"}, f)
-    msg = f"Nueva IP {ip} aplicada. Confirme dentro de 60s (Confirm within 60s) o se restaurará la IP anterior automáticamente."
-    return True, {"status": msg, "message": msg}
+        json.dump(
+            {"timestamp": time.time(), "iface": iface, "old_ip": old_ip, "old_gw": gw, "ip": ip_cidr, "status": "pending_confirm"},
+            f
+        )
+
+    timer = threading.Timer(60.0, _auto_rollback_network)
+    timer.daemon = True
+    timer.start()
+
+    msg = f"Nueva IP {ip_cidr} aplicada en {iface}. Confirme dentro de 60s (Confirm within 60s) o se restaurará {old_ip or 'la IP anterior'} automáticamente."
+    return True, {"status": msg, "message": msg, "interface": iface, "previous_ip": old_ip}
+
 
 def act_network_confirm(p):
     """Fija la IP como definitiva y cancela el temporizador de rollback."""
@@ -724,23 +873,17 @@ def act_snapshots_create(p):
 
 def act_snapshots_rollback(p):
     """Vuelve los archivos al estado exacto que tenian en ese snapshot."""
-    name = p.get("name", "").strip()
-    if not name.startswith("tank/nas@"):
-        return False, {"error": "Nombre de snapshot inválido."}
-    tag = name.split("@", 1)[1]
-    if not RE_SNAP_TAG.match(tag):
-        return False, {"error": "Etiqueta de snapshot inválida."}
+    name = str(p.get("name", "")).strip()
+    if not RE_FULL_SNAPSHOT.match(name):
+        return False, {"error": "Nombre de snapshot inválido (debe pertenecer a tank/nas)."}
     res = run_cmd(["zfs", "rollback", "-r", name])
     return res.returncode == 0, {"status": f"Restauración completada: Archivos devueltos al punto {name}."}
 
 def act_snapshots_destroy(p):
     """Elimina un punto de restauracion recursivo antiguo para recuperar espacio."""
-    name = p.get("name", "").strip()
-    if not name.startswith("tank/nas@"):
-        return False, {"error": "Nombre de snapshot inválido."}
-    tag = name.split("@", 1)[1]
-    if not RE_SNAP_TAG.match(tag):
-        return False, {"error": "Etiqueta de snapshot inválida."}
+    name = str(p.get("name", "")).strip()
+    if not RE_FULL_SNAPSHOT.match(name):
+        return False, {"error": "Nombre de snapshot inválido (debe pertenecer a tank/nas)."}
     res = run_cmd(["zfs", "destroy", "-r", name])
     return res.returncode == 0, {"status": f"Snapshot recursivo {name} eliminado correctamente."}
 
@@ -826,43 +969,121 @@ def act_ups_test_battery(p):
 # ==============================================================================
 # SECCION 14: CONSOLA DE COMANDOS (TERMINAL DE RESCATE)
 # ==============================================================================
+ALLOWED_SHELL_COMMANDS = {
+    "uptime": ["uptime"],
+    "free": ["free", "-m"],
+    "free -m": ["free", "-m"],
+    "df -h": ["df", "-h"],
+    "zpool status": ["zpool", "status", "tank"],
+    "zfs list": ["zfs", "list"],
+    "kubectl get pods -A": ["kubectl", "get", "pods", "-A"],
+    "ip -br a": ["ip", "-br", "a"],
+    "systemctl status k3s": ["systemctl", "status", "k3s", "--no-pager"],
+}
+
+
 def act_shell_exec(p):
-    """Ejecuta comandos de rescate aprobados en el host."""
-    cmd_str = p.get("command", "").strip()
-    if not cmd_str: return False, {"error": "Comando vacío."}
-    allowed = ("uptime", "free", "df -h", "zpool status", "zfs list", "kubectl get pods -A", "ip -br a", "systemctl status k3s")
-    is_safe = any(cmd_str.startswith(a) for a in allowed)
-    if not is_safe:
-        return False, {"error": "Comando no autorizado por seguridad. Solo se permiten comandos de diagnóstico del sistema."}
-    res = run_cmd(shlex.split(cmd_str), timeout=15)
-    return True, {"output": (res.stdout or res.stderr or "Comando ejecutado sin salida").strip()}
+    """Ejecuta comandos de rescate aprobados por coincidencia exacta y verifica su código de salida."""
+    cmd_str = " ".join(str(p.get("command", "")).strip().split())
+    if not cmd_str:
+        return False, {"error": "Comando vacío."}
+    cmd_argv = ALLOWED_SHELL_COMMANDS.get(cmd_str)
+    if not cmd_argv:
+        return False, {"error": "Comando no autorizado por seguridad. Solo se permiten comandos exactos de diagnóstico del sistema."}
+    res = run_cmd(cmd_argv, timeout=15)
+    out = (res.stdout or res.stderr or "").strip()
+    if res.returncode != 0:
+        return False, {"error": out or f"El comando '{cmd_str}' finalizó con código {res.returncode}.", "output": out}
+    return True, {"output": out or "OK"}
+
 
 # ==============================================================================
 # SECCION 15: CERTIFICADOS DE SEGURIDAD (HTTPS / SSL)
 # ==============================================================================
 def act_pki_generate_ca(p):
-    """Regenera la Autoridad Certificadora interna con SAN válido y permisos restringidos."""
-    pki_dir = "/etc/nas-pki" if os.path.exists("/etc") and os.access("/etc", os.W_OK) else os.path.join(os.environ.get("TEMP", "/tmp"), "nas-pki")
+    """
+    Genera la Autoridad Certificadora interna (ca.crt/ca.key) y firma el certificado
+    activo del portal (portal.crt/portal.key) con SAN para DNS e IP LAN del host.
+    Verifica todos los códigos de retorno sin silenciar fallos.
+    """
+    pki_dir = "/tmp/nas-tunnel/tls" if os.path.exists("/tmp/nas-tunnel") else os.path.join(tempfile.gettempdir(), "nas-pki")
+    os.makedirs(pki_dir, exist_ok=True)
+    ca_key = os.path.join(pki_dir, "ca.key")
+    ca_crt = os.path.join(pki_dir, "ca.crt")
+    srv_key = os.path.join(pki_dir, "portal.key")
+    srv_csr = os.path.join(pki_dir, "portal.csr")
+    srv_crt = os.path.join(pki_dir, "portal.crt")
+    san_cnf = os.path.join(pki_dir, "san.cnf")
+
+    lan_ip = ""
     try:
-        os.makedirs(pki_dir, exist_ok=True)
-        key_path = os.path.join(pki_dir, "ca.key")
-        crt_path = os.path.join(pki_dir, "ca.crt")
-        run_cmd([
-            "openssl", "req", "-x509", "-nodes", "-days", "1825", "-newkey", "rsa:2048",
-            "-keyout", key_path, "-out", crt_path,
-            "-subj", "/C=AR/ST=BA/L=CABA/O=Enterprise NAS/CN=nas.escuela.local",
-            "-addext", "subjectAltName=DNS:nas.escuela.local,DNS:localhost,IP:192.168.1.100,IP:127.0.0.1"
-        ], timeout=15)
-        if os.path.exists(key_path):
-            os.chmod(key_path, 0o600)
+        ip_res = run_cmd(["hostname", "-I"], timeout=5)
+        if ip_res.returncode == 0 and (ip_res.stdout or "").strip():
+            candidate = ip_res.stdout.strip().split()[0]
+            if RE_IP.match(candidate):
+                lan_ip = candidate.split("/")[0]
     except Exception:
-        pass
-    msg = "Certificado Raíz SSL de la escuela (Institutional Root CA) generado con éxito (vigencia: 5 años)."
-    return True, {"status": msg}
+        lan_ip = ""
+
+    san_entries = ["DNS:nas.escuela.local", "DNS:localhost", "IP:127.0.0.1"]
+    if lan_ip and f"IP:{lan_ip}" not in san_entries:
+        san_entries.append(f"IP:{lan_ip}")
+    else:
+        san_entries.append("IP:192.168.1.50")
+    san_value = ",".join(san_entries)
+
+    res_ca = run_cmd([
+        "openssl", "req", "-x509", "-nodes", "-days", "1825", "-newkey", "rsa:2048",
+        "-keyout", ca_key, "-out", ca_crt,
+        "-subj", "/C=AR/ST=BA/L=CABA/O=Enterprise NAS/CN=Enterprise NAS Institutional Root CA"
+    ], timeout=15)
+    if res_ca.returncode != 0:
+        return False, {"error": f"Fallo al generar Root CA con openssl: {(res_ca.stderr or res_ca.stdout).strip()}"}
+
+    with open(san_cnf, "w", encoding="utf-8") as f:
+        f.write(f"subjectAltName={san_value}\nbasicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n")
+
+    res_csr = run_cmd([
+        "openssl", "req", "-newkey", "rsa:2048", "-nodes",
+        "-keyout", srv_key, "-out", srv_csr,
+        "-subj", "/C=AR/ST=BA/L=CABA/O=Enterprise NAS/CN=nas.escuela.local"
+    ], timeout=15)
+    if res_csr.returncode != 0:
+        return False, {"error": f"Fallo al generar CSR del portal: {(res_csr.stderr or res_csr.stdout).strip()}"}
+
+    res_sign = run_cmd([
+        "openssl", "x509", "-req", "-in", srv_csr,
+        "-CA", ca_crt, "-CAkey", ca_key, "-CAcreateserial",
+        "-out", srv_crt, "-days", "825", "-sha256", "-extfile", san_cnf
+    ], timeout=15)
+    if res_sign.returncode != 0:
+        return False, {"error": f"Fallo al firmar certificado TLS con la CA raíz: {(res_sign.stderr or res_sign.stdout).strip()}"}
+
+    for kpath in (ca_key, srv_key):
+        if os.path.exists(kpath):
+            os.chmod(kpath, 0o600)
+
+    if os.path.exists("/etc/rancher/k3s/k3s.yaml"):
+        sync_script = (
+            f"KUBECONFIG=/etc/rancher/k3s/k3s.yaml /usr/local/bin/kubectl create secret tls portal-tls-secret "
+            f"--cert={shlex.quote(srv_crt)} --key={shlex.quote(srv_key)} --dry-run=client -o yaml | "
+            f"KUBECONFIG=/etc/rancher/k3s/k3s.yaml /usr/local/bin/kubectl apply -f -"
+        )
+        run_cmd(["sh", "-c", sync_script], timeout=15)
+
+    msg = f"Certificado Raíz SSL (Institutional Root CA) y certificado TLS del portal firmados con éxito (SAN: {san_value})."
+    return True, {"status": msg, "ca_cert": ca_crt, "portal_cert": srv_crt, "san": san_value}
+
 
 def act_pki_download_ca(p):
-    """Retorna el contenido del certificado .crt para instalar en netbooks."""
-    for ca_path in ("/etc/nas-pki/ca.crt", "/tank/nas/pki/ca.crt"):
+    """Retorna el contenido del certificado .crt de la CA raíz para instalar en los clientes."""
+    candidates = (
+        "/tmp/nas-tunnel/tls/ca.crt",
+        os.path.join(tempfile.gettempdir(), "nas-pki", "ca.crt"),
+        "/etc/nas-pki/ca.crt",
+        "/tank/nas/pki/ca.crt",
+    )
+    for ca_path in candidates:
         if os.path.exists(ca_path):
             with open(ca_path, "r", encoding="utf-8") as f:
                 cert_data = f.read()

@@ -28,6 +28,25 @@ spec:
       - name: control-center
         image: python:3.11-alpine@sha256:c8db9fc7f3437f929b45bfeb7790c11b3b7198ba2633cf0a9b3556d3498f881e
         command: ["python3", "/app-config/server.py"]
+        env:
+        - name: PORTAL_STATE_DIR
+          value: "/var/lib/nas-portal-state"
+        - name: PORTAL_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: portal-admin-credentials
+              key: admin-password
+        - name: PORTAL_OPERATOR_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: portal-admin-credentials
+              key: operator-password
+        - name: PORTAL_TOTP_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: portal-admin-credentials
+              key: totp-secret
+              optional: true
         securityContext:
           privileged: false
           allowPrivilegeEscalation: false
@@ -46,10 +65,12 @@ spec:
           readOnly: true
         - name: agent-socket
           mountPath: /run/nas-agentd
+        - name: portal-state
+          mountPath: /var/lib/nas-portal-state
         - name: tunnel-volume
           mountPath: /tmp/nas-tunnel
         - name: tls-volume
-          mountPath: /tmp/nas-tls
+          mountPath: /etc/nas-tls
           readOnly: true
         - name: tmp-volume
           mountPath: /tmp/work
@@ -89,6 +110,9 @@ spec:
       - name: nas-agentd
         image: python:3.11-alpine@sha256:c8db9fc7f3437f929b45bfeb7790c11b3b7198ba2633cf0a9b3556d3498f881e
         command: ["python3", "/app-config/nas_agentd.py"]
+        env:
+        - name: PORTAL_STATE_DIR
+          value: "/var/lib/nas-portal-state"
         securityContext:
           privileged: true
           readOnlyRootFilesystem: true
@@ -98,6 +122,8 @@ spec:
           readOnly: true
         - name: agent-socket
           mountPath: /run/nas-agentd
+        - name: portal-state
+          mountPath: /var/lib/nas-portal-state
         - name: tunnel-volume
           mountPath: /tmp/nas-tunnel
         - name: agent-logs
@@ -119,6 +145,10 @@ spec:
         emptyDir: {}
       - name: agent-logs
         emptyDir: {}
+      - name: portal-state
+        hostPath:
+          path: /var/lib/nas-portal-state
+          type: DirectoryOrCreate
       - name: tunnel-volume
         hostPath:
           path: /tmp/nas-tunnel
@@ -126,6 +156,7 @@ spec:
       - name: tls-volume
         secret:
           secretName: portal-tls-secret
+          optional: true
           items:
           - key: tls.crt
             path: portal.crt

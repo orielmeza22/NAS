@@ -97,11 +97,15 @@ spec:
               rclone delete --min-age 35d "r2:$BUCKET/weekly/" 2>/dev/null || true
 
               nsenter --target 1 --mount --uts --ipc --net --pid -- sh -c '
-                zfs list -t snapshot -o name -s creation -H tank/nas 2>/dev/null | grep "^tank/nas@offsite-inc-" | head -n -14 | while read -r s; do
-                  zfs destroy -r "$s" 2>/dev/null || true
-                done
-                zfs list -t snapshot -o name -s creation -H tank/nas 2>/dev/null | grep "^tank/nas@offsite-full-" | head -n -5 | while read -r s; do
-                  zfs destroy -r "$s" 2>/dev/null || true
+                for ds in $(zfs list -r -H -o name tank/nas 2>/dev/null); do
+                  zfs list -t snapshot -o name -s creation -H "$ds" 2>/dev/null | grep -E "^${ds}@offsite-inc-" | head -n -14 | while read -r s; do
+                    [ -n "$s" ] || continue
+                    zfs destroy "$s" 2>/dev/null || true
+                  done
+                  zfs list -t snapshot -o name -s creation -H "$ds" 2>/dev/null | grep -E "^${ds}@offsite-full-" | head -n -6 | while read -r s; do
+                    [ -n "$s" ] || continue
+                    zfs destroy "$s" 2>/dev/null || true
+                  done
                 done
               '
 

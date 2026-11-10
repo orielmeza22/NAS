@@ -50,6 +50,7 @@ class TestNasSecurityArchitecture(unittest.TestCase):
         for inj in injections:
             req = {
                 "user": "admin",
+                "role": ROLE_SUPERADMIN,
                 "action": "zfs.snapshot.create",
                 "params": {"dataset": inj, "tag": "test"}
             }
@@ -69,6 +70,7 @@ class TestNasSecurityArchitecture(unittest.TestCase):
         for inj in injections:
             req = {
                 "user": "admin",
+                "role": ROLE_SUPERADMIN,
                 "action": "zfs.snapshot.create",
                 "params": {"dataset": "tank/nas", "tag": inj}
             }
@@ -86,6 +88,7 @@ class TestNasSecurityArchitecture(unittest.TestCase):
         for inj in injections:
             req = {
                 "user": "admin",
+                "role": ROLE_SUPERADMIN,
                 "action": "zfs.quota.set",
                 "params": {"dataset": "tank/nas/alumnos", "quota": inj}
             }
@@ -103,6 +106,7 @@ class TestNasSecurityArchitecture(unittest.TestCase):
         for inj in injections:
             req = {
                 "user": "admin",
+                "role": ROLE_SUPERADMIN,
                 "action": "storage.smart.status",
                 "params": {"device": inj}
             }
@@ -327,6 +331,54 @@ class TestNasSecurityArchitecture(unittest.TestCase):
             self.assertFalse(data["configured"])
             self.assertEqual(data["battery.charge"], "N/A")
             self.assertEqual(data["battery.runtime"], "N/A")
+
+    def test_fail_closed_ipc_and_missing_role_and_operator_credential(self):
+        """Must fail closed when IPC socket is missing, role is omitted, or operator password is unset."""
+        from nas_agentd import send_agent_request
+
+        # 1. Missing role in dispatch_request must be denied (fail-closed)
+        no_role_res = dispatch_request({"user": "admin", "action": "system.status", "params": {}})
+        self.assertFalse(no_role_res["success"])
+        self.assertTrue(no_role_res.get("forbidden"))
+
+        # 2. Missing UNIX socket in send_agent_request must fail closed in production
+        os.environ.pop("NAS_ALLOW_INPROCESS_AGENT", None)
+        ipc_res = send_agent_request(
+            {"user": "admin", "role": ROLE_SUPERADMIN, "action": "system.status", "params": {}},
+            socket_path="/nonexistent/agent.sock",
+        )
+        self.assertFalse(ipc_res["success"])
+        self.assertIn("no disponible", ipc_res["error"])
+
+        # 3. Operator login must not fall back to admin_pass when operator_pass is empty
+        ok_op_fallback, _, _, _ = authenticate_portal_user(
+            "operador", "Adm!nSecret2026", admin_pass="Adm!nSecret2026", operator_pass=""
+        )
+        self.assertFalse(ok_op_fallback)
+
+    def test_smart_virtual_disk_and_snapshot_prefix_and_shell_exact_match(self):
+        """Must reject fake SMART green status on VBOX, sibling snapshot prefixes, and arbitrary shell flags."""
+        from unittest.mock import patch, MagicMock
+        import modules_catalog
+
+        vbox_res = MagicMock()
+        vbox_res.returncode = 0
+        vbox_res.stdout = "Device Model: VBOX HARDDISK\nSMART support is: Unavailable - device lacks SMART capability."
+        vbox_res.stderr = ""
+        with patch.object(modules_catalog, "run_cmd", return_value=vbox_res):
+            ok_smart, data_smart = modules_catalog.act_storage_smart_test({"device": "/dev/sda"})
+            self.assertFalse(ok_smart)
+            self.assertFalse(data_smart["supported"])
+
+        # Snapshot prefix boundary: tank/nas-otro@snap1 must be rejected
+        ok_rb, _ = modules_catalog.act_snapshots_rollback({"name": "tank/nas-otro@snap1"})
+        self.assertFalse(ok_rb)
+        ok_del, _ = modules_catalog.act_snapshots_destroy({"name": "tank/nas-otro@snap1"})
+        self.assertFalse(ok_del)
+
+        # Shell command must require exact match, rejecting extra flags
+        ok_sh, _ = modules_catalog.act_shell_exec({"command": "df -h /etc/shadow"})
+        self.assertFalse(ok_sh)
 
 if __name__ == "__main__":
     unittest.main()

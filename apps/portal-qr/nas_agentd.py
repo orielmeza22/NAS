@@ -158,7 +158,7 @@ ACTION_CATALOG.update(MODULE_HANDLERS)
 
 def dispatch_request(req):
     user = req.get("user", "anonymous")
-    role = req.get("role", ROLE_SUPERADMIN)
+    role = req.get("role", "")
     action = req.get("action", "")
     params = req.get("params", {})
     client_ip = req.get("client_ip", "")
@@ -189,8 +189,8 @@ def send_agent_request(req, socket_path=SOCKET_PATH, timeout=35):
     """
     Sends an action request from the unprivileged web container to the privileged
     nas-agentd daemon over the local UNIX domain socket (/run/nas-agentd/agent.sock).
-    Falls back to in-process dispatch_request only in local test environments where
-    the UNIX socket is not mounted.
+    Fails closed in production if the socket is unavailable; only allows in-process
+    dispatch when NAS_ALLOW_INPROCESS_AGENT=1 is explicitly set for unit tests.
     """
     if hasattr(socket, "AF_UNIX") and os.path.exists(socket_path):
         client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -210,10 +210,33 @@ def send_agent_request(req, socket_path=SOCKET_PATH, timeout=35):
             return {"success": False, "error": f"IPC socket communication failure: {str(e)}"}
         finally:
             client.close()
-    return dispatch_request(req)
+    if os.environ.get("NAS_ALLOW_INPROCESS_AGENT") == "1":
+        return dispatch_request(req)
+    return {
+        "success": False,
+        "error": "Agente privilegiado (nas-agentd) no disponible: socket IPC ausente."
+    }
+
+
+def ensure_host_tls_cert():
+    """
+    Ensures a valid TLS certificate and Root CA exist in /tmp/nas-tunnel/tls
+    with SANs covering nas.escuela.local, localhost, 127.0.0.1, and the host LAN IP.
+    """
+    tls_dir = "/tmp/nas-tunnel/tls"
+    crt_file = os.path.join(tls_dir, "portal.crt")
+    key_file = os.path.join(tls_dir, "portal.key")
+    if os.path.exists(crt_file) and os.path.exists(key_file):
+        return
+    try:
+        from modules_catalog import act_pki_generate_ca
+        act_pki_generate_ca({})
+    except Exception as e:
+        sys.stderr.write(f"Failed to auto-provision TLS cert in nas-agentd: {e}\n")
 
 
 def serve():
+    ensure_host_tls_cert()
     if os.path.exists(SOCKET_PATH):
         os.remove(SOCKET_PATH)
     os.makedirs(os.path.dirname(SOCKET_PATH), exist_ok=True)

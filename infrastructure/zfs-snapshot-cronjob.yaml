@@ -38,12 +38,25 @@ spec:
                 zfs set snapdir=visible tank/nas/publico 2>/dev/null || true
               '
               echo "[$(date -Iseconds)] Snapshot created and snapdir configured successfully."
-              # Cleanup: sort strictly by creation timestamp (-s creation) on root dataset tank/nas
-              # and exclude offsite R2 backup base snapshots (offsite-full-* / offsite-inc-*)
+              # Cleanup: iterate across tank/nas and all child datasets (-r), sorting strictly by creation (-s creation)
+              # Prunes local VSS/auto snapshots (>30), offsite incrementals (>14), and offsite fulls (>6)
               nsenter --target 1 --mount --uts --ipc --net --pid -- sh -c '
-                zfs list -t snapshot -o name -s creation -H tank/nas 2>/dev/null | grep -E "^tank/nas@(k8s-auto-|GMT-)" | head -n -30 | while read -r snap; do
-                  zfs release sentinel-immutable "$snap" 2>/dev/null || true
-                  zfs destroy -r "$snap" 2>/dev/null || true
+                for ds in $(zfs list -r -H -o name tank/nas 2>/dev/null); do
+                  zfs list -t snapshot -o name -s creation -H "$ds" 2>/dev/null | grep -E "^${ds}@(k8s-auto-|GMT-)" | head -n -30 | while read -r snap; do
+                    [ -n "$snap" ] || continue
+                    zfs release sentinel-immutable "$snap" 2>/dev/null || true
+                    zfs destroy "$snap" 2>/dev/null || true
+                  done
+                  zfs list -t snapshot -o name -s creation -H "$ds" 2>/dev/null | grep -E "^${ds}@offsite-inc-" | head -n -14 | while read -r snap; do
+                    [ -n "$snap" ] || continue
+                    zfs release sentinel-immutable "$snap" 2>/dev/null || true
+                    zfs destroy "$snap" 2>/dev/null || true
+                  done
+                  zfs list -t snapshot -o name -s creation -H "$ds" 2>/dev/null | grep -E "^${ds}@offsite-full-" | head -n -6 | while read -r snap; do
+                    [ -n "$snap" ] || continue
+                    zfs release sentinel-immutable "$snap" 2>/dev/null || true
+                    zfs destroy "$snap" 2>/dev/null || true
+                  done
                 done
               '
               echo "[$(date -Iseconds)] Cleanup complete."

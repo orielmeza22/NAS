@@ -114,22 +114,24 @@ spec:
                   echo "1" > /tmp/nas-tunnel/ransomware_status
                 fi
 
-                # 4. Asegurar Inmutabilidad (zfs hold) ordenada por fecha de creación (-s creation)
+                # 4. Asegurar Inmutabilidad (zfs hold) ordenada por fecha de creación (-s creation) en todos los datasets hijos
                 # Nunca ejecuta zfs rollback automático sin confirmación humana para evitar pérdida de datos por falsos positivos
                 nsenter --target 1 --mount --uts --ipc --net --pid -- sh -c '
-                  LAST_SNAPS=$(zfs list -t snapshot -o name -s creation -H tank/nas 2>/dev/null | grep -E "^tank/nas@(GMT-|k8s-auto-)" | tail -n 5)
-                  echo "$LAST_SNAPS" | while read -r snap; do
-                    [ -n "$snap" ] || continue
-                    if ! zfs holds "$snap" 2>/dev/null | grep -q "sentinel-immutable"; then
-                      zfs hold sentinel-immutable "$snap" 2>/dev/null || true
-                    fi
-                  done
-                  # Liberar candado en snapshots antiguos para no bloquear rotación/limpieza
-                  zfs list -t snapshot -o name -s creation -H tank/nas 2>/dev/null | grep -E "^tank/nas@(GMT-|k8s-auto-)" | head -n -5 | while read -r oldsnap; do
-                    [ -n "$oldsnap" ] || continue
-                    if zfs holds "$oldsnap" 2>/dev/null | grep -q "sentinel-immutable"; then
-                      zfs release sentinel-immutable "$oldsnap" 2>/dev/null || true
-                    fi
+                  for ds in $(zfs list -r -H -o name tank/nas 2>/dev/null); do
+                    LAST_SNAPS=$(zfs list -t snapshot -o name -s creation -H "$ds" 2>/dev/null | grep -E "^${ds}@(GMT-|k8s-auto-)" | tail -n 5)
+                    echo "$LAST_SNAPS" | while read -r snap; do
+                      [ -n "$snap" ] || continue
+                      if ! zfs holds "$snap" 2>/dev/null | grep -q "sentinel-immutable"; then
+                        zfs hold sentinel-immutable "$snap" 2>/dev/null || true
+                      fi
+                    done
+                    # Liberar candado en snapshots antiguos para no bloquear rotación/limpieza
+                    zfs list -t snapshot -o name -s creation -H "$ds" 2>/dev/null | grep -E "^${ds}@(GMT-|k8s-auto-)" | head -n -5 | while read -r oldsnap; do
+                      [ -n "$oldsnap" ] || continue
+                      if zfs holds "$oldsnap" 2>/dev/null | grep -q "sentinel-immutable"; then
+                        zfs release sentinel-immutable "$oldsnap" 2>/dev/null || true
+                      fi
+                    done
                   done
                 ' 2>/dev/null || true
 

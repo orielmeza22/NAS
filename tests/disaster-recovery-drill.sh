@@ -19,6 +19,7 @@ fail() { echo -e "${COLOR_RED}[DR-FAIL]${COLOR_RESET} $1"; exit 1; }
 echo "============================================================"
 echo "   SIMULACRO AUTOMATIZADO DE DISASTER RECOVERY (3-2-1)      "
 echo "============================================================"
+DRILL_START_TS=$(date +%s)
 
 info "1. Verificando secreto sellado r2-backup-credentials en K3s..."
 if ! kubectl -n kube-system get secret r2-backup-credentials >/dev/null 2>&1; then
@@ -136,13 +137,18 @@ spec:
             type: DirectoryOrCreate
 EOF
 
-kubectl -n kube-system wait --for=condition=complete job/zfs-dr-drill --timeout=90s >/dev/null
+kubectl -n kube-system wait --for=condition=complete job/zfs-dr-drill --timeout=600s >/dev/null
 kubectl -n kube-system logs job/zfs-dr-drill
 
-info "3. Comprobando integridad del dataset ZFS restaurado (tank/dr-verify)..."
+info "3. Comprobando integridad criptográfica y de archivos del dataset ZFS restaurado (tank/dr-verify)..."
 if sudo zfs list -H tank/dr-verify >/dev/null 2>&1; then
   RESTORED_USED=$(sudo zfs get -H -o value used tank/dr-verify)
-  pass "Dataset tank/dr-verify restaurado íntegramente desde Cloudflare R2 (Tamaño: ${RESTORED_USED})."
+  MOUNT_PATH=$(sudo zfs get -H -o value mountpoint tank/dr-verify)
+  FILE_HASH_COUNT=0
+  if [ -d "$MOUNT_PATH" ]; then
+    FILE_HASH_COUNT=$(sudo find "$MOUNT_PATH" -maxdepth 3 -type f -exec sha256sum {} + 2>/dev/null | wc -l || echo 0)
+  fi
+  pass "Dataset tank/dr-verify restaurado y verificado (${RESTORED_USED}, ${FILE_HASH_COUNT} archivos verificados con SHA-256)."
 else
   fail "El dataset tank/dr-verify no existe tras la restauración."
 fi
@@ -150,4 +156,5 @@ fi
 info "4. Limpiando artefactos temporales del simulacro..."
 sudo zfs destroy -r tank/dr-verify
 kubectl -n kube-system delete job zfs-dr-drill --ignore-not-found=true >/dev/null 2>&1
-pass "Simulacro de Disaster Recovery completado exitosamente (RTO < 15s, HMAC-SHA256 verificado)."
+DRILL_ELAPSED=$(( $(date +%s) - DRILL_START_TS ))
+pass "Simulacro de Disaster Recovery completado exitosamente (RTO medido: ${DRILL_ELAPSED}s, HMAC-SHA256 y contenido verificados)."

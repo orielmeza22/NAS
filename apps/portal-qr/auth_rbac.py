@@ -122,8 +122,9 @@ def authenticate_portal_user(username, password, totp_code="", admin_pass="", op
         if admin_pass and secrets.compare_digest(password, admin_pass):
             role = ROLE_SUPERADMIN
     elif norm_user in ("operador", "operator", "soporte", "docente"):
-        effective_op_pass = operator_pass or admin_pass
-        if effective_op_pass and secrets.compare_digest(password, effective_op_pass):
+        if not operator_pass:
+            return False, norm_user, "", "La credencial del rol operador no se encuentra configurada."
+        if secrets.compare_digest(password, operator_pass):
             role = ROLE_OPERATOR
 
     if not role:

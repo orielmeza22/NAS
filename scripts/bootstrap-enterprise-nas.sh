@@ -26,10 +26,21 @@ sudo apt-get install -y -qq zfsutils-linux openssl curl rclone jq smartmontools 
 
 info "2. Configurando pool OpenZFS (tank)..."
 if ! sudo zpool list tank >/dev/null 2>&1; then
-  if [ $# -ge 3 ] && [ "$1" != "--lab-mode" ] && [ "$1" != "--demo-virtual" ]; then
-    info "Creando pool de producción RAID-Z1 con discos físicos reales: $*"
+  RAID_LEVEL="raidz1"
+  if [ "${1:-}" = "--raidz2" ]; then
+    RAID_LEVEL="raidz2"
+    shift
+  elif [ $# -ge 4 ] && [ "${1:-}" != "--lab-mode" ] && [ "${1:-}" != "--demo-virtual" ]; then
+    RAID_LEVEL="raidz2"
+  fi
+
+  if [ $# -ge 3 ] && [ "${1:-}" != "--lab-mode" ] && [ "${1:-}" != "--demo-virtual" ]; then
+    if [ "$RAID_LEVEL" = "raidz2" ] && [ $# -lt 4 ]; then
+      fail "Para conformar un arreglo RAID-Z2 se requieren al menos 4 discos físicos."
+    fi
+    info "Creando pool de producción ${RAID_LEVEL^^} con discos físicos reales: $*"
     sudo zpool create -f -o ashift=12 -O compression=lz4 -O atime=off \
-      -O acltype=posixacl -O xattr=sa tank raidz1 "$@"
+      -O acltype=posixacl -O xattr=sa tank "$RAID_LEVEL" "$@"
   elif [ "${1:-}" = "--lab-mode" ] || [ "${1:-}" = "--demo-virtual" ]; then
     warn "MODO LABORATORIO / VM DETECTADO: Creando pool sobre discos virtuales (/zfs-disks/disk*.img)."
     warn "ADVERTENCIA: Este modo NO provee redundancia física y es únicamente para pruebas/desarrollo."
@@ -88,8 +99,8 @@ sudo zfs set snapdir=visible tank/nas tank/nas/profesores tank/nas/alumnos tank/
 echo "options zfs zfs_arc_max=2147483648" | sudo tee /etc/modprobe.d/zfs.conf >/dev/null
 echo 2147483648 | sudo tee /sys/module/zfs/parameters/zfs_arc_max >/dev/null 2>&1 || true
 
-sudo mkdir -p /var/lib/nas-samba-private /tank/nas/.portal-state /tank/nas/.Papelera /tank/nas/alumnos/entregas
-sudo chmod 0700 /var/lib/nas-samba-private /tank/nas/.portal-state
+sudo mkdir -p /var/lib/nas-samba-private /var/lib/nas-portal-state /tmp/nas-tunnel/tls /tank/nas/.Papelera /tank/nas/alumnos/entregas
+sudo chmod 0700 /var/lib/nas-samba-private /var/lib/nas-portal-state
 sudo chmod 0750 /tank/nas/profesores
 sudo chmod 0755 /tank/nas/alumnos /tank/nas/publico
 sudo chmod 1777 /tank/nas/alumnos/entregas
@@ -124,15 +135,64 @@ if ! kubectl -n kube-system get deployment sealed-secrets-controller >/dev/null 
   kubectl apply -f https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.27.3/controller.yaml
 fi
 
-info "6. Verificando Secretos Iniciales con Contraseñas Criptográficas..."
+info "6. Verificando Certificados TLS (SAN LAN) y Secretos Criptográficos..."
 CREDS_FILE="/etc/nas-initial-credentials.txt"
 NC_PASS=""
+PORTAL_ADMIN_PASS=""
+PORTAL_OP_PASS=""
+PORTAL_TOTP_SEC=""
+
+HOST_LAN_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
+SAN_LIST="DNS:nas.escuela.local,DNS:localhost,IP:127.0.0.1"
+if [ -n "$HOST_LAN_IP" ]; then
+  SAN_LIST="${SAN_LIST},IP:${HOST_LAN_IP}"
+else
+  SAN_LIST="${SAN_LIST},IP:192.168.1.50"
+fi
+
+if ! kubectl get secret portal-tls-secret >/dev/null 2>&1; then
+  TLS_DIR="/tmp/nas-tunnel/tls"
+  sudo mkdir -p "$TLS_DIR"
+  sudo openssl req -x509 -nodes -days 1825 -newkey rsa:2048 \
+    -keyout "${TLS_DIR}/ca.key" -out "${TLS_DIR}/ca.crt" \
+    -subj "/C=AR/ST=BA/L=CABA/O=Enterprise NAS/CN=Enterprise NAS Institutional Root CA" >/dev/null 2>&1
+  sudo bash -c "cat <<EOF > '${TLS_DIR}/san.cnf'
+subjectAltName=${SAN_LIST}
+basicConstraints=CA:FALSE
+keyUsage=digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth
+EOF"
+  sudo openssl req -newkey rsa:2048 -nodes \
+    -keyout "${TLS_DIR}/portal.key" -out "${TLS_DIR}/portal.csr" \
+    -subj "/C=AR/ST=BA/L=CABA/O=Enterprise NAS/CN=nas.escuela.local" >/dev/null 2>&1
+  sudo openssl x509 -req -in "${TLS_DIR}/portal.csr" \
+    -CA "${TLS_DIR}/ca.crt" -CAkey "${TLS_DIR}/ca.key" -CAcreateserial \
+    -out "${TLS_DIR}/portal.crt" -days 825 -sha256 -extfile "${TLS_DIR}/san.cnf" >/dev/null 2>&1
+  sudo chmod 0600 "${TLS_DIR}/ca.key" "${TLS_DIR}/portal.key"
+  sudo chmod 0644 "${TLS_DIR}/ca.crt" "${TLS_DIR}/portal.crt"
+  sudo kubectl create secret tls portal-tls-secret \
+    --cert="${TLS_DIR}/portal.crt" \
+    --key="${TLS_DIR}/portal.key"
+  info "Secreto TLS portal-tls-secret y Root CA institucional generados (SAN: ${SAN_LIST})."
+fi
+
+if ! kubectl get secret portal-admin-credentials >/dev/null 2>&1; then
+  PORTAL_ADMIN_PASS=$(openssl rand -base64 16 | tr -d '\n=')
+  PORTAL_OP_PASS=$(openssl rand -base64 12 | tr -d '\n=')
+  PORTAL_TOTP_SEC=$(head -c 10 /dev/urandom | base32 | tr -d '=\n' | head -c 16)
+  kubectl create secret generic portal-admin-credentials \
+    --from-literal=admin-password="$PORTAL_ADMIN_PASS" \
+    --from-literal=operator-password="$PORTAL_OP_PASS" \
+    --from-literal=totp-secret="$PORTAL_TOTP_SEC"
+  info "Secreto portal-admin-credentials generado (roles superadmin + operator + 2FA TOTP)."
+fi
+
 if ! kubectl get secret nextcloud-admin-credentials >/dev/null 2>&1; then
   NC_PASS=$(openssl rand -base64 16)
   kubectl create secret generic nextcloud-admin-credentials \
     --from-literal=username=admin \
     --from-literal=password="$NC_PASS"
-  info "Secreto nextcloud-admin-credentials generado con contraseña criptográfica."
+  info "Secreto nextcloud-admin-credentials generado con contraseña criptográfica independiente."
 fi
 
 if ! kubectl get secret samba-credentials >/dev/null 2>&1; then
@@ -151,6 +211,11 @@ CREDENCIALES INICIALES DEL NAS (GENERADAS AUTOMÁTICAMENTE)
 Fecha: $(date -Iseconds)
 Host: $(hostname)
 ================================================================================
+NAS Control Center OS (Portal Web https://${HOST_LAN_IP:-localhost}:30081):
+  SuperAdmin: admin    / ${PORTAL_ADMIN_PASS:-[Configurada previamente]}
+  Operador:   operador / ${PORTAL_OP_PASS:-[Configurada previamente]}
+  Secreto 2FA TOTP (RFC 6238 Base32): ${PORTAL_TOTP_SEC:-[Configurado previamente]}
+
 Nextcloud Web Console:
   Usuario:    admin
   Contraseña: ${NC_PASS:-[Configurada previamente]}
@@ -166,11 +231,18 @@ EOF"
   info "Credenciales guardadas en $CREDS_FILE."
 fi
 
-info "7. Aplicando infraestructura GitOps (Root Application)..."
+info "7. Aplicando infraestructura GitOps (Root Application) y Portal Control Center..."
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 kubectl -n argocd rollout status deployment/argocd-server --timeout=120s || warn "ArgoCD Server aún iniciando."
 kubectl -n kube-system rollout status deployment/sealed-secrets-controller --timeout=120s || warn "Sealed Secrets controller aún iniciando."
+kubectl apply -f "${REPO_DIR}/apps/portal-qr/"
 kubectl apply -f "${REPO_DIR}/infrastructure/root-application.yaml"
+
+info "8. Verificando disponibilidad del Portal Web (HTTPS + IPC)..."
+kubectl rollout status deployment/portal-qr --timeout=120s
+if ! curl -sk https://localhost:30081/api/public/status | grep -q "raid_health"; then
+  fail "El portal no respondió correctamente en https://localhost:30081/api/public/status tras el despliegue."
+fi
 
 pass "============================================================"
 pass "  ✅ PLATAFORMA NAS ENTERPRISE INICIALIZADA EXITOSAMENTE    "

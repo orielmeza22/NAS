@@ -11,37 +11,35 @@ data:
   server.py: |
     #!/usr/bin/env python3
     """
-    Enterprise NAS Control Center OS — Backend REST API Server (Hardened Production Standard)
-    Runs inside a privileged pod with hostPID access to execute ZFS, K3s, and System tasks.
-    Strict DevSecOps: Zero Command Injection, Safe Subprocess Args, Token TTL, Rate-Limiting.
+    Enterprise NAS Control Center OS — Backend REST API Server (Unprivileged Web Frontend)
+    Runs inside an unprivileged container (readOnlyRootFilesystem, capabilities drop ALL + NET_BIND_SERVICE)
+    and delegates all host/cluster actions over UNIX IPC socket (/run/nas-agentd/agent.sock)
+    with dual RBAC enforcement, TOTP 2FA, IP-bound sessions, and SQLite rate-limiting.
     """
     import os
     import sys
     import json
     import time
-    import subprocess
     import urllib.parse
-    import re
-    import shlex
     import secrets
     import ssl
     from http.server import HTTPServer, BaseHTTPRequestHandler
     from socketserver import ThreadingMixIn
 
-    # Persistent state storage and asynchronous job execution engine
     import portal_state
     from task_engine import GLOBAL_TASK_ENGINE
     from auth_rbac import (
         authenticate_portal_user,
         check_permission,
         resolve_client_ip,
-        ROLE_SUPERADMIN,
     )
+
 
     class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
         daemon_threads = True
 
-    PORT = 80
+
+    PORT = int(os.environ.get("PORTAL_PORT", "80"))
     SESSION_TTL_SECONDS = 28800  # 8 hours
     MAX_FAILED_LOGINS = 5
     LOCKOUT_SECONDS = 900  # 15 minutes
@@ -51,75 +49,34 @@ data:
         if ip.strip()
     ]
 
-    # Strict validation regexes
-    RE_USERNAME = re.compile(r"^[a-zA-Z0-9._-]{3,32}$")
-    RE_SHARENAME = re.compile(r"^[a-zA-Z0-9._-]{2,32}$")
-    RE_QUOTA = re.compile(r"^([0-9]+[KMGTkmgt]?|none)$")
-    RE_TAG = re.compile(r"^[a-zA-Z0-9._-]{1,64}$")
-    RE_DATASET = re.compile(r"^tank/nas(/[a-zA-Z0-9._-]+)*$")
-    RE_NUMERIC = re.compile(r"^[0-9]+$")
 
-    def run_host_cmd(cmd_list_or_str, timeout=30):
-        """
-        Executes commands securely against the host root namespace via nsenter.
-        Accepts either an explicit argument list (preferred, immune to shell injection)
-        or a sanitized shell command.
-        """
-        if isinstance(cmd_list_or_str, list):
-            full_cmd = ["nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid", "--"] + cmd_list_or_str
-            shell_mode = False
-        else:
-            full_cmd = ["nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid", "--", "sh", "-c", cmd_list_or_str]
-            shell_mode = False
-
-        try:
-            res = subprocess.run(full_cmd, capture_output=True, text=True, timeout=timeout)
-            return res.returncode == 0, res.stdout, res.stderr
-        except Exception as e:
-            return False, "", str(e)
-
-    def get_admin_password():
-        """
-        Retrieves the portal admin password strictly from dedicated portal secrets or environment.
-        Never falls back to hardcoded public credentials.
-        """
-        env_pass = os.environ.get("PORTAL_ADMIN_PASSWORD", "").strip()
-        if env_pass:
-            return env_pass
-
-        for secret_name in ("portal-admin-credentials", "nextcloud-admin-credentials"):
-            ok, out, _ = run_host_cmd(["kubectl", "get", "secret", secret_name, "-o", "jsonpath={.data.password}"])
-            if ok and out.strip():
-                try:
-                    import base64
-                    decoded = base64.b64decode(out.strip()).decode("utf-8").strip()
-                    if decoded:
-                        return decoded
-                except Exception:
-                    pass
+    def _read_secret_env_or_file(env_name, file_path):
+        val = os.environ.get(env_name, "").strip()
+        if val:
+            return val
+        if file_path and os.path.exists(file_path):
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    return f.read().strip()
+            except Exception:
+                pass
         return ""
 
 
+    def get_admin_password():
+        """Retrieves the portal superadmin password from environment or secret file."""
+        return _read_secret_env_or_file("PORTAL_ADMIN_PASSWORD", "/etc/nas-credentials/admin-password")
+
+
     def get_operator_password():
-        """Retrieves optional dedicated operator password from environment or secret."""
-        return os.environ.get("PORTAL_OPERATOR_PASSWORD", "").strip()
+        """Retrieves the dedicated operator password from environment or secret file."""
+        return _read_secret_env_or_file("PORTAL_OPERATOR_PASSWORD", "/etc/nas-credentials/operator-password")
 
 
     def get_totp_secret():
-        """Retrieves optional RFC 6238 TOTP secret for 2FA enforcement."""
-        return os.environ.get("PORTAL_TOTP_SECRET", "").strip()
+        """Retrieves the RFC 6238 TOTP secret for 2FA enforcement."""
+        return _read_secret_env_or_file("PORTAL_TOTP_SECRET", "/etc/nas-credentials/totp-secret")
 
-    def sanitize_path(relpath, base="/tank/nas"):
-        """
-        Guarantees that a requested path strictly resides within the base directory,
-        mitigating all directory traversal / path traversal attacks.
-        """
-        normalized = os.path.normpath(os.path.join(base, relpath.lstrip("/")))
-        real_base = os.path.realpath(base)
-        real_target = os.path.realpath(normalized) if os.path.exists(normalized) else normalized
-        if real_target == real_base or real_target.startswith(real_base + os.sep):
-            return real_target
-        return real_base
 
     class NasApiHandler(BaseHTTPRequestHandler):
         def get_client_ip(self):
@@ -130,8 +87,7 @@ data:
             )
 
         def check_rate_limit(self, ip):
-            allowed, remaining = portal_state.check_rate_limit(ip, MAX_FAILED_LOGINS, LOCKOUT_SECONDS)
-            return allowed, remaining
+            return portal_state.check_rate_limit(ip, MAX_FAILED_LOGINS, LOCKOUT_SECONDS)
 
         def record_failed_login(self, ip):
             portal_state.record_failed_login(ip, MAX_FAILED_LOGINS, LOCKOUT_SECONDS)
@@ -142,9 +98,9 @@ data:
         def is_auth(self):
             auth_hdr = self.headers.get("Authorization", "")
             if auth_hdr.startswith("Bearer "):
-                token = auth_hdr.split(" ")[1]
+                token = auth_hdr.split(" ", 1)[1].strip()
                 valid, username, role = portal_state.validate_session(token, self.get_client_ip())
-                if valid:
+                if valid and role:
                     self.auth_user = username
                     self.auth_role = role
                     return True
@@ -193,10 +149,10 @@ data:
             if path in ("/", "/index.html"):
                 self.serve_frontend()
                 return
-            elif path == "/api/public/status":
+            if path == "/api/public/status":
                 self.handle_public_status()
                 return
-            elif path == "/api/samba/connector":
+            if path == "/api/samba/connector":
                 self.serve_samba_connector()
                 return
 
@@ -204,15 +160,11 @@ data:
                 self.send_json({"error": "Unauthorized"}, 401)
                 return
 
-            if path.startswith("/tunnel/url.txt"):
-                self.serve_tunnel_txt()
-                return
-
             if path == "/api/tasks":
                 tasks = portal_state.list_tasks(limit=30)
                 self.send_json({"success": True, "tasks": tasks})
                 return
-            elif path.startswith("/api/tasks/"):
+            if path.startswith("/api/tasks/"):
                 task_id = path.replace("/api/tasks/", "").strip()
                 task = portal_state.get_task(task_id)
                 if not task:
@@ -220,45 +172,12 @@ data:
                 else:
                     self.send_json({"success": True, "task": task})
                 return
-            elif path == "/api/audit/logs":
+            if path == "/api/audit/logs":
                 logs = portal_state.list_audit_events(limit=100)
                 self.send_json({"success": True, "logs": logs})
                 return
 
-            if path == "/api/system/status":
-                self.handle_system_status()
-            elif path == "/api/raid/status":
-                self.handle_raid_status()
-            elif path == "/api/datasets":
-                self.handle_datasets_list()
-            elif path == "/api/backups/snapshots":
-                self.handle_snapshots_list()
-            elif path == "/api/backups/r2":
-                self.handle_r2_list()
-            elif path == "/api/users":
-                self.handle_users_list()
-            elif path == "/api/files":
-                params = urllib.parse.parse_qs(parsed.query)
-                target = params.get("path", [""])[0]
-                self.handle_files_list(target)
-            elif path == "/api/sessions":
-                self.handle_sessions_list()
-            elif path == "/api/security":
-                self.handle_security_status()
-            elif path == "/api/services":
-                self.handle_services_list()
-            elif path == "/api/services/logs":
-                params = urllib.parse.parse_qs(parsed.query)
-                pod = params.get("pod", [""])[0]
-                self.handle_service_logs(pod)
-            elif path == "/api/wan/status":
-                self.handle_wan_status()
-            elif path == "/api/reports/executive":
-                self.handle_executive_report()
-            elif path == "/api/samba/status":
-                self.handle_samba_status()
-            else:
-                self.send_json({"error": "Not Found"}, 404)
+            self.send_json({"error": "Not Found"}, 404)
 
         def do_POST(self):
             parsed = urllib.parse.urlparse(self.path)
@@ -279,14 +198,18 @@ data:
                 try:
                     body = json.loads(self.rfile.read(content_len).decode("utf-8"))
                 except Exception:
-                    pass
+                    self.send_json({"success": False, "error": "Cuerpo JSON malformado."}, 400)
+                    return
 
             if path == "/api/auth/login":
                 client_ip = self.get_client_ip()
                 allowed, remaining = self.check_rate_limit(client_ip)
                 if not allowed:
                     mins = max(1, int(remaining // 60))
-                    self.send_json({"success": False, "error": f"Demasiados intentos fallidos. Bloqueo temporal de seguridad por {mins} minutos."}, 429)
+                    self.send_json({
+                        "success": False,
+                        "error": f"Demasiados intentos fallidos. Bloqueo temporal de seguridad por {mins} minutos."
+                    }, 429)
                     return
 
                 username = str(body.get("username", "")).strip().lower()
@@ -296,7 +219,10 @@ data:
                 operator_pass = get_operator_password()
                 totp_secret = get_totp_secret()
                 if not real_admin_pass:
-                    self.send_json({"success": False, "error": "Servicio de autenticacion no configurado (credencial ausente)."}, 500)
+                    self.send_json({
+                        "success": False,
+                        "error": "Servicio de autenticacion no configurado (PORTAL_ADMIN_PASSWORD ausente)."
+                    }, 500)
                     return
 
                 auth_ok, norm_user, user_role, err_msg = authenticate_portal_user(
@@ -311,51 +237,57 @@ data:
                     token = secrets.token_urlsafe(32)
                     portal_state.create_session(token, norm_user, user_role, client_ip, SESSION_TTL_SECONDS)
                     self.reset_failed_logins(client_ip)
-                    portal_state.log_audit_event(norm_user, "auth.login", {"role": user_role}, True, "Inicio de sesión correcto", client_ip)
+                    portal_state.log_audit_event(
+                        norm_user, "auth.login", {"role": user_role}, True, "Inicio de sesión correcto", client_ip
+                    )
                     self.send_json({
                         "success": True,
                         "token": token,
                         "username": norm_user,
                         "role": user_role,
-                        "expires_in": SESSION_TTL_SECONDS
+                        "expires_in": SESSION_TTL_SECONDS,
                     })
                 else:
                     self.record_failed_login(client_ip)
-                    portal_state.log_audit_event(username or "unknown", "auth.login_failed", {}, False, err_msg or "Credenciales inválidas", client_ip)
-                    self.send_json({"success": False, "error": err_msg or "Usuario o contrasena de administrador incorrectos."}, 401)
+                    portal_state.log_audit_event(
+                        username or "unknown", "auth.login_failed", {}, False, err_msg or "Credenciales inválidas", client_ip
+                    )
+                    self.send_json({
+                        "success": False,
+                        "error": err_msg or "Usuario o contraseña incorrectos."
+                    }, 401)
                 return
 
-            # STRICT DEVSECOPS: Require valid session token for all actions and APIs
             if not self.is_auth():
-                self.send_json({"success": False, "error": "No autorizado. Inicie sesion en el Centro de Control."}, 401)
+                self.send_json({"success": False, "error": "No autorizado. Inicie sesión en el Centro de Control."}, 401)
                 return
 
             if path == "/api/agent/action":
-                action = body.get("action", "")
+                action = str(body.get("action", "")).strip()
                 params = body.get("params", {})
-                user = getattr(self, "auth_user", "admin")
-                role = getattr(self, "auth_role", ROLE_SUPERADMIN)
+                if not isinstance(params, dict):
+                    params = {}
+                user = getattr(self, "auth_user", "")
+                role = getattr(self, "auth_role", "")
                 client_ip = self.get_client_ip()
 
-                if not check_permission(role, action):
-                    portal_state.log_audit_event(user, action, params, False, f"RBAC denegado para rol '{role}'", client_ip)
+                if not role or not check_permission(role, action):
+                    portal_state.log_audit_event(user or "unknown", action, params, False, f"RBAC denegado para rol '{role}'", client_ip)
                     self.send_json({
                         "success": False,
-                        "error": f"Permiso denegado: el rol '{role}' no tiene autorización para '{action}'."
+                        "error": f"Permiso denegado: el rol '{role or 'none'}' no tiene autorización para '{action}'."
                     }, 403)
                     return
 
-                # Asynchronous execution for long-running operations
-                req_async = body.get("async", False) or GLOBAL_TASK_ENGINE.is_action_async(action)
-                print(f"[ACTION ROUTER] action={action}, role={role}, req_async={req_async}, client_ip={client_ip}", flush=True)
+                req_async = bool(body.get("async", False)) or GLOBAL_TASK_ENGINE.is_action_async(action)
                 if req_async:
-                    task_id = GLOBAL_TASK_ENGINE.submit_task(action, params, user, client_ip)
+                    task_id = GLOBAL_TASK_ENGINE.submit_task(action, params, user, client_ip, role=role)
                     self.send_json({
                         "success": True,
                         "async": True,
                         "task_id": task_id,
                         "message": f"Operación '{action}' iniciada en segundo plano con ID {task_id}",
-                        "action": action
+                        "action": action,
                     }, 202)
                     return
 
@@ -369,7 +301,7 @@ data:
                 return
 
             if path == "/api/tasks/cancel" or (path.startswith("/api/tasks/") and path.endswith("/cancel")):
-                task_id = body.get("task_id", "") or path.split("/")[3]
+                task_id = str(body.get("task_id", "")).strip() or path.split("/")[3]
                 ok = GLOBAL_TASK_ENGINE.cancel_task(task_id)
                 self.send_json({"success": ok, "message": f"Señal de cancelación enviada a la tarea {task_id}"})
                 return
@@ -378,69 +310,13 @@ data:
                 token = self.headers.get("Authorization", "").replace("Bearer ", "").strip()
                 portal_state.destroy_session(token)
                 self.send_json({"success": True})
-            elif path == "/api/raid/action":
-                self.handle_raid_action(body)
-            elif path == "/api/datasets":
-                self.handle_dataset_update(body)
-            elif path == "/api/backups/snapshot/create":
-                self.handle_snapshot_create(body)
-            elif path == "/api/backups/snapshot/rollback":
-                self.handle_snapshot_rollback(body)
-            elif path == "/api/backups/snapshot/hold":
-                self.handle_snapshot_hold(body)
-            elif path == "/api/backups/snapshot/delete":
-                self.handle_snapshot_delete(body)
-            elif path == "/api/backups/r2/trigger":
-                self.handle_r2_trigger(body)
-            elif path == "/api/backups/r2/restore":
-                self.handle_r2_restore(body)
-            elif path == "/api/users/create":
-                self.handle_user_create(body)
-            elif path == "/api/users/delete":
-                self.handle_user_delete(body)
-            elif path == "/api/users/password":
-                self.handle_user_password(body)
-            elif path == "/api/users/csv-import":
-                self.handle_user_csv(body)
-            elif path == "/api/files/delete":
-                self.handle_file_delete(body)
-            elif path == "/api/files/restore-recycle":
-                self.handle_file_restore_recycle(body)
-            elif path == "/api/shares/create":
-                self.handle_share_create(body)
-            elif path == "/api/sessions/kill":
-                self.handle_session_kill(body)
-            elif path == "/api/security/test-canary":
-                self.handle_test_canary()
-            elif path == "/api/services/restart":
-                self.handle_service_restart(body)
-            elif path == "/api/wan/toggle-lan":
-                self.handle_wan_toggle()
-            elif path == "/api/wan/rotate-tunnel":
-                self.handle_wan_rotate()
-            elif path == "/api/samba/quota":
-                self.handle_samba_quota(body)
-            elif path == "/api/samba/restart":
-                self.handle_samba_restart()
-            elif path == "/api/system/reboot":
-                self.send_json({"success": True, "message": "Reiniciando servidor..."})
-                run_host_cmd(["sync"])
-                run_host_cmd(["reboot"])
-            elif path == "/api/system/shutdown":
-                self.send_json({"success": True, "message": "Apagando servidor de forma segura..."})
-                run_host_cmd(["zpool", "sync"])
-                run_host_cmd(["poweroff"])
-            elif path == "/api/system/flush-arc":
-                run_host_cmd("echo 3 > /proc/sys/vm/drop_caches")
-                self.send_json({"success": True, "message": "Caché de memoria RAM liberada."})
-            elif path == "/api/diagnostics/smoke-test":
-                self.handle_smoke_test()
-            else:
-                self.send_json({"error": "Endpoint no encontrado"}, 404)
+                return
+
+            self.send_json({"error": "Endpoint no encontrado"}, 404)
 
         def serve_frontend(self):
             content = b"<h1>Consola de Administracion - Enterprise Storage Appliance</h1>"
-            for fpath in ["/app-config/index.html", "/usr/share/nginx/html/index.html"]:
+            for fpath in ("/app-config/index.html", "/usr/share/nginx/html/index.html"):
                 if os.path.exists(fpath):
                     with open(fpath, "rb") as f:
                         content = f.read()
@@ -454,25 +330,7 @@ data:
             self.end_headers()
             self.wfile.write(content)
 
-        def serve_tunnel_txt(self):
-            tpath = "/tmp/nas-tunnel/url.txt"
-            url = "http://localhost"
-            if os.path.exists(tpath):
-                try:
-                    with open(tpath, "r") as f:
-                        url = f.read().strip()
-                except Exception:
-                    pass
-            body = url.encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "text/plain")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
         def handle_public_status(self):
-            ok, out, _ = run_host_cmd(["zpool", "list", "-H", "-o", "health", "tank"])
-            health = out.strip() if ok and out.strip() else "OFFLINE"
             uptime_sec = 0
             if os.path.exists("/proc/uptime"):
                 try:
@@ -480,470 +338,26 @@ data:
                         uptime_sec = int(float(f.read().split()[0]))
                 except Exception:
                     uptime_sec = 0
+
+            health = "OFFLINE"
+            try:
+                if "/app-config" not in sys.path:
+                    sys.path.insert(0, "/app-config")
+                from nas_agentd import send_agent_request
+                res = send_agent_request(
+                    {"user": "healthcheck", "role": "operator", "action": "zfs.pool.status", "params": {}},
+                    timeout=5,
+                )
+                if res.get("success") and isinstance(res.get("data"), dict):
+                    health = str(res["data"].get("health") or ("ONLINE" if "ONLINE" in str(res["data"].get("stdout", "")) else "ONLINE"))
+            except Exception:
+                health = "OFFLINE"
+
             self.send_json({
                 "raid_health": health,
                 "uptime_seconds": uptime_sec,
-                "platform": "Enterprise Educational NAS 2026"
+                "platform": "Enterprise Educational NAS 2026",
             })
-
-        def handle_system_status(self):
-            _, cpu_out, _ = run_host_cmd("top -bn1 | grep 'Cpu(s)' | awk '{print $2}' || echo 0")
-            _, mem_out, _ = run_host_cmd("free -m | awk '/Mem:/ {print $3 "," $2}' || echo '0,0'")
-            _, arc_out, _ = run_host_cmd("grep -w size /proc/spl/kstat/zfs/arcstats 2>/dev/null | awk '{print int($3/1024/1024)}' || echo 0")
-            mem_parts = mem_out.strip().split(",")
-            used_ram = int(mem_parts[0]) if len(mem_parts) > 1 and mem_parts[0].isdigit() else 0
-            total_ram = int(mem_parts[1]) if len(mem_parts) > 1 and mem_parts[1].isdigit() else 1024
-            self.send_json({
-                "cpu_usage_percent": cpu_out.strip(),
-                "used_ram_mb": used_ram,
-                "total_ram_mb": total_ram,
-                "zfs_arc_mb": arc_out.strip()
-            })
-
-        def handle_raid_status(self):
-            _, pool_out, _ = run_host_cmd(["zpool", "list", "-H", "-p", "-o", "name,size,alloc,free,cap,health", "tank"])
-            _, status_out, _ = run_host_cmd(["zpool", "status", "tank"])
-            disks = []
-            for line in status_out.splitlines():
-                if "disk" in line or "spare" in line:
-                    parts = line.split()
-                    if len(parts) >= 2:
-                        dname = os.path.basename(parts[0])
-                        dstate = parts[1]
-                        read_e = parts[2] if len(parts) > 2 else "0"
-                        write_e = parts[3] if len(parts) > 3 else "0"
-                        cksum_e = parts[4] if len(parts) > 4 else "0"
-                        disks.append({"name": dname, "state": dstate, "read": read_e, "write": write_e, "cksum": cksum_e})
-            self.send_json({"pool": pool_out.strip(), "raw_status": status_out, "disks": disks})
-
-        def handle_raid_action(self, body):
-            action = body.get("action")
-            target = body.get("target", "")
-            if not re.match(r"^[a-zA-Z0-9._-]+$", target):
-                target = ""
-
-            if action == "offline_disk" and target:
-                ok, out, err = run_host_cmd(["zpool", "offline", "tank", f"/zfs-disks/{target}.img"])
-            elif action == "online_disk" and target:
-                ok, out, err = run_host_cmd(["zpool", "online", "tank", f"/zfs-disks/{target}.img"])
-            elif action == "add_spare":
-                run_host_cmd(["truncate", "-s", "2G", "/zfs-disks/disk4.img"])
-                ok, out, err = run_host_cmd(["zpool", "add", "tank", "spare", "/zfs-disks/disk4.img"])
-            elif action == "scrub":
-                ok, out, err = run_host_cmd(["zpool", "scrub", "tank"])
-            elif action == "clear":
-                ok, out, err = run_host_cmd(["zpool", "clear", "tank"])
-            else:
-                self.send_json({"error": "Acción inválida o parámetros inseguros"}, 400)
-                return
-            self.send_json({"success": ok, "output": out or err})
-
-        def handle_datasets_list(self):
-            _, out, _ = run_host_cmd(["zfs", "list", "-H", "-o", "name,used,avail,refer,mountpoint,quota,compression,recordsize"])
-            ds_list = []
-            for line in out.splitlines():
-                p = line.split("	")
-                if len(p) >= 8:
-                    ds_list.append({"name": p[0], "used": p[1], "avail": p[2], "refer": p[3], "mount": p[4], "quota": p[5], "compression": p[6], "recordsize": p[7]})
-            self.send_json({"datasets": ds_list})
-
-        def handle_dataset_update(self, body):
-            ds = body.get("dataset", "")
-            prop = body.get("property", "")
-            val = body.get("value", "")
-
-            if not RE_DATASET.match(ds):
-                self.send_json({"error": "Dataset inválido"}, 400)
-                return
-
-            if prop == "quota" and RE_QUOTA.match(val):
-                ok, out, err = run_host_cmd(["zfs", "set", f"quota={val}", ds])
-            elif prop == "compression" and val in ("on", "off", "lz4", "zstd", "gzip"):
-                ok, out, err = run_host_cmd(["zfs", "set", f"compression={val}", ds])
-            elif prop == "recordsize" and val in ("4K", "8K", "16K", "32K", "64K", "128K", "256K", "512K", "1024K"):
-                ok, out, err = run_host_cmd(["zfs", "set", f"recordsize={val}", ds])
-            else:
-                self.send_json({"error": "Propiedad o valor no permitido"}, 400)
-                return
-
-            self.send_json({"success": ok, "output": out or err})
-
-        def handle_snapshots_list(self):
-            _, out, _ = run_host_cmd(["zfs", "list", "-t", "snapshot", "-H", "-o", "name,used,creation", "-s", "creation"])
-            snaps = []
-            for line in out.splitlines():
-                p = line.split("	")
-                if len(p) >= 3:
-                    snap_name = p[0]
-                    _, holds_out, _ = run_host_cmd(["zfs", "holds", "-H", snap_name])
-                    snaps.append({"name": snap_name, "used": p[1], "creation": p[2], "is_held": bool(holds_out.strip())})
-            self.send_json({"snapshots": snaps})
-
-        def handle_snapshot_create(self, body):
-            tag = body.get("tag", "").strip() or f"manual-{int(time.time())}"
-            if not RE_TAG.match(tag):
-                self.send_json({"error": "Etiqueta de snapshot inválida"}, 400)
-                return
-
-            # Snapshot recursivo con backup previo de base de datos
-            run_host_cmd("kubectl exec deployment/nextcloud-postgres -- sh -c 'pg_dumpall -U \"$POSTGRES_USER\"' | gzip > /tank/nas/postgres/db-manual.sql.gz 2>/dev/null || true")
-            ok, out, err = run_host_cmd(["zfs", "snapshot", "-r", f"tank/nas@{tag}"])
-            self.send_json({"success": ok, "output": out or err})
-
-        def handle_snapshot_rollback(self, body):
-            snap = body.get("snapshot", "").strip()
-            if not re.match(r"^tank/nas(@[a-zA-Z0-9._-]+)?$", snap) and not re.match(r"^tank/nas/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+$", snap):
-                self.send_json({"error": "Nombre de snapshot inválido"}, 400)
-                return
-
-            repo_dir = os.environ.get("NAS_REPO_DIR", "/opt/nas-gitops")
-            script = os.path.join(repo_dir, "scripts/nas-recover.sh")
-            ok, out, err = run_host_cmd(["bash", script, "rollback-local", snap])
-            self.send_json({"success": ok, "output": out or err})
-
-        def handle_snapshot_hold(self, body):
-            snap = body.get("snapshot", "").strip()
-            hold = body.get("hold", True)
-            if "@" not in snap or not snap.startswith("tank/nas"):
-                self.send_json({"error": "Snapshot inválido"}, 400)
-                return
-
-            action = "hold" if hold else "release"
-            ok, out, err = run_host_cmd(["zfs", action, "sentinel-immutable", snap])
-            self.send_json({"success": ok, "output": out or err})
-
-        def handle_snapshot_delete(self, body):
-            snap = body.get("snapshot", "").strip()
-            if "@" not in snap or not snap.startswith("tank/nas"):
-                self.send_json({"error": "Snapshot inválido"}, 400)
-                return
-
-            run_host_cmd(["zfs", "release", "sentinel-immutable", snap])
-            ok, out, err = run_host_cmd(["zfs", "destroy", "-r", snap])
-            self.send_json({"success": ok, "output": out or err})
-
-        def handle_r2_list(self):
-            cmd = 'R2_ACC=$(kubectl -n kube-system get secret r2-backup-credentials -o jsonpath="{.data.account-id}" 2>/dev/null | base64 -d || true); ' \
-                  'R2_KEY=$(kubectl -n kube-system get secret r2-backup-credentials -o jsonpath="{.data.access-key-id}" 2>/dev/null | base64 -d || true); ' \
-                  'R2_SEC=$(kubectl -n kube-system get secret r2-backup-credentials -o jsonpath="{.data.secret-access-key}" 2>/dev/null | base64 -d || true); ' \
-                  'export RCLONE_CONFIG_R2_TYPE=s3 RCLONE_CONFIG_R2_PROVIDER=Cloudflare RCLONE_CONFIG_R2_ACCESS_KEY_ID=$R2_KEY RCLONE_CONFIG_R2_SECRET_ACCESS_KEY=$R2_SEC RCLONE_CONFIG_R2_ENDPOINT="https://${R2_ACC}.r2.cloudflarestorage.com" RCLONE_CONFIG_R2_NO_CHECK_BUCKET=true; ' \
-                  'rclone lsf -R --format "sp" --separator ";" r2:nas-backup/ 2>/dev/null || true'
-            ok, out, _ = run_host_cmd(cmd)
-            files = []
-            for line in out.splitlines():
-                if ";" in line:
-                    sz, name = line.split(";", 1)
-                    files.append({"size": sz.strip(), "name": name.strip()})
-            self.send_json({"r2_objects": files})
-
-        def handle_r2_trigger(self, body):
-            cmd = "kubectl -n kube-system delete job manual-r2-backup --ignore-not-found=true && kubectl -n kube-system create job --from=cronjob/zfs-offsite-backup manual-r2-backup"
-            ok, out, err = run_host_cmd(cmd)
-            self.send_json({"success": ok, "output": out or err})
-
-        def handle_r2_restore(self, body):
-            repo_dir = os.environ.get("NAS_REPO_DIR", "/opt/nas-gitops")
-            script = os.path.join(repo_dir, "scripts/nas-recover.sh")
-            ok, out, err = run_host_cmd(["bash", script, "restore-r2"], timeout=300)
-            self.send_json({"success": ok, "output": out or err})
-
-        def handle_users_list(self):
-            _, out, _ = run_host_cmd("kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c 'php /var/www/html/occ user:list --output=json' 2>/dev/null || echo '{}'")
-            self.send_json({"users": out.strip()})
-
-        def handle_user_create(self, body):
-            user = body.get("username", "").strip()
-            pwd = body.get("password", "").strip()
-            if not RE_USERNAME.match(user) or not pwd:
-                self.send_json({"success": False, "output": "Nombre de usuario o contraseña con formato inválido (solo a-z, 0-9, . _ - de 3 a 32 caracteres)."}, 400)
-                return
-
-            from modules_catalog import act_users_sync_nextcloud
-            ok, res = act_users_sync_nextcloud({
-                "username": user,
-                "password": pwd,
-                "display_name": body.get("display_name", user),
-                "group": body.get("group", "alumnos"),
-            })
-            self.send_json({"success": ok, "output": res.get("status") or res.get("error", "")}, 200 if ok else 400)
-
-        def handle_user_delete(self, body):
-            role = getattr(self, "auth_role", ROLE_SUPERADMIN)
-            if not check_permission(role, "users.delete"):
-                self.send_json({"success": False, "output": "Permiso insuficiente para eliminar cuentas."}, 403)
-                return
-            user = body.get("username", "").strip()
-            if not RE_USERNAME.match(user) or user == "admin":
-                self.send_json({"success": False, "output": "Operación denegada para la cuenta protegida o usuario inválido."}, 400)
-                return
-
-            from modules_catalog import act_users_delete
-            ok, res = act_users_delete({"username": user})
-            self.send_json({"success": ok, "output": res.get("status") or res.get("error", "")}, 200 if ok else 400)
-
-        def handle_user_password(self, body):
-            user = body.get("username", "").strip()
-            pwd = body.get("password", "").strip()
-            if not RE_USERNAME.match(user) or not pwd:
-                self.send_json({"success": False, "output": "Parámetros insuficientes o formato no válido."}, 400)
-                return
-
-            from modules_catalog import act_users_reset_password
-            ok, res = act_users_reset_password({"username": user, "password": pwd})
-            self.send_json({"success": ok, "output": res.get("status") or res.get("error", "")}, 200 if ok else 400)
-
-        def handle_user_csv(self, body):
-            csv_data = body.get("csv", "")
-            from modules_catalog import act_users_import_csv
-            ok, res = act_users_import_csv({"csv": csv_data})
-            self.send_json({"success": ok, "created": res.get("created", 0), "details": res}, 200 if ok else 400)
-
-        def handle_files_list(self, relpath):
-            clean_path = sanitize_path(relpath)
-            quoted_path = shlex.quote(clean_path)
-            _, out, _ = run_host_cmd(f"ls -la --time-style=long-iso {quoted_path} 2>/dev/null || true")
-            entries = []
-            for line in out.splitlines()[1:]:
-                parts = line.split(maxsplit=7)
-                if len(parts) >= 8:
-                    entries.append({"perms": parts[0], "size": parts[4], "date": f"{parts[5]} {parts[6]}", "name": parts[7], "is_dir": parts[0].startswith("d")})
-            self.send_json({"path": clean_path, "entries": entries})
-
-        def handle_file_delete(self, body):
-            fpath = body.get("filepath", "")
-            clean_target = sanitize_path(fpath)
-            if clean_target == "/tank/nas":
-                self.send_json({"error": "No está permitido eliminar la raíz del almacenamiento"}, 400)
-                return
-
-            quoted_target = shlex.quote(clean_target)
-            cmd = f"mkdir -p /tank/nas/.Papelera && mv {quoted_target} /tank/nas/.Papelera/ 2>&1 || rm -rf {quoted_target} 2>&1"
-            ok, out, err = run_host_cmd(cmd)
-            self.send_json({"success": ok, "output": out or err})
-
-        def handle_file_restore_recycle(self, body):
-            fname = body.get("filename", "")
-            target_dir = body.get("target_dir", "/tank/nas/publico")
-            if not re.match(r"^[a-zA-Z0-9._-]+$", fname):
-                self.send_json({"error": "Nombre de archivo inválido"}, 400)
-                return
-
-            clean_dir = sanitize_path(target_dir)
-            quoted_source = shlex.quote(f"/tank/nas/.Papelera/{fname}")
-            quoted_dest = shlex.quote(f"{clean_dir}/")
-            ok, out, err = run_host_cmd(f"mv {quoted_source} {quoted_dest} 2>&1")
-            self.send_json({"success": ok, "output": out or err})
-
-        def handle_share_create(self, body):
-            name = body.get("name", "").strip()
-            quota = body.get("quota", "5G").strip()
-            if not RE_SHARENAME.match(name) or not RE_QUOTA.match(quota):
-                self.send_json({"error": "Nombre o cuota de recurso inválido"}, 400)
-                return
-
-            ok, out, err = run_host_cmd(["zfs", "create", "-o", f"quota={quota}", "-o", "compression=lz4", f"tank/nas/{name}"])
-            if ok:
-                run_host_cmd(["chmod", "777", f"/tank/nas/{name}"])
-            self.send_json({"success": ok, "output": out or err})
-
-        def handle_sessions_list(self):
-            _, out, _ = run_host_cmd("kubectl exec deployment/samba -- smbstatus -b 2>/dev/null || true")
-            self.send_json({"smb_sessions": out})
-
-        def handle_session_kill(self, body):
-            pid = str(body.get("pid", "")).strip()
-            if not RE_NUMERIC.match(pid):
-                self.send_json({"error": "PID inválido"}, 400)
-                return
-
-            # Solo permite terminar procesos que figuren como sesiones de Samba activas
-            _, smb_pids, _ = run_host_cmd("kubectl exec deployment/samba -- smbstatus -b 2>/dev/null | awk '{print $1}' || true")
-            active_pids = [p.strip() for p in smb_pids.splitlines() if p.strip().isdigit()]
-            if pid not in active_pids:
-                self.send_json({"error": "El PID especificado no pertenece a una sesión activa de Samba."}, 403)
-                return
-
-            ok, out, err = run_host_cmd(["kubectl", "exec", "deployment/samba", "--", "kill", "-9", pid])
-            self.send_json({"success": ok, "output": out or err})
-
-        def handle_security_status(self):
-            _, st, _ = run_host_cmd("cat /tmp/nas-tunnel/ransomware_status 2>/dev/null || echo 0")
-            _, cnt, _ = run_host_cmd("cat /tmp/nas-tunnel/ransomware_threats_blocked 2>/dev/null || echo 0")
-            _, hb, _ = run_host_cmd("cat /tmp/nas-tunnel/sentinel_heartbeat_ts 2>/dev/null || echo 0")
-            _, logs, _ = run_host_cmd("tail -n 20 /tmp/nas-tunnel/ransomware_events.log 2>/dev/null || echo 'Sin incidentes.'")
-            try:
-                hb_ts = int(hb.strip() or 0)
-            except ValueError:
-                hb_ts = 0
-            sentinel_alive = (int(time.time()) - hb_ts) <= 30 if hb_ts > 0 else False
-            raw_status = int(st.strip() or 0) if st.strip().lstrip("-").isdigit() else 0
-            effective_status = raw_status if sentinel_alive else 0
-            self.send_json({
-                "status": effective_status,
-                "sentinel_alive": sentinel_alive,
-                "last_heartbeat_ts": hb_ts,
-                "blocked_threats": int(cnt.strip() or 0) if cnt.strip().isdigit() else 0,
-                "logs": logs
-            })
-
-        def handle_test_canary(self):
-            ok, out, err = run_host_cmd("echo 'ransomware-simulation' > /tank/nas/alumnos/.canary_honeypot.docx")
-            self.send_json({"success": ok, "message": "Infección simulada en Canary. El centinela restaurará en <5s."})
-
-        def handle_services_list(self):
-            cmd = "kubectl get pods -A --no-headers 2>/dev/null | grep -E 'nextcloud|samba|portal-qr|sentinel|zfs-exporter' || true"
-            _, out, _ = run_host_cmd(cmd)
-            pods = []
-            for line in out.splitlines():
-                p = line.split()
-                if len(p) >= 5:
-                    pods.append({"namespace": p[0], "name": p[1], "ready": p[2], "status": p[3], "restarts": p[4]})
-            self.send_json({"pods": pods})
-
-        def handle_service_restart(self, body):
-            dep = body.get("deployment", "").strip()
-            if not re.match(r"^[a-zA-Z0-9._-]+$", dep):
-                self.send_json({"error": "Nombre de deployment inválido"}, 400)
-                return
-
-            ok, out, err = run_host_cmd(["kubectl", "rollout", "restart", f"deployment/{dep}"])
-            if not ok:
-                ok, out, err = run_host_cmd(["kubectl", "rollout", "restart", f"deployment/{dep}", "-n", "kube-system"])
-            self.send_json({"success": ok, "output": out or err})
-
-        def handle_service_logs(self, pod):
-            if not re.match(r"^[a-zA-Z0-9._-]+$", pod):
-                self.send_json({"logs": "Nombre de pod inválido"})
-                return
-
-            ok, out, _ = run_host_cmd(["kubectl", "logs", pod, "--all-containers", "--tail=100"])
-            if not ok:
-                _, out, _ = run_host_cmd(["kubectl", "logs", "-n", "kube-system", pod, "--all-containers", "--tail=100"])
-            self.send_json({"logs": out})
-
-        def handle_wan_status(self):
-            _, out, _ = run_host_cmd("cat /tmp/nas-tunnel/url.txt 2>/dev/null || echo ''")
-            self.send_json({"url": out.strip()})
-
-        def handle_wan_toggle(self):
-            _, is_up, _ = run_host_cmd("pgrep cloudflared >/dev/null && echo 1 || echo 0")
-            if is_up.strip() == "1":
-                run_host_cmd(["pkill", "-9", "cloudflared"])
-                run_host_cmd(["rm", "-f", "/tmp/nas-tunnel/url.txt"])
-                self.send_json({"status": "offline", "message": "Modo Solo LAN activado. El acceso desde internet ha sido cerrado."})
-            else:
-                run_host_cmd("cloudflared tunnel --url http://127.0.0.1:80 > /tmp/nas-tunnel/cloudflared.log 2>&1 &")
-                time.sleep(3)
-                self.send_json({"status": "online", "message": "Túnel Cloudflare iniciado. El NAS vuelve a estar Online desde internet."})
-
-        def handle_wan_rotate(self):
-            run_host_cmd(["pkill", "-9", "cloudflared"])
-            time.sleep(1)
-            run_host_cmd("cloudflared tunnel --url http://127.0.0.1:80 > /tmp/nas-tunnel/cloudflared.log 2>&1 &")
-            self.send_json({"success": True, "output": "Túnel reiniciado."})
-
-        def handle_smoke_test(self):
-            repo_dir = os.environ.get("NAS_REPO_DIR", "/opt/nas-gitops")
-            script = os.path.join(repo_dir, "tests/smoke-test.sh")
-            ok, out, err = run_host_cmd(["bash", script])
-            self.send_json({"success": ok, "log": out or err})
-
-        def handle_executive_report(self):
-            _, pool, _ = run_host_cmd(["zpool", "status", "tank"])
-            _, snaps, _ = run_host_cmd(["zfs", "list", "-t", "snapshot"])
-            _, users, _ = run_host_cmd("kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c 'php /var/www/html/occ user:list' 2>/dev/null || true")
-            report = f"# REPORTE EJECUTIVO DE SALUD Y AUDITORIA NAS\nFecha: {time.ctime()}\n\n## 1. ESTADO DE RAID-Z1\n{pool}\n\n## 2. BACKUPS Y SNAPSHOTS\n{snaps}\n\n## 3. USUARIOS ACTIVOS\n{users}\n"
-            self.send_json({"report": report})
-
-        def handle_samba_status(self):
-            _, pod_st, _ = run_host_cmd("kubectl get pod -l app.kubernetes.io/name=samba -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo 'Unknown'")
-            _, version_st, _ = run_host_cmd("kubectl exec deployment/samba -- smbd -V 2>/dev/null || echo 'Version 4.12'")
-
-            shares = [
-                {"id": "profesores", "name": "[profesores]", "dataset": "tank/nas/profesores", "access": "Solo Docentes / Directivos"},
-                {"id": "alumnos", "name": "[alumnos]", "dataset": "tank/nas/alumnos", "access": "Estudiantes y Laboratorio"},
-                {"id": "entregas", "name": "[entregas]", "dataset": "tank/nas/alumnos/entregas", "access": "Buzón de Entregas (Sticky Bit 1777)"},
-                {"id": "publico", "name": "[publico]", "dataset": "tank/nas/publico", "access": "Acceso General Institucional"},
-                {"id": "nextcloud", "name": "[nextcloud]", "dataset": "tank/nas/nextcloud", "access": "Almacenamiento Cloud / Web"}
-            ]
-            shares_data = []
-            for s in shares:
-                _, zout, _ = run_host_cmd(f"zfs list -H -o used,available,quota,recordsize {s['dataset']} 2>/dev/null || echo '0 0 none 128K'")
-                p = zout.strip().split()
-                used = p[0] if len(p) > 0 else "0"
-                avail = p[1] if len(p) > 1 else "0"
-                quota = p[2] if len(p) > 2 else "none"
-                rec = p[3] if len(p) > 3 else "128K"
-                shares_data.append({
-                    "id": s["id"],
-                    "name": s["name"],
-                    "dataset": s["dataset"],
-                    "used": used,
-                    "avail": avail,
-                    "quota": quota,
-                    "recordsize": rec,
-                    "access": s["access"]
-                })
-
-            _, smb_out, _ = run_host_cmd("kubectl exec deployment/samba -- smbstatus -b 2>/dev/null || true")
-            sessions = []
-            capture = False
-            for line in smb_out.splitlines():
-                line = line.strip()
-                if "PID" in line and "Username" in line:
-                    capture = True
-                    continue
-                if capture and line.startswith("---"):
-                    continue
-                if capture and line:
-                    parts = line.split()
-                    if len(parts) >= 4:
-                        sessions.append({
-                            "pid": parts[0],
-                            "user": parts[1],
-                            "group": parts[2],
-                            "machine": parts[3],
-                            "proto": parts[4] if len(parts) > 4 else "SMB3"
-                        })
-
-            _, pdb_out, _ = run_host_cmd("kubectl exec deployment/samba -- pdbedit -L 2>/dev/null || true")
-            samba_users = []
-            for line in pdb_out.splitlines():
-                if ":" in line:
-                    samba_users.append(line.split(":")[0])
-
-            _, smb_conf, _ = run_host_cmd("kubectl exec deployment/samba -- testparm -s 2>/dev/null || true")
-            has_recycle = "recycle" in smb_conf
-            has_veto = "veto files" in smb_conf
-            has_shadow = "shadow_copy2" in smb_conf
-
-            self.send_json({
-                "status": pod_st.strip(),
-                "version": version_st.strip(),
-                "shares": shares_data,
-                "sessions": sessions,
-                "users": samba_users,
-                "features": {
-                    "recycle_bin": "vfs_recycle (Activo)" if has_recycle else "No detectado en smb.conf",
-                    "anti_ransomware": "Veto Files (Activo en smb.conf)" if has_veto else "No detectado en smb.conf",
-                    "shadow_copy": "vfs_shadow_copy2 (Activo)" if has_shadow else "No detectado en smb.conf"
-                }
-            })
-
-        def handle_samba_quota(self, body):
-            share = body.get("share", "").strip()
-            quota = body.get("quota", "").strip()
-            if not RE_SHARENAME.match(share) or not RE_QUOTA.match(quota):
-                self.send_json({"success": False, "output": "Parámetros share o quota inválidos."}, 400)
-                return
-
-            dataset = f"tank/nas/{share}"
-            ok, out, err = run_host_cmd(["zfs", "set", f"quota={quota}", dataset])
-            self.send_json({"success": ok, "output": out or err})
-
-        def handle_samba_restart(self):
-            ok, out, err = run_host_cmd(["kubectl", "rollout", "restart", "deployment/samba"])
-            self.send_json({"success": ok, "output": out or err})
 
         def serve_samba_connector(self):
             bat_content = r"""@echo off
@@ -952,7 +366,6 @@ data:
     chcp 65001 >nul
     color 1F
 
-    :: Obtener IP del servidor o usar predeterminada de red
     set "SERVER_HOST=192.168.1.50"
     if "%~1" neq "" set "SERVER_HOST=%~1"
 
@@ -961,13 +374,13 @@ data:
     echo ==============================================================================
     echo       CONECTOR DE UNIDADES DE RED ESCOLAR (SAMBA / SMB)
     echo ==============================================================================
-    echo Servidor NAS: \%SERVER_HOST%
+    echo Servidor NAS: \\%SERVER_HOST%
     echo.
     echo Seleccione el recurso al que desea conectarse:
     echo.
-    echo   [1] Carpeta de ALUMNOS       - Montar en unidad Z: (\%SERVER_HOST%\alumnos)
-    echo   [2] Carpeta de PROFESORES    - Montar en unidad P: (\%SERVER_HOST%\profesores)
-    echo   [3] Carpeta PUBLICA          - Montar en unidad X: (\%SERVER_HOST%\publico)
+    echo   [1] Carpeta de ALUMNOS       - Montar en unidad Z: (\\%SERVER_HOST%\alumnos)
+    echo   [2] Carpeta de PROFESORES    - Montar en unidad P: (\\%SERVER_HOST%\profesores)
+    echo   [3] Carpeta PUBLICA          - Montar en unidad X: (\\%SERVER_HOST%\publico)
     echo   [4] Cambiar direccion IP del servidor NAS
     echo   [5] Desconectar todas las unidades de red del NAS
     echo   [6] Salir
@@ -984,10 +397,6 @@ data:
 
     :CAMBIAR_IP
     cls
-    echo ==============================================================================
-    echo CONFIGURAR DIRECCION IP DEL SERVIDOR
-    echo ==============================================================================
-    echo.
     echo Ingrese la direccion IP del servidor NAS:
     set /p SERVER_HOST="Direccion IP: "
     goto MENU
@@ -1009,11 +418,7 @@ data:
 
     :PEDIR_CREDENCIALES
     cls
-    echo ==============================================================================
-    echo CONECTANDO A RECURSO: \%SERVER_HOST%\%SHARE% EN UNIDAD %DRIVE%
-    echo ==============================================================================
-    echo.
-    echo Ingrese sus credenciales de la institucion:
+    echo CONECTANDO A RECURSO: \\%SERVER_HOST%\%SHARE% EN UNIDAD %DRIVE%
     echo.
     set /p NAS_USER="Usuario: "
     if "%NAS_USER%"=="" (
@@ -1023,32 +428,21 @@ data:
     )
 
     echo.
-    echo Conectando... ingrese su contrasena cuando Windows lo solicite...
+    echo Conectando... ingrese su contrasena de forma interactiva cuando Windows lo solicite...
     net use %DRIVE% /delete /yes >nul 2>&1
     net use %DRIVE% "\\%SERVER_HOST%\%SHARE%" /user:"%NAS_USER%" * /persistent:yes
 
     if %errorlevel% equ 0 (
-        echo.
-        echo ==============================================================================
-        echo [EXITO] Unidad %DRIVE% conectada correctamente a \%SERVER_HOST%\%SHARE%
-        echo La carpeta ya se encuentra disponible en 'Este equipo'.
-        echo ==============================================================================
-        echo.
+        echo [EXITO] Unidad %DRIVE% conectada correctamente a \\%SERVER_HOST%\%SHARE%
         start "" %DRIVE%
     ) else (
-        echo.
-        echo ==============================================================================
         echo [FALLO DE CONEXION] Error %errorlevel%
-        echo Verifique que el usuario y contrasena sean correctos y que la IP sea accesible.
-        echo ==============================================================================
     )
-    echo.
     pause
     goto MENU
 
     :DESCONECTAR
     cls
-    echo Desconectando unidades Z:, P:, X:...
     net use Z: /delete /yes >nul 2>&1
     net use P: /delete /yes >nul 2>&1
     net use X: /delete /yes >nul 2>&1
@@ -1064,38 +458,46 @@ data:
             self.end_headers()
             self.wfile.write(payload)
 
+
+    def resolve_tls_pair():
+        """
+        Locates the TLS certificate and private key from the mounted Kubernetes Secret
+        (/etc/nas-tls) or the shared host tunnel directory (/tmp/nas-tunnel/tls) provisioned
+        by bootstrap / nas-agentd. Waits up to 15s on cold boot for nas-agentd to finish.
+        """
+        candidates = [
+            ("/etc/nas-tls/portal.crt", "/etc/nas-tls/portal.key"),
+            ("/tmp/nas-tunnel/tls/portal.crt", "/tmp/nas-tunnel/tls/portal.key"),
+            ("/tmp/nas-tls/portal.crt", "/tmp/nas-tls/portal.key"),
+        ]
+        for _ in range(15):
+            for crt, key in candidates:
+                if os.path.exists(crt) and os.path.exists(key):
+                    return crt, key
+            time.sleep(1)
+        raise RuntimeError(
+            "No se encontró el par TLS (portal.crt / portal.key) en /etc/nas-tls ni en /tmp/nas-tunnel/tls."
+        )
+
+
     if __name__ == "__main__":
-        # Register safe action catalog with asynchronous TaskEngine
+        portal_state.init_db()
         try:
             if "/app-config" not in sys.path:
                 sys.path.insert(0, "/app-config")
             from nas_agentd import ACTION_CATALOG
             GLOBAL_TASK_ENGINE.register_handlers(ACTION_CATALOG)
         except Exception as e:
-            print(f"Advertencia: no se pudo vincular ACTION_CATALOG con TaskEngine: {e}")
+            sys.stderr.write(f"Advertencia al vincular ACTION_CATALOG: {e}\n")
 
         server = ThreadedHTTPServer(("0.0.0.0", PORT), NasApiHandler)
-
-        cert_dir = "/tmp/nas-tls"
-        os.makedirs(cert_dir, exist_ok=True)
-        cert_file = os.path.join(cert_dir, "portal.crt")
-        key_file = os.path.join(cert_dir, "portal.key")
-
-        if not (os.path.exists(cert_file) and os.path.exists(key_file)):
-            cmd = [
-                "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
-                "-keyout", key_file, "-out", cert_file, "-days", "730",
-                "-subj", "/CN=nas.escuela.local",
-                "-addext", "subjectAltName=DNS:nas.escuela.local,DNS:localhost,IP:127.0.0.1"
-            ]
-            subprocess.run(cmd, check=True)
-            os.chmod(key_file, 0o600)
+        cert_file, key_file = resolve_tls_pair()
 
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(certfile=cert_file, keyfile=key_file)
         server.socket = context.wrap_socket(server.socket, server_side=True)
 
-        print(f"Enterprise NAS Control Center OS listening securely on https://0.0.0.0:{PORT}...")
+        print(f"Enterprise NAS Control Center OS listening on https://0.0.0.0:{PORT}...", flush=True)
         server.serve_forever()
   portal_state.py: |
     #!/usr/bin/env python3
@@ -1112,8 +514,10 @@ data:
     import tempfile
     from contextlib import contextmanager
 
-    if os.path.exists("/tank/nas"):
-        STATE_DIR = "/tank/nas/.portal-state"
+    if os.environ.get("PORTAL_STATE_DIR"):
+        STATE_DIR = os.environ["PORTAL_STATE_DIR"]
+    elif os.path.exists("/var/lib/nas-portal-state"):
+        STATE_DIR = "/var/lib/nas-portal-state"
     elif os.path.exists("/tmp/nas-tunnel"):
         STATE_DIR = "/tmp/nas-tunnel"
     else:
@@ -1425,12 +829,12 @@ data:
             """Checks if an action is naturally asynchronous or long-running."""
             return action in ASYNC_ACTIONS
 
-        def submit_task(self, action, params, user="admin", client_ip="local"):
+        def submit_task(self, action, params, user="admin", client_ip="local", role=""):
             """Submits an action to the background queue and returns the unique task ID."""
             task_id = f"task_{secrets.token_hex(6)}"
             portal_state.create_task(task_id, action, params, user)
             portal_state.log_audit_event(user, action, params, True, f"Tarea asíncrona '{action}' encolada con ID {task_id}", client_ip)
-            self.queue.put((task_id, action, params, user, client_ip))
+            self.queue.put((task_id, action, params, user, client_ip, role))
             return task_id
 
         def cancel_task(self, task_id):
@@ -1449,9 +853,9 @@ data:
 
         def _worker_loop(self):
             while True:
-                task_id, action, params, user, client_ip = self.queue.get()
+                task_id, action, params, user, client_ip, role = self.queue.get()
                 try:
-                    self._run_task(task_id, action, params, user, client_ip)
+                    self._run_task(task_id, action, params, user, client_ip, role)
                 except Exception as e:
                     err_msg = f"Fallo no capturado en tarea {task_id}: {str(e)}\n{traceback.format_exc()}"
                     portal_state.finish_task(task_id, "failed", 1, {"error": str(e)}, err_msg)
@@ -1461,7 +865,7 @@ data:
                         self.cancel_flags.discard(task_id)
                     self.queue.task_done()
 
-        def _run_task(self, task_id, action, params, user, client_ip):
+        def _run_task(self, task_id, action, params, user, client_ip, role=""):
             portal_state.update_task_progress(task_id, progress=5, phase="Ejecutando...", append_log=f"[{time.strftime('%H:%M:%S')}] Iniciando acción: {action}\n")
 
             handler = self.handlers_catalog.get(action)
@@ -1470,25 +874,14 @@ data:
                 portal_state.log_audit_event(user, action, params, False, "Acción desconocida", client_ip)
                 return
 
-            # Progress tracking callback wrapper for handlers that support it
-            def progress_cb(pct, phase_str, log_line=None):
-                if self.is_cancelled(task_id):
-                    raise InterruptedError("Operación cancelada")
-                portal_state.update_task_progress(task_id, progress=pct, phase=phase_str, append_log=(log_line + "\n") if log_line else None)
-
             try:
-                from nas_agentd import SOCKET_PATH, send_agent_request
-                if os.path.exists(SOCKET_PATH):
-                    resp = send_agent_request({"user": user, "action": action, "params": params}, timeout=120)
-                    ok = bool(resp.get("success"))
-                    result = resp.get("data") if ok else {"error": resp.get("error", "Fallo en nas-agentd")}
-                else:
-                    import inspect
-                    sig = inspect.signature(handler)
-                    if "progress_cb" in sig.parameters:
-                        ok, result = handler(params, progress_cb=progress_cb)
-                    else:
-                        ok, result = handler(params)
+                from nas_agentd import send_agent_request
+                resp = send_agent_request(
+                    {"user": user, "role": role, "action": action, "params": params, "client_ip": client_ip},
+                    timeout=180
+                )
+                ok = bool(resp.get("success"))
+                result = resp.get("data") if ok else {"error": resp.get("error", "Fallo en nas-agentd")}
 
                 if self.is_cancelled(task_id):
                     return
@@ -1672,7 +1065,7 @@ data:
 
     def dispatch_request(req):
         user = req.get("user", "anonymous")
-        role = req.get("role", ROLE_SUPERADMIN)
+        role = req.get("role", "")
         action = req.get("action", "")
         params = req.get("params", {})
         client_ip = req.get("client_ip", "")
@@ -1703,8 +1096,8 @@ data:
         """
         Sends an action request from the unprivileged web container to the privileged
         nas-agentd daemon over the local UNIX domain socket (/run/nas-agentd/agent.sock).
-        Falls back to in-process dispatch_request only in local test environments where
-        the UNIX socket is not mounted.
+        Fails closed in production if the socket is unavailable; only allows in-process
+        dispatch when NAS_ALLOW_INPROCESS_AGENT=1 is explicitly set for unit tests.
         """
         if hasattr(socket, "AF_UNIX") and os.path.exists(socket_path):
             client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -1724,10 +1117,33 @@ data:
                 return {"success": False, "error": f"IPC socket communication failure: {str(e)}"}
             finally:
                 client.close()
-        return dispatch_request(req)
+        if os.environ.get("NAS_ALLOW_INPROCESS_AGENT") == "1":
+            return dispatch_request(req)
+        return {
+            "success": False,
+            "error": "Agente privilegiado (nas-agentd) no disponible: socket IPC ausente."
+        }
+
+
+    def ensure_host_tls_cert():
+        """
+        Ensures a valid TLS certificate and Root CA exist in /tmp/nas-tunnel/tls
+        with SANs covering nas.escuela.local, localhost, 127.0.0.1, and the host LAN IP.
+        """
+        tls_dir = "/tmp/nas-tunnel/tls"
+        crt_file = os.path.join(tls_dir, "portal.crt")
+        key_file = os.path.join(tls_dir, "portal.key")
+        if os.path.exists(crt_file) and os.path.exists(key_file):
+            return
+        try:
+            from modules_catalog import act_pki_generate_ca
+            act_pki_generate_ca({})
+        except Exception as e:
+            sys.stderr.write(f"Failed to auto-provision TLS cert in nas-agentd: {e}\n")
 
 
     def serve():
+        ensure_host_tls_cert()
         if os.path.exists(SOCKET_PATH):
             os.remove(SOCKET_PATH)
         os.makedirs(os.path.dirname(SOCKET_PATH), exist_ok=True)
@@ -1774,18 +1190,22 @@ data:
     import re
     import shutil
     import shlex
+    import threading
+    import tempfile
 
     AUDIT_LOG_PATH = "/var/log/nas-agentd-audit.log"
-    ROLLBACK_TIMER_FILE = "/tmp/nas-net-rollback.json"
+    ROLLBACK_TIMER_FILE = "/tmp/nas-tunnel/nas-net-rollback.json" if os.path.exists("/tmp/nas-tunnel") else os.path.join(tempfile.gettempdir(), "nas-net-rollback.json")
 
     # Expresiones regulares de validacion estricta
     RE_DATASET = re.compile(r"^tank/nas(/[a-zA-Z0-9._-]+)*$")
     RE_SNAP_TAG = re.compile(r"^[a-zA-Z0-9._-]{1,64}$")
+    RE_FULL_SNAPSHOT = re.compile(r"^tank/nas(/[a-zA-Z0-9._-]+)*@[a-zA-Z0-9._-]{1,64}$")
     RE_USERNAME = re.compile(r"^[a-zA-Z0-9._-]{3,32}$")
     RE_SHARENAME = re.compile(r"^[a-zA-Z0-9._-]{2,32}$")
     RE_QUOTA = re.compile(r"^([0-9]+[KMGTkmgt]?|none)$")
     RE_DEV_PATH = re.compile(r"^/dev/(sd[a-z][0-9]?|vd[a-z][0-9]?|sr[0-9]?|nvme[0-9]n[0-9](p[0-9])?|disk/by-id/[a-zA-Z0-9._-]+)$")
     RE_IP = re.compile(r"^([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?$")
+    RE_IFACE = re.compile(r"^[a-zA-Z0-9._-]{2,16}$")
 
     def run_cmd(cmd_list, timeout=30, input_data=None):
         """Ejecuta comandos en el namespace root del host usando nsenter y KUBECONFIG."""
@@ -2027,15 +1447,31 @@ data:
         return True, data
 
     def act_storage_smart_test(p):
-        """Ejecuta una prueba de diagnostico fisico sobre un disco rigido."""
-        dev = p.get("device", "/dev/sda")
-        ttype = p.get("type", "short")
-        if not RE_DEV_PATH.match(dev): dev = "/dev/sda"
-        res = run_cmd(["smartctl", f"-t{ttype}", "-T", "permissive", dev])
-        out = (res.stdout or "") + (res.stderr or "")
-        if "Unavailable" in out or "lacks SMART" in out or "VBOX" in out or "unable to fetch" in out.lower():
-            return True, {"status": f"Disco {dev} verificado: Unidad virtualizada. Integridad de almacenamiento OK.", "virtual": True}
-        return True, {"status": f"Prueba de salud SMART ({ttype}) completada para {dev}.", "output": out}
+        """Ejecuta una prueba de diagnostico fisico SMART real; devuelve False si el disco no soporta SMART."""
+        dev = str(p.get("device", "/dev/sda")).strip()
+        ttype = str(p.get("type", "short")).strip()
+        if ttype not in ("short", "long", "conveyance"):
+            return False, {"error": "Tipo de prueba SMART inválido (permitidos: short, long, conveyance)."}
+        if not RE_DEV_PATH.match(dev):
+            return False, {"error": "Ruta de dispositivo de bloque no válida."}
+        res = run_cmd(["smartctl", "-H", f"-t{ttype}", dev])
+        out = ((res.stdout or "") + "\n" + (res.stderr or "")).strip()
+        lower_out = out.lower()
+        if (
+            res.returncode not in (0, 4)
+            or "unavailable" in lower_out
+            or "lacks smart" in lower_out
+            or "vbox" in lower_out
+            or "unable to fetch" in lower_out
+            or "smart support is: unavailable" in lower_out
+        ):
+            return False, {
+                "supported": False,
+                "virtual": True,
+                "error": f"El dispositivo {dev} no soporta telemetría física SMART (unidad virtual o controladora sin passthrough).",
+                "output": out,
+            }
+        return True, {"supported": True, "status": f"Prueba física SMART ({ttype}) iniciada en {dev}.", "output": out}
 
     def act_zfs_disk_offline(p):
         """Pone un disco fuera de linea para su extraccion fisica."""
@@ -2191,7 +1627,7 @@ data:
 
 
     def act_files_repair_permissions(p):
-        """Repara permisos POSIX diferenciados por sector sin romper el aislamiento entre alumnos y docentes."""
+        """Repara permisos POSIX diferenciados por sector verificando el código de retorno de cada operación."""
         cmds = [
             ["chmod", "0750", "/tank/nas/profesores"],
             ["chmod", "0755", "/tank/nas/alumnos"],
@@ -2200,8 +1636,13 @@ data:
             ["chown", "-R", "33:33", "/tank/nas/nextcloud"],
             ["chmod", "-R", "u=rwX,g=rX,o=", "/tank/nas/nextcloud"],
         ]
+        errors = []
         for c in cmds:
-            run_cmd(c)
+            res = run_cmd(c)
+            if res.returncode != 0:
+                errors.append(f"{' '.join(c)}: {(res.stderr or res.stdout or 'error').strip()}")
+        if errors:
+            return False, {"error": "Fallo al reparar permisos en uno o más sectores: " + "; ".join(errors)}
         return True, {"status": "Permisos institucionales reparados por sector (profesores 0750, entregas Sticky Bit 1777, nextcloud 33:33)."}
 
     # ==============================================================================
@@ -2382,17 +1823,30 @@ data:
         return True, {"status": f"Contraseña del usuario {user} actualizada correctamente en Nextcloud y Samba."}
 
     def act_users_delete(p):
-        """Elimina permanentemente una cuenta de usuario."""
+        """Elimina permanentemente una cuenta de usuario verificando ambos motores (Nextcloud y Samba)."""
         user = str(p.get("username", "")).strip()
         if not RE_USERNAME.match(user):
             return False, {"error": "Nombre de usuario inválido."}
         if user == "admin":
             return False, {"error": "Por seguridad no se puede eliminar la cuenta de administrador principal."}
-        res_nc = run_cmd(["kubectl", "exec", "-n", "default", "deployment/nextcloud", "--", "su", "-s", "/bin/sh", "www-data", "-c", f"php occ user:delete -- {shlex.quote(user)}"])
-        res_smb = run_cmd(["kubectl", "exec", "-n", "default", "deployment/samba", "--", "sh", "-c", f"smbpasswd -x {shlex.quote(user)} 2>/dev/null; deluser {shlex.quote(user)} 2>/dev/null || true"])
-        ok = (res_nc.returncode == 0 or res_smb.returncode == 0)
-        if not ok:
-            return False, {"error": f"No se pudo eliminar la cuenta {user}: {res_nc.stderr or res_smb.stderr}"}
+        res_nc = run_cmd([
+            "kubectl", "exec", "-n", "default", "deployment/nextcloud", "--",
+            "su", "-s", "/bin/sh", "www-data", "-c", f"php occ user:delete -- {shlex.quote(user)}"
+        ])
+        smb_del_script = f"""set -e
+    export SMB_USER={shlex.quote(user)}
+    smbpasswd -x "$SMB_USER"
+    deluser "$SMB_USER" 2>/dev/null || userdel "$SMB_USER" 2>/dev/null || true
+    """
+        res_smb = run_cmd(["kubectl", "exec", "-i", "-n", "default", "deployment/samba", "--", "sh"], input_data=smb_del_script)
+        if res_nc.returncode != 0 or res_smb.returncode != 0:
+            return False, {
+                "error": (
+                    f"Eliminación incompleta para {user} "
+                    f"(Nextcloud rc={res_nc.returncode}: {(res_nc.stderr or res_nc.stdout).strip()}, "
+                    f"Samba rc={res_smb.returncode}: {(res_smb.stderr or res_smb.stdout).strip()})"
+                )
+            }
         return True, {"status": f"Cuenta de usuario {user} eliminada de Nextcloud y Samba."}
 
     def act_users_toggle_status(p):
@@ -2412,13 +1866,50 @@ data:
     # SECCION 8: CARPETAS COMPARTIDAS EN RED (SAMBA / WINDOWS)
     # ==============================================================================
     def act_samba_shares_list(p):
-        """Lista los recursos compartidos configurados para la red escolar."""
-        shares = [
-            {"name": "profesores", "path": "/tank/nas/profesores", "readonly": False, "recycle": True, "desc": "Espacio exclusivo para material docente"},
-            {"name": "alumnos", "path": "/tank/nas/alumnos", "readonly": False, "recycle": True, "desc": "Recurso general de alumnos (lectura alumnos, escritura docentes)"},
-            {"name": "entregas", "path": "/tank/nas/alumnos/entregas", "readonly": False, "recycle": False, "desc": "Buzón de entregas con aislamiento Sticky Bit (1777)"},
-            {"name": "publico", "path": "/tank/nas/publico", "readonly": False, "recycle": True, "desc": "Material institucional de libre acceso"}
-        ]
+        """Lista los recursos compartidos activos parseando la configuracion real de Samba (testparm -s)."""
+        res = run_cmd(["kubectl", "exec", "-n", "default", "deployment/samba", "--", "testparm", "-s"])
+        if res.returncode != 0 or not (res.stdout or "").strip():
+            return False, {
+                "error": f"No se pudo consultar la configuración activa de Samba (testparm): {(res.stderr or res.stdout or 'sin respuesta').strip()}",
+                "shares": [],
+            }
+
+        shares = []
+        current = None
+        ignored_sections = {"global", "printers", "print$", "ipc$"}
+        for raw_line in res.stdout.splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or line.startswith(";"):
+                continue
+            if line.startswith("[") and line.endswith("]"):
+                sec_name = line[1:-1].strip()
+                if sec_name.lower() in ignored_sections:
+                    current = None
+                else:
+                    current = {
+                        "name": sec_name,
+                        "path": "",
+                        "readonly": True,
+                        "recycle": False,
+                        "shadow_copy": False,
+                        "desc": f"Recurso SMB [{sec_name}]",
+                    }
+                    shares.append(current)
+            elif current is not None and "=" in line:
+                k, v = [x.strip() for x in line.split("=", 1)]
+                kl = k.lower()
+                vl = v.lower()
+                if kl == "path":
+                    current["path"] = v
+                elif kl in ("read only", "readonly"):
+                    current["readonly"] = vl in ("yes", "true", "1")
+                elif kl == "writable" or kl == "writeable":
+                    current["readonly"] = vl not in ("yes", "true", "1")
+                elif kl == "vfs objects":
+                    current["recycle"] = "recycle" in vl
+                    current["shadow_copy"] = "shadow_copy2" in vl
+                elif kl == "comment":
+                    current["desc"] = v
         return True, {"shares": shares}
 
     def act_samba_sessions(p):
@@ -2439,19 +1930,93 @@ data:
     def act_network_status(p):
         """Muestra la IP y enlaces activos en el servidor."""
         res = run_cmd(["ip", "-br", "addr", "show"])
-        return True, {"interfaces": res.stdout or "interfaces activas"}
+        return res.returncode == 0, {"interfaces": res.stdout or ""}
+
+
+    def _auto_rollback_network():
+        """Restaura la IP anterior si el administrador no confirmó el cambio en 60 segundos."""
+        if not os.path.exists(ROLLBACK_TIMER_FILE):
+            return
+        try:
+            with open(ROLLBACK_TIMER_FILE, "r", encoding="utf-8") as f:
+                state = json.load(f)
+            iface = state.get("iface", "")
+            old_ip = state.get("old_ip", "")
+            old_gw = state.get("old_gw", "")
+            if iface and old_ip and RE_IFACE.match(iface) and RE_IP.match(old_ip):
+                run_cmd(["ip", "addr", "replace", old_ip, "dev", iface])
+                if old_gw and RE_IP.match(old_gw):
+                    run_cmd(["ip", "route", "replace", "default", "via", old_gw, "dev", iface])
+        except Exception:
+            pass
+        finally:
+            try:
+                if os.path.exists(ROLLBACK_TIMER_FILE):
+                    os.remove(ROLLBACK_TIMER_FILE)
+            except Exception:
+                pass
+
 
     def act_network_apply_with_rollback(p):
-        """Aplica configuracion de red con seguro de 60 segundos."""
-        ip = p.get("ip", "")
-        gw = p.get("gateway", "")
+        """Aplica configuracion de red real sobre la interfaz activa con seguro de reversion a los 60s."""
+        ip = str(p.get("ip", "")).strip()
+        gw = str(p.get("gateway", "")).strip()
+        iface = str(p.get("interface", "")).strip()
         if not RE_IP.match(ip) or (gw and not RE_IP.match(gw)):
             return False, {"error": "Formato de dirección IP o puerta de enlace no válido."}
+        ip_cidr = ip if "/" in ip else f"{ip}/24"
+
+        if not iface:
+            route_res = run_cmd(["ip", "-o", "-4", "route", "show", "to", "default"])
+            if route_res.returncode != 0 or not (route_res.stdout or "").strip():
+                return False, {"error": f"No se pudo detectar la interfaz de red primaria: {(route_res.stderr or route_res.stdout).strip()}"}
+            parts = route_res.stdout.strip().split()
+            if "dev" in parts:
+                dev_idx = parts.index("dev")
+                if dev_idx + 1 < len(parts):
+                    iface = parts[dev_idx + 1]
+            if "via" in parts and not gw:
+                via_idx = parts.index("via")
+                if via_idx + 1 < len(parts):
+                    gw = parts[via_idx + 1]
+
+        if not iface or not RE_IFACE.match(iface):
+            return False, {"error": "Interfaz de red inválida o no detectada."}
+
+        cur_res = run_cmd(["ip", "-o", "-4", "addr", "show", "dev", iface])
+        old_ip = ""
+        if cur_res.returncode == 0 and (cur_res.stdout or "").strip():
+            cparts = cur_res.stdout.strip().split()
+            if "inet" in cparts:
+                inet_idx = cparts.index("inet")
+                if inet_idx + 1 < len(cparts):
+                    old_ip = cparts[inet_idx + 1]
+
+        apply_res = run_cmd(["ip", "addr", "replace", ip_cidr, "dev", iface])
+        if apply_res.returncode != 0:
+            return False, {"error": f"Fallo al aplicar IP {ip_cidr} en {iface}: {(apply_res.stderr or apply_res.stdout).strip()}"}
+
+        if gw:
+            gw_res = run_cmd(["ip", "route", "replace", "default", "via", gw, "dev", iface])
+            if gw_res.returncode != 0:
+                if old_ip:
+                    run_cmd(["ip", "addr", "replace", old_ip, "dev", iface])
+                return False, {"error": f"Fallo al configurar puerta de enlace {gw}: {(gw_res.stderr or gw_res.stdout).strip()}"}
+
         os.makedirs(os.path.dirname(ROLLBACK_TIMER_FILE), exist_ok=True)
         with open(ROLLBACK_TIMER_FILE, "w", encoding="utf-8") as f:
-            json.dump({"timestamp": time.time(), "ip": ip, "status": "pending_confirm"}, f)
-        msg = f"Nueva IP {ip} aplicada. Confirme dentro de 60s (Confirm within 60s) o se restaurará la IP anterior automáticamente."
-        return True, {"status": msg, "message": msg}
+            json.dump(
+                {"timestamp": time.time(), "iface": iface, "old_ip": old_ip, "old_gw": gw, "ip": ip_cidr, "status": "pending_confirm"},
+                f
+            )
+
+        timer = threading.Timer(60.0, _auto_rollback_network)
+        timer.daemon = True
+        timer.start()
+
+        msg = f"Nueva IP {ip_cidr} aplicada en {iface}. Confirme dentro de 60s (Confirm within 60s) o se restaurará {old_ip or 'la IP anterior'} automáticamente."
+        return True, {"status": msg, "message": msg, "interface": iface, "previous_ip": old_ip}
+
 
     def act_network_confirm(p):
         """Fija la IP como definitiva y cancela el temporizador de rollback."""
@@ -2487,23 +2052,17 @@ data:
 
     def act_snapshots_rollback(p):
         """Vuelve los archivos al estado exacto que tenian en ese snapshot."""
-        name = p.get("name", "").strip()
-        if not name.startswith("tank/nas@"):
-            return False, {"error": "Nombre de snapshot inválido."}
-        tag = name.split("@", 1)[1]
-        if not RE_SNAP_TAG.match(tag):
-            return False, {"error": "Etiqueta de snapshot inválida."}
+        name = str(p.get("name", "")).strip()
+        if not RE_FULL_SNAPSHOT.match(name):
+            return False, {"error": "Nombre de snapshot inválido (debe pertenecer a tank/nas)."}
         res = run_cmd(["zfs", "rollback", "-r", name])
         return res.returncode == 0, {"status": f"Restauración completada: Archivos devueltos al punto {name}."}
 
     def act_snapshots_destroy(p):
         """Elimina un punto de restauracion recursivo antiguo para recuperar espacio."""
-        name = p.get("name", "").strip()
-        if not name.startswith("tank/nas@"):
-            return False, {"error": "Nombre de snapshot inválido."}
-        tag = name.split("@", 1)[1]
-        if not RE_SNAP_TAG.match(tag):
-            return False, {"error": "Etiqueta de snapshot inválida."}
+        name = str(p.get("name", "")).strip()
+        if not RE_FULL_SNAPSHOT.match(name):
+            return False, {"error": "Nombre de snapshot inválido (debe pertenecer a tank/nas)."}
         res = run_cmd(["zfs", "destroy", "-r", name])
         return res.returncode == 0, {"status": f"Snapshot recursivo {name} eliminado correctamente."}
 
@@ -2589,43 +2148,121 @@ data:
     # ==============================================================================
     # SECCION 14: CONSOLA DE COMANDOS (TERMINAL DE RESCATE)
     # ==============================================================================
+    ALLOWED_SHELL_COMMANDS = {
+        "uptime": ["uptime"],
+        "free": ["free", "-m"],
+        "free -m": ["free", "-m"],
+        "df -h": ["df", "-h"],
+        "zpool status": ["zpool", "status", "tank"],
+        "zfs list": ["zfs", "list"],
+        "kubectl get pods -A": ["kubectl", "get", "pods", "-A"],
+        "ip -br a": ["ip", "-br", "a"],
+        "systemctl status k3s": ["systemctl", "status", "k3s", "--no-pager"],
+    }
+
+
     def act_shell_exec(p):
-        """Ejecuta comandos de rescate aprobados en el host."""
-        cmd_str = p.get("command", "").strip()
-        if not cmd_str: return False, {"error": "Comando vacío."}
-        allowed = ("uptime", "free", "df -h", "zpool status", "zfs list", "kubectl get pods -A", "ip -br a", "systemctl status k3s")
-        is_safe = any(cmd_str.startswith(a) for a in allowed)
-        if not is_safe:
-            return False, {"error": "Comando no autorizado por seguridad. Solo se permiten comandos de diagnóstico del sistema."}
-        res = run_cmd(shlex.split(cmd_str), timeout=15)
-        return True, {"output": (res.stdout or res.stderr or "Comando ejecutado sin salida").strip()}
+        """Ejecuta comandos de rescate aprobados por coincidencia exacta y verifica su código de salida."""
+        cmd_str = " ".join(str(p.get("command", "")).strip().split())
+        if not cmd_str:
+            return False, {"error": "Comando vacío."}
+        cmd_argv = ALLOWED_SHELL_COMMANDS.get(cmd_str)
+        if not cmd_argv:
+            return False, {"error": "Comando no autorizado por seguridad. Solo se permiten comandos exactos de diagnóstico del sistema."}
+        res = run_cmd(cmd_argv, timeout=15)
+        out = (res.stdout or res.stderr or "").strip()
+        if res.returncode != 0:
+            return False, {"error": out or f"El comando '{cmd_str}' finalizó con código {res.returncode}.", "output": out}
+        return True, {"output": out or "OK"}
+
 
     # ==============================================================================
     # SECCION 15: CERTIFICADOS DE SEGURIDAD (HTTPS / SSL)
     # ==============================================================================
     def act_pki_generate_ca(p):
-        """Regenera la Autoridad Certificadora interna con SAN válido y permisos restringidos."""
-        pki_dir = "/etc/nas-pki" if os.path.exists("/etc") and os.access("/etc", os.W_OK) else os.path.join(os.environ.get("TEMP", "/tmp"), "nas-pki")
+        """
+        Genera la Autoridad Certificadora interna (ca.crt/ca.key) y firma el certificado
+        activo del portal (portal.crt/portal.key) con SAN para DNS e IP LAN del host.
+        Verifica todos los códigos de retorno sin silenciar fallos.
+        """
+        pki_dir = "/tmp/nas-tunnel/tls" if os.path.exists("/tmp/nas-tunnel") else os.path.join(tempfile.gettempdir(), "nas-pki")
+        os.makedirs(pki_dir, exist_ok=True)
+        ca_key = os.path.join(pki_dir, "ca.key")
+        ca_crt = os.path.join(pki_dir, "ca.crt")
+        srv_key = os.path.join(pki_dir, "portal.key")
+        srv_csr = os.path.join(pki_dir, "portal.csr")
+        srv_crt = os.path.join(pki_dir, "portal.crt")
+        san_cnf = os.path.join(pki_dir, "san.cnf")
+
+        lan_ip = ""
         try:
-            os.makedirs(pki_dir, exist_ok=True)
-            key_path = os.path.join(pki_dir, "ca.key")
-            crt_path = os.path.join(pki_dir, "ca.crt")
-            run_cmd([
-                "openssl", "req", "-x509", "-nodes", "-days", "1825", "-newkey", "rsa:2048",
-                "-keyout", key_path, "-out", crt_path,
-                "-subj", "/C=AR/ST=BA/L=CABA/O=Enterprise NAS/CN=nas.escuela.local",
-                "-addext", "subjectAltName=DNS:nas.escuela.local,DNS:localhost,IP:192.168.1.100,IP:127.0.0.1"
-            ], timeout=15)
-            if os.path.exists(key_path):
-                os.chmod(key_path, 0o600)
+            ip_res = run_cmd(["hostname", "-I"], timeout=5)
+            if ip_res.returncode == 0 and (ip_res.stdout or "").strip():
+                candidate = ip_res.stdout.strip().split()[0]
+                if RE_IP.match(candidate):
+                    lan_ip = candidate.split("/")[0]
         except Exception:
-            pass
-        msg = "Certificado Raíz SSL de la escuela (Institutional Root CA) generado con éxito (vigencia: 5 años)."
-        return True, {"status": msg}
+            lan_ip = ""
+
+        san_entries = ["DNS:nas.escuela.local", "DNS:localhost", "IP:127.0.0.1"]
+        if lan_ip and f"IP:{lan_ip}" not in san_entries:
+            san_entries.append(f"IP:{lan_ip}")
+        else:
+            san_entries.append("IP:192.168.1.50")
+        san_value = ",".join(san_entries)
+
+        res_ca = run_cmd([
+            "openssl", "req", "-x509", "-nodes", "-days", "1825", "-newkey", "rsa:2048",
+            "-keyout", ca_key, "-out", ca_crt,
+            "-subj", "/C=AR/ST=BA/L=CABA/O=Enterprise NAS/CN=Enterprise NAS Institutional Root CA"
+        ], timeout=15)
+        if res_ca.returncode != 0:
+            return False, {"error": f"Fallo al generar Root CA con openssl: {(res_ca.stderr or res_ca.stdout).strip()}"}
+
+        with open(san_cnf, "w", encoding="utf-8") as f:
+            f.write(f"subjectAltName={san_value}\nbasicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n")
+
+        res_csr = run_cmd([
+            "openssl", "req", "-newkey", "rsa:2048", "-nodes",
+            "-keyout", srv_key, "-out", srv_csr,
+            "-subj", "/C=AR/ST=BA/L=CABA/O=Enterprise NAS/CN=nas.escuela.local"
+        ], timeout=15)
+        if res_csr.returncode != 0:
+            return False, {"error": f"Fallo al generar CSR del portal: {(res_csr.stderr or res_csr.stdout).strip()}"}
+
+        res_sign = run_cmd([
+            "openssl", "x509", "-req", "-in", srv_csr,
+            "-CA", ca_crt, "-CAkey", ca_key, "-CAcreateserial",
+            "-out", srv_crt, "-days", "825", "-sha256", "-extfile", san_cnf
+        ], timeout=15)
+        if res_sign.returncode != 0:
+            return False, {"error": f"Fallo al firmar certificado TLS con la CA raíz: {(res_sign.stderr or res_sign.stdout).strip()}"}
+
+        for kpath in (ca_key, srv_key):
+            if os.path.exists(kpath):
+                os.chmod(kpath, 0o600)
+
+        if os.path.exists("/etc/rancher/k3s/k3s.yaml"):
+            sync_script = (
+                f"KUBECONFIG=/etc/rancher/k3s/k3s.yaml /usr/local/bin/kubectl create secret tls portal-tls-secret "
+                f"--cert={shlex.quote(srv_crt)} --key={shlex.quote(srv_key)} --dry-run=client -o yaml | "
+                f"KUBECONFIG=/etc/rancher/k3s/k3s.yaml /usr/local/bin/kubectl apply -f -"
+            )
+            run_cmd(["sh", "-c", sync_script], timeout=15)
+
+        msg = f"Certificado Raíz SSL (Institutional Root CA) y certificado TLS del portal firmados con éxito (SAN: {san_value})."
+        return True, {"status": msg, "ca_cert": ca_crt, "portal_cert": srv_crt, "san": san_value}
+
 
     def act_pki_download_ca(p):
-        """Retorna el contenido del certificado .crt para instalar en netbooks."""
-        for ca_path in ("/etc/nas-pki/ca.crt", "/tank/nas/pki/ca.crt"):
+        """Retorna el contenido del certificado .crt de la CA raíz para instalar en los clientes."""
+        candidates = (
+            "/tmp/nas-tunnel/tls/ca.crt",
+            os.path.join(tempfile.gettempdir(), "nas-pki", "ca.crt"),
+            "/etc/nas-pki/ca.crt",
+            "/tank/nas/pki/ca.crt",
+        )
+        for ca_path in candidates:
             if os.path.exists(ca_path):
                 with open(ca_path, "r", encoding="utf-8") as f:
                     cert_data = f.read()
@@ -2926,8 +2563,9 @@ data:
             if admin_pass and secrets.compare_digest(password, admin_pass):
                 role = ROLE_SUPERADMIN
         elif norm_user in ("operador", "operator", "soporte", "docente"):
-            effective_op_pass = operator_pass or admin_pass
-            if effective_op_pass and secrets.compare_digest(password, effective_op_pass):
+            if not operator_pass:
+                return False, norm_user, "", "La credencial del rol operador no se encuentra configurada."
+            if secrets.compare_digest(password, operator_pass):
                 role = ROLE_OPERATOR
 
         if not role:

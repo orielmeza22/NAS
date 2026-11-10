@@ -51,12 +51,12 @@ class TaskEngine:
         """Checks if an action is naturally asynchronous or long-running."""
         return action in ASYNC_ACTIONS
 
-    def submit_task(self, action, params, user="admin", client_ip="local"):
+    def submit_task(self, action, params, user="admin", client_ip="local", role=""):
         """Submits an action to the background queue and returns the unique task ID."""
         task_id = f"task_{secrets.token_hex(6)}"
         portal_state.create_task(task_id, action, params, user)
         portal_state.log_audit_event(user, action, params, True, f"Tarea asíncrona '{action}' encolada con ID {task_id}", client_ip)
-        self.queue.put((task_id, action, params, user, client_ip))
+        self.queue.put((task_id, action, params, user, client_ip, role))
         return task_id
 
     def cancel_task(self, task_id):
@@ -75,9 +75,9 @@ class TaskEngine:
 
     def _worker_loop(self):
         while True:
-            task_id, action, params, user, client_ip = self.queue.get()
+            task_id, action, params, user, client_ip, role = self.queue.get()
             try:
-                self._run_task(task_id, action, params, user, client_ip)
+                self._run_task(task_id, action, params, user, client_ip, role)
             except Exception as e:
                 err_msg = f"Fallo no capturado en tarea {task_id}: {str(e)}\n{traceback.format_exc()}"
                 portal_state.finish_task(task_id, "failed", 1, {"error": str(e)}, err_msg)
@@ -87,7 +87,7 @@ class TaskEngine:
                     self.cancel_flags.discard(task_id)
                 self.queue.task_done()
 
-    def _run_task(self, task_id, action, params, user, client_ip):
+    def _run_task(self, task_id, action, params, user, client_ip, role=""):
         portal_state.update_task_progress(task_id, progress=5, phase="Ejecutando...", append_log=f"[{time.strftime('%H:%M:%S')}] Iniciando acción: {action}\n")
 
         handler = self.handlers_catalog.get(action)
@@ -96,25 +96,14 @@ class TaskEngine:
             portal_state.log_audit_event(user, action, params, False, "Acción desconocida", client_ip)
             return
 
-        # Progress tracking callback wrapper for handlers that support it
-        def progress_cb(pct, phase_str, log_line=None):
-            if self.is_cancelled(task_id):
-                raise InterruptedError("Operación cancelada")
-            portal_state.update_task_progress(task_id, progress=pct, phase=phase_str, append_log=(log_line + "\n") if log_line else None)
-
         try:
-            from nas_agentd import SOCKET_PATH, send_agent_request
-            if os.path.exists(SOCKET_PATH):
-                resp = send_agent_request({"user": user, "action": action, "params": params}, timeout=120)
-                ok = bool(resp.get("success"))
-                result = resp.get("data") if ok else {"error": resp.get("error", "Fallo en nas-agentd")}
-            else:
-                import inspect
-                sig = inspect.signature(handler)
-                if "progress_cb" in sig.parameters:
-                    ok, result = handler(params, progress_cb=progress_cb)
-                else:
-                    ok, result = handler(params)
+            from nas_agentd import send_agent_request
+            resp = send_agent_request(
+                {"user": user, "role": role, "action": action, "params": params, "client_ip": client_ip},
+                timeout=180
+            )
+            ok = bool(resp.get("success"))
+            result = resp.get("data") if ok else {"error": resp.get("error", "Fallo en nas-agentd")}
 
             if self.is_cancelled(task_id):
                 return

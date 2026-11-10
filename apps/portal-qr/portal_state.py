@@ -12,8 +12,10 @@ import threading
 import tempfile
 from contextlib import contextmanager
 
-if os.path.exists("/tank/nas"):
-    STATE_DIR = "/tank/nas/.portal-state"
+if os.environ.get("PORTAL_STATE_DIR"):
+    STATE_DIR = os.environ["PORTAL_STATE_DIR"]
+elif os.path.exists("/var/lib/nas-portal-state"):
+    STATE_DIR = "/var/lib/nas-portal-state"
 elif os.path.exists("/tmp/nas-tunnel"):
     STATE_DIR = "/tmp/nas-tunnel"
 else:

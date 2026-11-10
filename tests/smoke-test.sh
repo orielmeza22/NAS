@@ -10,10 +10,14 @@ COLOR_RED="\033[31m"
 COLOR_BLUE="\033[34m"
 COLOR_YELLOW="\033[33m"
 
+PASSED_CHECKS=0
+WARN_CHECKS=0
+TOTAL_CHECKS=18
+
 info() { echo -e "${COLOR_BLUE}[INFO]${COLOR_RESET} $1"; }
-pass() { echo -e "${COLOR_GREEN}[PASS]${COLOR_RESET} $1"; }
+pass() { PASSED_CHECKS=$((PASSED_CHECKS + 1)); echo -e "${COLOR_GREEN}[PASS]${COLOR_RESET} $1"; }
 fail() { echo -e "${COLOR_RED}[FAIL]${COLOR_RESET} $1"; exit 1; }
-warn() { echo -e "${COLOR_YELLOW}[WARN]${COLOR_RESET} $1"; }
+warn() { WARN_CHECKS=$((WARN_CHECKS + 1)); echo -e "${COLOR_YELLOW}[WARN]${COLOR_RESET} $1"; }
 
 echo "============================================================"
 echo "    🧪 INICIANDO SMOKE TESTS — PLATAFORMA NAS EMPRESARIAL   "
@@ -63,12 +67,12 @@ else
   fail "Servidor Samba no está en estado Running."
 fi
 
-# 5. Nextcloud HTTP status
-info "5. Verificando Nextcloud (Pod y HTTP status)..."
+# 5. Nextcloud HTTP status (NodePort 30082)
+info "5. Verificando Nextcloud (Pod y HTTP status en NodePort 30082)..."
 if kubectl get pods -l app.kubernetes.io/name=nextcloud --no-headers | grep -q "Running"; then
-  if curl -s http://localhost:30080/status.php | grep -q '"installed":true' || \
+  if curl -s http://localhost:30082/status.php | grep -q '"installed":true' || \
      kubectl exec deployment/nextcloud -- curl -s http://localhost/status.php 2>/dev/null | grep -q '"installed":true'; then
-    pass "Nextcloud activo, inicializado y respondiendo correctamente."
+    pass "Nextcloud activo, inicializado y respondiendo correctamente en NodePort 30082."
   else
     warn "Pod Nextcloud corriendo pero /status.php aún no reporta installed:true."
   fi
@@ -126,13 +130,14 @@ else
   fail "CronJob zfs-scrub no encontrado."
 fi
 
-# 12. PostgreSQL 16 + Redis 7
-info "12. Verificando PostgreSQL 16 y Redis 7 para alta concurrencia..."
+# 12. PostgreSQL 16 + Redis 7 + NetworkPolicy
+info "12. Verificando PostgreSQL 16, Redis 7 y NetworkPolicy en el clúster..."
 if kubectl get pods -l app.kubernetes.io/name=nextcloud-postgres --no-headers | grep -q "Running" && \
-   kubectl get pods -l app.kubernetes.io/name=nextcloud-redis --no-headers | grep -q "Running"; then
-  pass "PostgreSQL 16 y Redis 7 operativos con aislamiento NetworkPolicy."
+   kubectl get pods -l app.kubernetes.io/name=nextcloud-redis --no-headers | grep -q "Running" && \
+   kubectl get networkpolicy --no-headers 2>/dev/null | grep -q .; then
+  pass "PostgreSQL 16, Redis 7 y políticas NetworkPolicy verificadas en el clúster."
 else
-  fail "PostgreSQL 16 o Redis 7 no están en estado Running."
+  fail "PostgreSQL 16, Redis 7 o las reglas NetworkPolicy no están activas."
 fi
 
 # 13. Datasets ZFS y Recordsize=8K
@@ -188,5 +193,5 @@ else
 fi
 
 echo "============================================================"
-echo -e "${COLOR_GREEN} ✅ TODOS LOS SMOKE TESTS EMPRESARIALES (18/18) COMPLETADOS.${COLOR_RESET}"
+echo -e "${COLOR_GREEN} ✅ SMOKE TESTS FINALIZADOS: ${PASSED_CHECKS}/${TOTAL_CHECKS} PASS (${WARN_CHECKS} WARN).${COLOR_RESET}"
 echo "============================================================"
