@@ -697,6 +697,9 @@ def act_samba_shares_list(p):
 
     shares = []
     current = None
+    in_global = False
+    global_recycle = False
+    global_shadow = False
     ignored_sections = {"global", "printers", "print$", "ipc$"}
     for raw_line in res.stdout.splitlines():
         line = raw_line.strip()
@@ -704,18 +707,26 @@ def act_samba_shares_list(p):
             continue
         if line.startswith("[") and line.endswith("]"):
             sec_name = line[1:-1].strip()
-            if sec_name.lower() in ignored_sections:
+            sec_lower = sec_name.lower()
+            in_global = (sec_lower == "global")
+            if sec_lower in ignored_sections:
                 current = None
             else:
                 current = {
                     "name": sec_name,
                     "path": "",
                     "readonly": True,
-                    "recycle": False,
-                    "shadow_copy": False,
+                    "recycle": global_recycle,
+                    "shadow_copy": global_shadow,
                     "desc": f"Recurso SMB [{sec_name}]",
                 }
                 shares.append(current)
+        elif in_global and "=" in line:
+            k, v = [x.strip() for x in line.split("=", 1)]
+            if k.lower() == "vfs objects":
+                vl = v.lower()
+                global_recycle = "recycle" in vl
+                global_shadow = "shadow_copy2" in vl
         elif current is not None and "=" in line:
             k, v = [x.strip() for x in line.split("=", 1)]
             kl = k.lower()

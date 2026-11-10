@@ -126,6 +126,9 @@ spec:
           mountPath: /var/lib/nas-portal-state
         - name: tunnel-volume
           mountPath: /tmp/nas-tunnel
+        - name: nas-storage
+          mountPath: /tank/nas
+          mountPropagation: HostToContainer
         - name: agent-logs
           mountPath: /var/log
         resources:
@@ -152,6 +155,10 @@ spec:
       - name: tunnel-volume
         hostPath:
           path: /tmp/nas-tunnel
+          type: DirectoryOrCreate
+      - name: nas-storage
+        hostPath:
+          path: /tank/nas
           type: DirectoryOrCreate
       - name: tls-volume
         secret:
