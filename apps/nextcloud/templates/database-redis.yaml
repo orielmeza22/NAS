@@ -59,7 +59,7 @@ spec:
     spec:
       containers:
         - name: postgres
-          image: postgres:16-alpine@sha256:23fb16fd4be1ba1ffd0eb1ddfb2da1ce9d9f6f8f53f348da73b84f0f3bd5f2b9
+          image: postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab
           ports:
             - containerPort: 5432
               name: postgres
@@ -151,7 +151,7 @@ spec:
     spec:
       containers:
         - name: redis
-          image: redis:7-alpine@sha256:615da50e1c4a08360b446d796f9d29524c686d3ba672b6c2f3cb0aa7f5a02145
+          image: redis:7-alpine@sha256:8da19c7399dca900c6822a1cf30f9d2285585e2c4b457ff4095b0f4500054d3f
           command:
             - redis-server
             - --save
