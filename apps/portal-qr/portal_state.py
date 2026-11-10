@@ -2,32 +2,66 @@
 """
 Enterprise NAS Control Center — Persistent State & Security Storage (SQLite Engine)
 Persists active admin sessions, brute-force IP rate limits, async tasks, and audit trails.
-Survives pod restarts, rollouts, and container re-creations via HostPath mount.
+Survives pod restarts, rollouts, and host reboots when stored on /tank/nas/.portal-state.
 """
 import os
 import time
 import json
 import sqlite3
 import threading
+import tempfile
+from contextlib import contextmanager
 
-# Use HostPath tunnel volume if present, fallback to local var directory
-STATE_DIR = "/tmp/nas-tunnel" if os.path.exists("/tmp/nas-tunnel") else "/tmp"
+if os.path.exists("/tank/nas"):
+    STATE_DIR = "/tank/nas/.portal-state"
+elif os.path.exists("/tmp/nas-tunnel"):
+    STATE_DIR = "/tmp/nas-tunnel"
+else:
+    STATE_DIR = tempfile.gettempdir()
+
 DB_PATH = os.path.join(STATE_DIR, "portal_state.db")
 
 _db_lock = threading.Lock()
 
-def _get_connection():
-    """Returns a SQLite connection with WAL mode and reasonable timeout for concurrency."""
+
+@contextmanager
+def _db_session():
+    """
+    Context manager that opens a WAL-enabled SQLite connection, commits on success,
+    and strictly closes the file descriptor in a finally block to prevent FD leaks.
+    """
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH, timeout=15.0)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA synchronous=NORMAL;")
-    return conn
+    try:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+        yield conn
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def sanitize_audit_params(params):
+    """Masks passwords, secrets, tokens, and bulk CSV payloads before logging."""
+    if not isinstance(params, dict):
+        return {}
+    sensitive_keys = ("pass", "secret", "token", "key", "csv")
+    cleaned = {}
+    for k, v in params.items():
+        kl = str(k).lower()
+        if any(s in kl for s in sensitive_keys):
+            cleaned[k] = "********"
+        elif kl == "users" and isinstance(v, list):
+            cleaned[k] = f"[{len(v)} user records redacted]"
+        else:
+            cleaned[k] = v
+    return cleaned
+
 
 def init_db():
     """Initializes schema tables if not existing."""
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    with _db_lock, _get_connection() as conn:
+    with _db_lock, _db_session() as conn:
         c = conn.cursor()
         c.execute("""
             CREATE TABLE IF NOT EXISTS sessions (
@@ -84,68 +118,68 @@ def init_db():
         c.execute("""
             CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_events(id DESC);
         """)
-        conn.commit()
+
 
 # --- SESSIONS ---
 def create_session(token, username, role, client_ip, ttl_seconds=28800):
     now = time.time()
     expires = now + ttl_seconds
-    with _db_lock, _get_connection() as conn:
+    with _db_lock, _db_session() as conn:
         conn.execute(
             "INSERT OR REPLACE INTO sessions (token, username, role, client_ip, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (token, username, role, client_ip, now, expires)
+            (token, username, role, client_ip or "local", now, expires)
         )
-        conn.commit()
 
-def validate_session(token):
+
+def validate_session(token, client_ip=None):
     now = time.time()
-    with _db_lock, _get_connection() as conn:
-        row = conn.execute("SELECT username, role, expires_at FROM sessions WHERE token = ?", (token,)).fetchone()
+    with _db_lock, _db_session() as conn:
+        row = conn.execute("SELECT username, role, client_ip, expires_at FROM sessions WHERE token = ?", (token,)).fetchone()
         if not row:
             return False, None, None
         if row["expires_at"] < now:
             conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
-            conn.commit()
+            return False, None, None
+        bound_ip = row["client_ip"]
+        if client_ip and bound_ip and bound_ip not in ("", "local") and bound_ip != client_ip:
             return False, None, None
         return True, row["username"], row["role"]
 
+
 def destroy_session(token):
-    with _db_lock, _get_connection() as conn:
+    with _db_lock, _db_session() as conn:
         conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
-        conn.commit()
+
 
 def cleanup_expired_sessions():
     now = time.time()
-    with _db_lock, _get_connection() as conn:
+    with _db_lock, _db_session() as conn:
         conn.execute("DELETE FROM sessions WHERE expires_at < ?", (now,))
-        conn.commit()
+
 
 # --- RATE LIMITING / BRUTE FORCE ---
 def check_rate_limit(client_ip, max_attempts=5, lockout_seconds=900):
     now = time.time()
-    with _db_lock, _get_connection() as conn:
+    with _db_lock, _db_session() as conn:
         row = conn.execute("SELECT attempts, last_attempt, locked_until FROM failed_logins WHERE ip = ?", (client_ip,)).fetchone()
         if not row:
             return True, 0
         if row["locked_until"] > now:
             remaining = int(row["locked_until"] - now)
             return False, remaining
-        # If lockout window has passed, reset counter
         if now - row["last_attempt"] > lockout_seconds:
             conn.execute("DELETE FROM failed_logins WHERE ip = ?", (client_ip,))
-            conn.commit()
             return True, 0
         if row["attempts"] >= max_attempts:
-            # Lockout now
             locked_until = now + lockout_seconds
             conn.execute("UPDATE failed_logins SET locked_until = ? WHERE ip = ?", (locked_until, client_ip))
-            conn.commit()
             return False, lockout_seconds
         return True, 0
 
+
 def record_failed_login(client_ip, max_attempts=5, lockout_seconds=900):
     now = time.time()
-    with _db_lock, _get_connection() as conn:
+    with _db_lock, _db_session() as conn:
         row = conn.execute("SELECT attempts FROM failed_logins WHERE ip = ?", (client_ip,)).fetchone()
         if not row:
             conn.execute("INSERT INTO failed_logins (ip, attempts, last_attempt, locked_until) VALUES (?, 1, ?, 0)", (client_ip, now))
@@ -153,27 +187,27 @@ def record_failed_login(client_ip, max_attempts=5, lockout_seconds=900):
             new_attempts = row["attempts"] + 1
             locked_until = (now + lockout_seconds) if new_attempts >= max_attempts else 0
             conn.execute("UPDATE failed_logins SET attempts = ?, last_attempt = ?, locked_until = ? WHERE ip = ?", (new_attempts, now, locked_until, client_ip))
-        conn.commit()
+
 
 def reset_failed_logins(client_ip):
-    with _db_lock, _get_connection() as conn:
+    with _db_lock, _db_session() as conn:
         conn.execute("DELETE FROM failed_logins WHERE ip = ?", (client_ip,))
-        conn.commit()
+
 
 # --- ASYNC TASKS ---
 def create_task(task_id, action, params, user):
     now = time.time()
-    params_str = json.dumps(params)
-    with _db_lock, _get_connection() as conn:
+    params_str = json.dumps(sanitize_audit_params(params))
+    with _db_lock, _db_session() as conn:
         conn.execute(
             "INSERT INTO tasks (task_id, action, params, user, status, progress, phase, started_at, finished_at, exit_code, result, log) "
             "VALUES (?, ?, ?, ?, 'running', 0, 'Iniciando ejecución...', ?, 0, 0, '{}', '')",
             (task_id, action, params_str, user, now)
         )
-        conn.commit()
+
 
 def update_task_progress(task_id, progress=None, phase=None, append_log=None):
-    with _db_lock, _get_connection() as conn:
+    with _db_lock, _db_session() as conn:
         row = conn.execute("SELECT progress, phase, log FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
         if not row:
             return
@@ -181,19 +215,18 @@ def update_task_progress(task_id, progress=None, phase=None, append_log=None):
         new_phase = row["phase"] if phase is None else str(phase)
         current_log = row["log"] or ""
         new_log = current_log + (str(append_log) if append_log else "")
-        # Cap log in DB to last 200 KB to avoid unbounded growth
         if len(new_log) > 200000:
             new_log = "... [Log truncado] ...\n" + new_log[-180000:]
         conn.execute(
             "UPDATE tasks SET progress = ?, phase = ?, log = ? WHERE task_id = ?",
             (new_prog, new_phase, new_log, task_id)
         )
-        conn.commit()
+
 
 def finish_task(task_id, status, exit_code, result_dict, append_log=None):
     now = time.time()
     result_str = json.dumps(result_dict if isinstance(result_dict, dict) else {"raw": str(result_dict)})
-    with _db_lock, _get_connection() as conn:
+    with _db_lock, _db_session() as conn:
         row = conn.execute("SELECT log FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
         current_log = (row["log"] if row else "") or ""
         final_log = current_log + (str(append_log) if append_log else "")
@@ -203,35 +236,38 @@ def finish_task(task_id, status, exit_code, result_dict, append_log=None):
             "UPDATE tasks SET status = ?, progress = 100, phase = ?, finished_at = ?, exit_code = ?, result = ?, log = ? WHERE task_id = ?",
             (status, "Completado" if status == "completed" else "Fallido", now, exit_code, result_str, final_log, task_id)
         )
-        conn.commit()
+
 
 def get_task(task_id):
-    with _db_lock, _get_connection() as conn:
+    with _db_lock, _db_session() as conn:
         row = conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
         if not row:
             return None
         return dict(row)
 
+
 def list_tasks(limit=30):
-    with _db_lock, _get_connection() as conn:
+    with _db_lock, _db_session() as conn:
         rows = conn.execute("SELECT task_id, action, user, status, progress, phase, started_at, finished_at, exit_code FROM tasks ORDER BY started_at DESC LIMIT ?", (limit,)).fetchall()
         return [dict(r) for r in rows]
+
 
 # --- AUDIT LOGS ---
 def log_audit_event(user, action, params, success, message, client_ip):
     now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    sanitized_params = {k: (v if "pass" not in k.lower() and "secret" not in k.lower() else "********") for k, v in params.items()}
-    with _db_lock, _get_connection() as conn:
+    sanitized_params = sanitize_audit_params(params)
+    with _db_lock, _db_session() as conn:
         conn.execute(
             "INSERT INTO audit_events (timestamp, user, action, params, success, message, client_ip) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (now_iso, user or "admin", action, json.dumps(sanitized_params), 1 if success else 0, str(message), client_ip or "local")
         )
-        conn.commit()
+
 
 def list_audit_events(limit=100):
-    with _db_lock, _get_connection() as conn:
+    with _db_lock, _db_session() as conn:
         rows = conn.execute("SELECT * FROM audit_events ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
         return [dict(r) for r in rows]
+
 
 # Auto-initialize on import
 init_db()

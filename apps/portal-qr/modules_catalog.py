@@ -38,11 +38,22 @@ def run_cmd(cmd_list, timeout=30, input_data=None):
 
 def audit_log(user, action, params, success, message=""):
     """Registra eventos de auditoria y seguridad en /var/log/nas-agentd-audit.log."""
+    sensitive_keys = ("pass", "secret", "token", "key", "csv")
+    safe_params = {}
+    if isinstance(params, dict):
+        for k, v in params.items():
+            kl = str(k).lower()
+            if any(s in kl for s in sensitive_keys):
+                safe_params[k] = "********"
+            elif kl == "users" and isinstance(v, list):
+                safe_params[k] = f"[{len(v)} user records redacted]"
+            else:
+                safe_params[k] = v
     entry = {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "user": user or "admin",
         "action": action,
-        "params": {k: (v if "pass" not in k.lower() and "secret" not in k.lower() else "********") for k, v in params.items()},
+        "params": safe_params,
         "success": success,
         "message": message
     }
@@ -154,29 +165,47 @@ def act_services_list(p):
         pass
     return True, {"services": services}
 
+ALLOWED_MANAGED_SERVICES = {
+    ("default", "nextcloud"),
+    ("default", "samba"),
+    ("default", "nextcloud-postgres"),
+    ("default", "nextcloud-redis"),
+    ("kube-system", "ransomware-sentinel"),
+    ("default", "portal-qr"),
+}
+
+
 def act_services_restart(p):
-    """Reinicia un microservicio ordenadamente."""
-    svc = p.get("service", "nextcloud")
-    ns = p.get("namespace", "default")
+    """Reinicia un microservicio ordenadamente dentro de la lista blanca."""
+    svc = str(p.get("service") or p.get("name") or "nextcloud").strip()
+    ns = str(p.get("namespace", "default")).strip()
+    if (ns, svc) not in ALLOWED_MANAGED_SERVICES:
+        return False, {"error": f"Servicio '{ns}/{svc}' no está en la lista blanca del catálogo administrable."}
     res = run_cmd(["kubectl", "rollout", "restart", f"deployment/{svc}", "-n", ns])
-    return res.returncode == 0, {"status": f"Servicio {svc} reiniciado correctamente.", "output": res.stdout}
+    return res.returncode == 0, {"status": f"Servicio {svc} reiniciado correctamente.", "output": res.stdout or res.stderr}
+
 
 def act_services_scale(p):
-    """Pausa (0 replicas) o reanuda (1 replica) un microservicio."""
-    svc = p.get("service", "nextcloud")
-    ns = p.get("namespace", "default")
-    replicas = int(p.get("replicas", 1))
+    """Pausa (0 replicas) o reanuda (1 replica) un microservicio permitido."""
+    svc = str(p.get("service") or p.get("name") or "nextcloud").strip()
+    ns = str(p.get("namespace", "default")).strip()
+    if (ns, svc) not in ALLOWED_MANAGED_SERVICES or svc in ("portal-qr", "ransomware-sentinel"):
+        return False, {"error": f"No está permitido escalar o detener el servicio '{ns}/{svc}' (fuera de la lista blanca o crítico)."}
+    replicas = 1 if int(p.get("replicas", 1)) > 0 else 0
     res = run_cmd(["kubectl", "scale", f"deployment/{svc}", f"--replicas={replicas}", "-n", ns])
     msg = f"Servicio {svc} {'iniciado' if replicas > 0 else 'pausado'} exitosamente."
-    return res.returncode == 0, {"status": msg, "output": res.stdout}
+    return res.returncode == 0, {"status": msg, "output": res.stdout or res.stderr}
+
 
 def act_services_logs(p):
-    """Obtiene las ultimas lineas de logs de un microservicio."""
-    svc = p.get("service", "nextcloud")
-    ns = p.get("namespace", "default")
-    lines_count = int(p.get("lines", 80))
+    """Obtiene las ultimas lineas de logs de un microservicio permitido."""
+    svc = str(p.get("service", "nextcloud")).strip()
+    ns = str(p.get("namespace", "default")).strip()
+    if (ns, svc) not in ALLOWED_MANAGED_SERVICES:
+        return False, {"error": f"Consulta de logs no autorizada para '{ns}/{svc}'."}
+    lines_count = max(1, min(500, int(p.get("lines", 80))))
     res = run_cmd(["kubectl", "logs", f"deployment/{svc}", "-n", ns, f"--tail={lines_count}"])
-    return True, {"service": svc, "logs": res.stdout or res.stderr or "No hay logs disponibles en este momento."}
+    return res.returncode == 0, {"service": svc, "logs": res.stdout or res.stderr or "No hay logs disponibles en este momento."}
 
 def act_services_cascade_restart(p):
     """Ejecuta un reinicio en cascada respetando dependencias: DB -> Nextcloud -> Samba."""
@@ -323,53 +352,94 @@ def act_zfs_dataset_delete(p):
 # ==============================================================================
 # SECCION 6: ADMINISTRADOR DE ARCHIVOS WEB & PERMISOS
 # ==============================================================================
+def safe_nas_path(rel_or_abs, base="/tank/nas", reject_symlink=False):
+    """
+    Resuelve enlaces simbolicos (realpath) y verifica frontera estricta de directorio
+    para impedir escape por symlink o colision de prefijo (/tank/nas-other).
+    """
+    raw = str(rel_or_abs or "").strip().replace("\\", "/")
+    if not raw:
+        return base, True
+    joined = raw if raw.startswith("/") else f"{base.rstrip('/')}/{raw.lstrip('/')}"
+    norm = os.path.normpath(joined).replace("\\", "/")
+    if not norm.startswith("/"):
+        norm = "/" + norm.lstrip("/")
+
+    if reject_symlink and os.path.islink(norm):
+        return base, False
+
+    if os.path.exists(base):
+        real_base = re.sub(r"^[A-Za-z]:", "", os.path.realpath(base).replace("\\", "/")).rstrip("/")
+        real_target = re.sub(r"^[A-Za-z]:", "", os.path.realpath(norm).replace("\\", "/"))
+    else:
+        real_base = base.rstrip("/")
+        real_target = norm
+
+    if real_target == real_base or real_target.startswith(real_base + "/"):
+        return real_target, True
+    return real_base, False
+
+
 def act_files_list_all(p):
     """Explora archivos y carpetas del NAS."""
     base_dir = p.get("path", "/tank/nas")
-    clean_path = os.path.normpath(base_dir).replace("\\", "/")
-    if not clean_path.startswith("/tank/nas"):
-        clean_path = "/tank/nas"
+    clean_path, _ = safe_nas_path(base_dir, "/tank/nas", reject_symlink=False)
     items = []
     if os.path.exists(clean_path):
         for entry in os.scandir(clean_path):
             try:
-                st = entry.stat()
+                if entry.is_symlink():
+                    continue
+                st = entry.stat(follow_symlinks=False)
                 items.append({
                     "name": entry.name,
-                    "is_dir": entry.is_dir(),
-                    "size": st.st_size if not entry.is_dir() else 0,
+                    "is_dir": entry.is_dir(follow_symlinks=False),
+                    "size": st.st_size if not entry.is_dir(follow_symlinks=False) else 0,
                     "mtime": int(st.st_mtime)
                 })
             except Exception:
                 pass
     return True, {"path": clean_path, "items": items}
 
+
 def act_files_mkdir(p):
-    """Crea un nuevo subdirectorio."""
+    """Crea un nuevo subdirectorio dentro de la frontera /tank/nas."""
     path = p.get("path", "").strip()
-    clean_path = os.path.normpath(path).replace("\\", "/")
-    if not clean_path.startswith("/tank/nas"):
-        return False, {"error": "Ruta no autorizada."}
+    clean_path, is_valid = safe_nas_path(path, "/tank/nas", reject_symlink=True)
+    if not is_valid or clean_path == "/tank/nas":
+        return False, {"error": "Ruta no autorizada o fuera de la frontera de almacenamiento."}
     os.makedirs(clean_path, exist_ok=True)
     return True, {"status": f"Directorio creado exitosamente en {clean_path}."}
 
+
 def act_files_delete(p):
-    """Elimina un archivo o carpeta."""
+    """Elimina un archivo o carpeta validando realpath y rechazando symlinks."""
     path = p.get("path", "").strip()
-    clean_path = os.path.normpath(path).replace("\\", "/")
-    if not clean_path.startswith("/tank/nas") or clean_path in ("/tank/nas", "/tank"):
-        return False, {"error": "No se puede eliminar la carpeta raíz."}
-    if os.path.isdir(clean_path):
+    clean_path, is_valid = safe_nas_path(path, "/tank/nas", reject_symlink=True)
+    if not is_valid or clean_path in ("/tank/nas", "/tank"):
+        return False, {"error": "Operación rechazada: no se permite eliminar la raíz ni enlaces fuera del dataset."}
+    if os.path.islink(clean_path):
+        os.unlink(clean_path)
+    elif os.path.isdir(clean_path):
         shutil.rmtree(clean_path)
     elif os.path.isfile(clean_path):
         os.remove(clean_path)
     return True, {"status": f"Elemento {os.path.basename(clean_path)} eliminado correctamente."}
 
+
 def act_files_repair_permissions(p):
-    """Repara y normaliza permisos POSIX institucionales para Nextcloud y Samba."""
-    res = run_cmd(["chown", "-R", "33:33", "/tank/nas"])
-    res2 = run_cmd(["chmod", "-R", "u=rwX,g=rwX,o=rX", "/tank/nas"])
-    return True, {"status": "Permisos institucionales reparados: Propietario www-data y acceso de red normalizado."}
+    """Repara permisos POSIX diferenciados por sector sin romper el aislamiento entre alumnos y docentes."""
+    cmds = [
+        ["chmod", "0750", "/tank/nas/profesores"],
+        ["chmod", "0755", "/tank/nas/alumnos"],
+        ["chmod", "1777", "/tank/nas/alumnos/entregas"],
+        ["chmod", "0755", "/tank/nas/publico"],
+        ["chown", "-R", "33:33", "/tank/nas/nextcloud"],
+        ["chmod", "-R", "u=rwX,g=rX,o=", "/tank/nas/nextcloud"],
+    ]
+    for c in cmds:
+        run_cmd(c)
+    return True, {"status": "Permisos institucionales reparados por sector (profesores 0750, entregas Sticky Bit 1777, nextcloud 33:33)."}
 
 # ==============================================================================
 # SECCION 7: USUARIOS Y CONTRASENAS (IDENTIDAD DUAL NEXTCLOUD + SAMBA)
@@ -444,6 +514,11 @@ su -m -s /bin/sh www-data -c 'OC_PASS="$OC_PASS" php occ user:resetpassword --pa
         # Rollback compensation (Saga pattern): undo Samba & Linux user creation if Nextcloud fails
         run_cmd(["kubectl", "exec", "-n", "default", "deployment/samba", "--", "sh", "-c", f"smbpasswd -x {shlex.quote(user)} 2>/dev/null; deluser {shlex.quote(user)} 2>/dev/null || true"])
         return False, {"error": f"Fallo al registrar en Nextcloud: {full_out.strip()}. Se revirtieron los cambios en Samba."}
+
+    if res_smb.returncode != 0:
+        smb_out = f"{res_smb.stdout or ''} {res_smb.stderr or ''}".strip()
+        run_cmd(["kubectl", "exec", "-n", "default", "deployment/nextcloud", "--", "su", "-s", "/bin/sh", "www-data", "-c", f"php occ user:delete -- {shlex.quote(user)} 2>/dev/null || true"])
+        return False, {"error": f"Fallo al registrar en Samba: {smb_out}. Se revirtió el alta en Nextcloud para mantener consistencia."}
 
     return True, {"status": f"Usuario {user} ({display}) creado y sincronizado con éxito en Nextcloud y carpetas de red Samba."}
 
@@ -550,8 +625,11 @@ def act_users_delete(p):
         return False, {"error": "Nombre de usuario inválido."}
     if user == "admin":
         return False, {"error": "Por seguridad no se puede eliminar la cuenta de administrador principal."}
-    run_cmd(["kubectl", "exec", "-n", "default", "deployment/nextcloud", "--", "su", "-s", "/bin/sh", "www-data", "-c", f"php occ user:delete {shlex.quote(user)}"])
-    run_cmd(["kubectl", "exec", "-n", "default", "deployment/samba", "--", "sh", "-c", f"smbpasswd -x {shlex.quote(user)} 2>/dev/null; deluser {shlex.quote(user)} 2>/dev/null || true"])
+    res_nc = run_cmd(["kubectl", "exec", "-n", "default", "deployment/nextcloud", "--", "su", "-s", "/bin/sh", "www-data", "-c", f"php occ user:delete -- {shlex.quote(user)}"])
+    res_smb = run_cmd(["kubectl", "exec", "-n", "default", "deployment/samba", "--", "sh", "-c", f"smbpasswd -x {shlex.quote(user)} 2>/dev/null; deluser {shlex.quote(user)} 2>/dev/null || true"])
+    ok = (res_nc.returncode == 0 or res_smb.returncode == 0)
+    if not ok:
+        return False, {"error": f"No se pudo eliminar la cuenta {user}: {res_nc.stderr or res_smb.stderr}"}
     return True, {"status": f"Cuenta de usuario {user} eliminada de Nextcloud y Samba."}
 
 def act_users_toggle_status(p):
@@ -561,7 +639,9 @@ def act_users_toggle_status(p):
         return False, {"error": "Nombre de usuario inválido."}
     enable = p.get("enable", True)
     action = "enable" if enable else "disable"
-    res = run_cmd(["kubectl", "exec", "-n", "default", "deployment/nextcloud", "--", "su", "-s", "/bin/sh", "www-data", "-c", f"php occ user:{action} {shlex.quote(user)}"])
+    res = run_cmd(["kubectl", "exec", "-n", "default", "deployment/nextcloud", "--", "su", "-s", "/bin/sh", "www-data", "-c", f"php occ user:{action} -- {shlex.quote(user)}"])
+    if res.returncode != 0:
+        return False, {"error": f"Fallo al cambiar estado de {user}: {res.stderr or res.stdout}"}
     state_str = "habilitada" if enable else "suspendida"
     return True, {"status": f"Cuenta de usuario {user} {state_str} con éxito."}
 
@@ -571,21 +651,23 @@ def act_users_toggle_status(p):
 def act_samba_shares_list(p):
     """Lista los recursos compartidos configurados para la red escolar."""
     shares = [
-        {"name": "alumnos", "path": "/samba/alumnos", "readonly": True, "recycle": True, "desc": "Recurso general de alumnos (Solo lectura alumnos, escritura docentes)"},
-        {"name": "profesores", "path": "/samba/profesores", "readonly": False, "recycle": True, "desc": "Espacio exclusivo para material docente"},
-        {"name": "entregas", "path": "/samba/alumnos/entregas", "readonly": False, "recycle": False, "desc": "Buzón de entregas de trabajos prácticos"},
-        {"name": "publico", "path": "/samba/publico", "readonly": False, "recycle": True, "desc": "Material institucional de libre acceso"}
+        {"name": "profesores", "path": "/tank/nas/profesores", "readonly": False, "recycle": True, "desc": "Espacio exclusivo para material docente"},
+        {"name": "alumnos", "path": "/tank/nas/alumnos", "readonly": False, "recycle": True, "desc": "Recurso general de alumnos (lectura alumnos, escritura docentes)"},
+        {"name": "entregas", "path": "/tank/nas/alumnos/entregas", "readonly": False, "recycle": False, "desc": "Buzón de entregas con aislamiento Sticky Bit (1777)"},
+        {"name": "publico", "path": "/tank/nas/publico", "readonly": False, "recycle": True, "desc": "Material institucional de libre acceso"}
     ]
     return True, {"shares": shares}
 
 def act_samba_sessions(p):
     """Obtiene las computadoras y usuarios conectados en este momento."""
     res = run_cmd(["kubectl", "exec", "-n", "default", "deployment/samba", "--", "smbstatus", "-b"])
-    return True, {"sessions_raw": res.stdout or "No hay clientes Windows conectados actualmente."}
+    return res.returncode == 0, {"sessions_raw": res.stdout or "No hay clientes Windows conectados actualmente."}
 
 def act_samba_reload(p):
     """Recarga la configuracion de Samba en caliente sin desconectar usuarios."""
     res = run_cmd(["kubectl", "exec", "-n", "default", "deployment/samba", "--", "smbcontrol", "smbd", "reload-config"])
+    if res.returncode != 0:
+        return False, {"error": f"Fallo al recargar Samba: {res.stderr or res.stdout}"}
     return True, {"status": "Configuración de carpetas de red recargada en caliente correctamente."}
 
 # ==============================================================================
@@ -618,8 +700,8 @@ def act_network_confirm(p):
 # SECCION 10: PUNTOS DE RESTAURACION (SNAPSHOTS ZFS)
 # ==============================================================================
 def act_snapshots_list(p):
-    """Obtiene la lista de snapshots existentes y su fecha de creacion."""
-    res = run_cmd(["zfs", "list", "-t", "snapshot", "-H", "-o", "name,used,creation"])
+    """Obtiene la lista de snapshots existentes ordenada por fecha de creacion."""
+    res = run_cmd(["zfs", "list", "-t", "snapshot", "-H", "-s", "creation", "-o", "name,used,creation"])
     lines = (res.stdout or "").strip().splitlines()
     snaps = []
     for line in lines:
@@ -633,25 +715,34 @@ def act_snapshots_list(p):
     return True, {"snapshots": snaps}
 
 def act_snapshots_create(p):
-    """Crea un nuevo punto de restauracion inmediato en 1 segundo."""
+    """Crea un nuevo punto de restauracion recursivo (-r) sobre tank/nas y sus datasets hijos."""
     tag = p.get("tag", "").strip() or time.strftime("%Y%m%d_%H%M%S")
-    if not RE_SNAP_TAG.match(tag): return False, {"error": "Etiqueta de snapshot no válida."}
-    res = run_cmd(["zfs", "snapshot", f"tank/nas@{tag}"])
-    return res.returncode == 0, {"status": f"Punto de restauración tank/nas@{tag} creado con éxito."}
+    if not RE_SNAP_TAG.match(tag):
+        return False, {"error": "Etiqueta de snapshot no válida."}
+    res = run_cmd(["zfs", "snapshot", "-r", f"tank/nas@{tag}"])
+    return res.returncode == 0, {"status": f"Punto de restauración recursivo tank/nas@{tag} creado con éxito."}
 
 def act_snapshots_rollback(p):
     """Vuelve los archivos al estado exacto que tenian en ese snapshot."""
     name = p.get("name", "").strip()
-    if not name.startswith("tank/nas@"): return False, {"error": "Nombre de snapshot inválido."}
+    if not name.startswith("tank/nas@"):
+        return False, {"error": "Nombre de snapshot inválido."}
+    tag = name.split("@", 1)[1]
+    if not RE_SNAP_TAG.match(tag):
+        return False, {"error": "Etiqueta de snapshot inválida."}
     res = run_cmd(["zfs", "rollback", "-r", name])
     return res.returncode == 0, {"status": f"Restauración completada: Archivos devueltos al punto {name}."}
 
 def act_snapshots_destroy(p):
-    """Elimina un punto de restauracion antiguo para recuperar espacio."""
+    """Elimina un punto de restauracion recursivo antiguo para recuperar espacio."""
     name = p.get("name", "").strip()
-    if not name.startswith("tank/nas@"): return False, {"error": "Nombre de snapshot inválido."}
-    res = run_cmd(["zfs", "destroy", name])
-    return res.returncode == 0, {"status": f"Snapshot {name} eliminado correctamente."}
+    if not name.startswith("tank/nas@"):
+        return False, {"error": "Nombre de snapshot inválido."}
+    tag = name.split("@", 1)[1]
+    if not RE_SNAP_TAG.match(tag):
+        return False, {"error": "Etiqueta de snapshot inválida."}
+    res = run_cmd(["zfs", "destroy", "-r", name])
+    return res.returncode == 0, {"status": f"Snapshot recursivo {name} eliminado correctamente."}
 
 # ==============================================================================
 # SECCION 11: COPIA EN LA NUBE & LLAVES DE RESCATE (CLOUDFLARE R2)
@@ -659,52 +750,78 @@ def act_snapshots_destroy(p):
 def act_backup_export_emergency_kit(p):
     """Genera y empaqueta el kit con llaves maestras para rescate en caso de destruccion del host."""
     out_file = "/tmp/enterprise-nas-emergency-kit.tar.enc"
-    res = run_cmd(["bash", "/home/oriel/nas-gitops/scripts/export-master-keys.sh", out_file])
+    repo_dir = os.environ.get("NAS_REPO_DIR", "/opt/nas-gitops")
+    script_path = os.path.join(repo_dir, "scripts", "export-master-keys.sh")
+    res = run_cmd(["bash", script_path, out_file])
+    if res.returncode != 0:
+        return False, {"error": f"Fallo al exportar kit de rescate: {res.stderr or res.stdout}"}
     return True, {"file": out_file, "status": "Kit de llaves maestras de rescate generado exitosamente."}
 
 def act_backup_r2_trigger(p):
     """Dispara inmediatamente la sincronizacion encriptada a Cloudflare R2."""
     job_name = f"r2-manual-{int(time.time())}"
     res = run_cmd(["kubectl", "create", "job", job_name, "--from=cronjob/zfs-offsite-backup", "-n", "kube-system"])
+    if res.returncode != 0:
+        return False, {"error": f"No se pudo disparar el respaldo a R2: {res.stderr or res.stdout}"}
     return True, {"status": f"Copia de seguridad en la nube (R2) iniciada bajo la tarea {job_name}."}
 
 # ==============================================================================
 # SECCION 12: PRUEBA DE RECUPERACION ANTE FALLOS (SIMULACRO DR / RTO)
 # ==============================================================================
 def act_dr_run_drill(p):
-    """Ejecuta la prueba de resiliencia fisica cronometrando el tiempo de recuperacion."""
+    """Ejecuta la prueba de resiliencia fisica cronometrando el tiempo real de recuperacion."""
+    repo_dir = os.environ.get("NAS_REPO_DIR", "/opt/nas-gitops")
+    drill_script = os.path.join(repo_dir, "tests", "disaster-recovery-drill.sh")
     start = time.time()
-    res = run_cmd(["bash", "/home/oriel/nas-gitops/tests/disaster-recovery-drill.sh"], timeout=60)
+    res = run_cmd(["bash", drill_script], timeout=180)
     rto_seconds = round(time.time() - start, 2)
-    return True, {
+    passed = (res.returncode == 0)
+    status_msg = (
+        f"Prueba completada en {rto_seconds} segundos. Restauración verificada."
+        if passed else f"Simulacro fallido tras {rto_seconds} segundos. Revise el registro de errores."
+    )
+    return passed, {
         "rto_seconds": rto_seconds,
-        "passed": res.returncode == 0,
-        "status": f"Prueba completada en {rto_seconds} segundos. Sistema 100% recuperable.",
-        "log": res.stdout or "Simulacro ejecutado exitosamente."
+        "passed": passed,
+        "status": status_msg,
+        "log": (res.stdout or "") + ("\n" + res.stderr if res.stderr else "")
     }
 
 # ==============================================================================
 # SECCION 13: BATERIA DE EMERGENCIA (UPS / NUT)
 # ==============================================================================
 def act_ups_status(p):
-    """Monitorea el estado y nivel de carga de la bateria UPS."""
-    res = run_cmd(["upsc", "nas-ups@localhost"])
-    lines = (res.stdout or "").strip().splitlines()
-    data = {}
-    for line in lines:
-        if ":" in line:
-            k, v = line.split(":", 1)
-            data[k.strip()] = v.strip()
-    return True, data or {
-        "ups.status": "OL (En línea / Conectado a Red Eléctrica)",
-        "battery.charge": "100%",
-        "battery.runtime": "45 minutos",
-        "input.voltage": "220.4 V"
+    """Monitorea el estado real del demonio NUT/UPS sin inventar metricas cuando no hay UPS."""
+    try:
+        res = run_cmd(["upsc", "nas-ups@localhost"])
+        lines = (res.stdout or "").strip().splitlines()
+        data = {}
+        for line in lines:
+            if ":" in line:
+                k, v = line.split(":", 1)
+                data[k.strip()] = v.strip()
+        if res.returncode == 0 and data:
+            data["configured"] = True
+            return True, data
+    except Exception:
+        pass
+    return True, {
+        "configured": False,
+        "ups.status": "No detectado (sin UPS conectado por USB/NUT)",
+        "battery.charge": "N/A",
+        "battery.runtime": "N/A",
+        "input.voltage": "N/A"
     }
 
 def act_ups_test_battery(p):
-    """Ejecuta un autodiagnostico de descarga rapida de la bateria."""
-    return True, {"status": "Prueba rápida de batería iniciada. Diagnóstico completado: Batería en estado ÓPTIMO."}
+    """Ejecuta un autodiagnostico de descarga rapida en la unidad UPS real."""
+    try:
+        res = run_cmd(["upscmd", "nas-ups@localhost", "test.battery.start.quick"])
+        if res.returncode == 0:
+            return True, {"status": "Autodiagnóstico de batería iniciado en el UPS."}
+    except Exception:
+        pass
+    return False, {"error": "No se detectó una unidad UPS conectada a NUT para ejecutar el autodiagnóstico."}
 
 # ==============================================================================
 # SECCION 14: CONSOLA DE COMANDOS (TERMINAL DE RESCATE)
@@ -724,14 +841,20 @@ def act_shell_exec(p):
 # SECCION 15: CERTIFICADOS DE SEGURIDAD (HTTPS / SSL)
 # ==============================================================================
 def act_pki_generate_ca(p):
-    """Regenera la Autoridad Certificadora interna y emite nuevos certificados SSL."""
+    """Regenera la Autoridad Certificadora interna con SAN válido y permisos restringidos."""
+    pki_dir = "/etc/nas-pki" if os.path.exists("/etc") and os.access("/etc", os.W_OK) else os.path.join(os.environ.get("TEMP", "/tmp"), "nas-pki")
     try:
-        os.makedirs("/tank/nas/pki", exist_ok=True)
+        os.makedirs(pki_dir, exist_ok=True)
+        key_path = os.path.join(pki_dir, "ca.key")
+        crt_path = os.path.join(pki_dir, "ca.crt")
         run_cmd([
             "openssl", "req", "-x509", "-nodes", "-days", "1825", "-newkey", "rsa:2048",
-            "-keyout", "/tank/nas/pki/ca.key", "-out", "/tank/nas/pki/ca.crt",
-            "-subj", "/C=AR/ST=BA/L=CABA/O=Enterprise NAS/CN=Enterprise NAS Root CA"
+            "-keyout", key_path, "-out", crt_path,
+            "-subj", "/C=AR/ST=BA/L=CABA/O=Enterprise NAS/CN=nas.escuela.local",
+            "-addext", "subjectAltName=DNS:nas.escuela.local,DNS:localhost,IP:192.168.1.100,IP:127.0.0.1"
         ], timeout=15)
+        if os.path.exists(key_path):
+            os.chmod(key_path, 0o600)
     except Exception:
         pass
     msg = "Certificado Raíz SSL de la escuela (Institutional Root CA) generado con éxito (vigencia: 5 años)."
@@ -739,12 +862,12 @@ def act_pki_generate_ca(p):
 
 def act_pki_download_ca(p):
     """Retorna el contenido del certificado .crt para instalar en netbooks."""
-    ca_path = "/tank/nas/pki/ca.crt"
-    if os.path.exists(ca_path):
-        with open(ca_path, "r") as f:
-            cert_data = f.read()
-        return True, {"cert": cert_data, "filename": "Enterprise-NAS-CA.crt"}
-    return False, {"error": "Certificado CA no encontrado en /tank/nas/pki/ca.crt"}
+    for ca_path in ("/etc/nas-pki/ca.crt", "/tank/nas/pki/ca.crt"):
+        if os.path.exists(ca_path):
+            with open(ca_path, "r", encoding="utf-8") as f:
+                cert_data = f.read()
+            return True, {"cert": cert_data, "filename": "Enterprise-NAS-CA.crt"}
+    return False, {"error": "Certificado CA no encontrado. Genere primero la CA desde el módulo SSL."}
 
 # ==============================================================================
 # SECCION 16: MANTENIMIENTO DEL SISTEMA Y BASE DE DATOS
@@ -752,6 +875,8 @@ def act_pki_download_ca(p):
 def act_occ_files_scan(p):
     """Reindexa todos los archivos en la base de datos de Nextcloud."""
     res = run_cmd(["kubectl", "exec", "-n", "default", "deployment/nextcloud", "--", "su", "-s", "/bin/sh", "www-data", "-c", "php occ files:scan --all"], timeout=60)
+    if res.returncode != 0:
+        return False, {"error": f"Fallo al reindexar archivos: {res.stderr or res.stdout}"}
     return True, {"status": "Escaneo y reindexación de archivos completada exitosamente.", "output": res.stdout}
 
 def act_occ_maintenance_toggle(p):
@@ -759,17 +884,29 @@ def act_occ_maintenance_toggle(p):
     enable = p.get("enable", True)
     mode_arg = "--on" if enable else "--off"
     res = run_cmd(["kubectl", "exec", "-n", "default", "deployment/nextcloud", "--", "su", "-s", "/bin/sh", "www-data", "-c", f"php occ maintenance:mode {mode_arg}"])
+    if res.returncode != 0:
+        return False, {"error": f"Fallo al cambiar modo de mantenimiento: {res.stderr or res.stdout}"}
     state_str = "ACTIVADO (sitio bloqueado por mantenimiento)" if enable else "DESACTIVADO (acceso normal restablecido)"
     return True, {"status": f"Modo de mantenimiento {state_str}."}
 
 def act_postgres_vacuum(p):
     """Desfragmenta y optimiza las tablas de la base de datos PostgreSQL."""
     res = run_cmd(["kubectl", "exec", "-n", "default", "deployment/nextcloud-postgres", "--", "vacuumdb", "-U", "nextcloud", "-d", "nextcloud", "-z"], timeout=40)
+    if res.returncode != 0:
+        return False, {"error": f"Fallo al ejecutar VACUUM en PostgreSQL: {res.stderr or res.stdout}"}
     return True, {"status": "Base de datos PostgreSQL optimizada y compactada con éxito."}
 
 # ==============================================================================
 # SECCION 17: TAREAS AUTOMATICAS PROGRAMADAS (CRONJOBS)
 # ==============================================================================
+ALLOWED_CRONJOBS = {
+    ("kube-system", "zfs-offsite-backup"),
+    ("kube-system", "zfs-snapshot"),
+    ("kube-system", "zfs-scrub"),
+    ("kube-system", "zfs-smart-health"),
+    ("kube-system", "zfs-quotas-enforcer"),
+}
+
 def act_cron_list(p):
     """Lista las tareas automaticas del cluster."""
     res = run_cmd(["kubectl", "get", "cronjobs", "-A", "-o", "json"])
@@ -788,11 +925,15 @@ def act_cron_list(p):
     return True, {"cronjobs": items}
 
 def act_cron_trigger_now(p):
-    """Dispara de inmediato una tarea programada."""
-    name = p.get("name", "zfs-offsite-backup")
-    ns = p.get("namespace", "kube-system")
+    """Dispara de inmediato una tarea programada permitida."""
+    name = str(p.get("name", "zfs-offsite-backup")).strip()
+    ns = str(p.get("namespace", "kube-system")).strip()
+    if (ns, name) not in ALLOWED_CRONJOBS:
+        return False, {"error": f"CronJob '{ns}/{name}' fuera de la lista blanca permitida."}
     job_name = f"manual-{name}-{int(time.time())}"
     res = run_cmd(["kubectl", "create", "job", job_name, f"--from=cronjob/{name}", "-n", ns])
+    if res.returncode != 0:
+        return False, {"error": f"Fallo al disparar CronJob {name}: {res.stderr or res.stdout}"}
     return True, {"status": f"Tarea programada {name} ejecutada en este momento (Job: {job_name})."}
 
 # ==============================================================================

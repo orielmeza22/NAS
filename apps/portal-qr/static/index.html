@@ -1136,6 +1136,31 @@
     }
 
     // =========================================================================
+    // SANITIZACION ESTRICTA ANTI-XSS (HTML & ATRIBUTOS JS)
+    // =========================================================================
+    function escapeHtml(val) {
+      if (val === null || val === undefined) return '';
+      return String(val)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function escapeJsAttr(val) {
+      if (val === null || val === undefined) return '';
+      return escapeHtml(
+        String(val)
+          .replace(/\\/g, '\\\\')
+          .replace(/'/g, "\\'")
+          .replace(/"/g, '\\"')
+          .replace(/\r/g, '\\r')
+          .replace(/\n/g, '\\n')
+      );
+    }
+
+    // =========================================================================
     // GESTOR DE TAREAS ASINCRONAS EN SEGUNDO PLANO
     // =========================================================================
     let currentViewingTaskId = null;
@@ -1172,19 +1197,20 @@
         if (t.status === 'running') runningCount++;
         const tr = document.createElement('tr');
         const badgeClass = t.status === 'completed' ? 'badge-ok' : (t.status === 'running' ? 'badge-warn' : 'badge-danger');
+        const prog = Math.max(0, Math.min(100, parseInt(t.progress, 10) || 0));
         tr.innerHTML = `
-          <td style="font-family:var(--font-mono); font-weight:600; color:#94a3b8;">${t.task_id}</td>
-          <td style="font-weight:600; color:#fff;">${t.action}</td>
-          <td><span class="badge ${badgeClass}">${t.status.toUpperCase()}</span></td>
+          <td style="font-family:var(--font-mono); font-weight:600; color:#94a3b8;">${escapeHtml(t.task_id)}</td>
+          <td style="font-weight:600; color:#fff;">${escapeHtml(t.action)}</td>
+          <td><span class="badge ${badgeClass}">${escapeHtml(String(t.status || '').toUpperCase())}</span></td>
           <td>
             <div style="background:#1e293b; border-radius:4px; height:8px; width:70px; overflow:hidden; display:inline-block; vertical-align:middle; margin-right:6px;">
-              <div style="background:var(--primary); height:100%; width:${t.progress}%;"></div>
+              <div style="background:var(--primary); height:100%; width:${prog}%;"></div>
             </div>
-            <span style="font-size:11px; font-family:var(--font-mono);">${t.progress}%</span>
+            <span style="font-size:11px; font-family:var(--font-mono);">${prog}%</span>
           </td>
-          <td style="font-size:12px; color:var(--text-muted);">${t.phase || '-'}</td>
+          <td style="font-size:12px; color:var(--text-muted);">${escapeHtml(t.phase || '-')}</td>
           <td>
-            <button class="btn btn-sm btn-primary" onclick="viewTaskDetails('${t.task_id}', '${t.action}')" style="padding:2px 8px;">Ver Log</button>
+            <button class="btn btn-sm btn-primary" onclick="viewTaskDetails('${escapeJsAttr(t.task_id)}', '${escapeJsAttr(t.action)}')" style="padding:2px 8px;">Ver Log</button>
           </td>
         `;
         tbody.appendChild(tr);
@@ -1362,17 +1388,19 @@
         res.data.services.forEach(s => {
           const tr = document.createElement('tr');
           const isRunning = s.replicas > 0;
+          const sName = escapeJsAttr(s.name);
+          const sNs = escapeJsAttr(s.namespace);
           tr.innerHTML = `
-            <td style="font-weight:600; color:#fff;">${s.name}</td>
-            <td style="color:var(--text-muted); font-family:var(--font-mono); font-size:11px;">${s.namespace}</td>
-            <td><span class="badge ${isRunning ? 'badge-ok' : 'badge-warn'}">${s.status} (${s.ready}/${s.replicas})</span></td>
+            <td style="font-weight:600; color:#fff;">${escapeHtml(s.name)}</td>
+            <td style="color:var(--text-muted); font-family:var(--font-mono); font-size:11px;">${escapeHtml(s.namespace)}</td>
+            <td><span class="badge ${isRunning ? 'badge-ok' : 'badge-warn'}">${escapeHtml(s.status)} (${parseInt(s.ready, 10) || 0}/${parseInt(s.replicas, 10) || 0})</span></td>
             <td>
               <div style="display:flex; gap:6px;">
-                <button class="btn btn-sm btn-primary" onclick="showServiceLogs('${s.name}', '${s.namespace}')">Ver Logs</button>
-                <button class="btn btn-sm" onclick="execCmd('services.restart', {service: '${s.name}', namespace: '${s.namespace}'})">Reiniciar</button>
+                <button class="btn btn-sm btn-primary" onclick="showServiceLogs('${sName}', '${sNs}')">Ver Logs</button>
+                <button class="btn btn-sm" onclick="execCmd('services.restart', {service: '${sName}', namespace: '${sNs}'})">Reiniciar</button>
                 ${isRunning ? 
-                  `<button class="btn btn-sm btn-warning" onclick="execCmd('services.scale', {service: '${s.name}', namespace: '${s.namespace}', replicas: 0})">Pausar</button>` :
-                  `<button class="btn btn-sm btn-success" onclick="execCmd('services.scale', {service: '${s.name}', namespace: '${s.namespace}', replicas: 1})">Iniciar</button>`}
+                  `<button class="btn btn-sm btn-warning" onclick="execCmd('services.scale', {service: '${sName}', namespace: '${sNs}', replicas: 0})">Pausar</button>` :
+                  `<button class="btn btn-sm btn-success" onclick="execCmd('services.scale', {service: '${sName}', namespace: '${sNs}', replicas: 1})">Iniciar</button>`}
               </div>
             </td>
           `;
@@ -1406,11 +1434,11 @@
         res.data.entries.forEach(e => {
           const tr = document.createElement('tr');
           tr.innerHTML = `
-            <td style="font-family:var(--font-mono); font-size:11px;">${e.timestamp}</td>
-            <td style="font-weight:600;">${e.user}</td>
-            <td style="color:#93c5fd; font-family:var(--font-mono);">${e.action}</td>
+            <td style="font-family:var(--font-mono); font-size:11px;">${escapeHtml(e.timestamp)}</td>
+            <td style="font-weight:600;">${escapeHtml(e.user)}</td>
+            <td style="color:#93c5fd; font-family:var(--font-mono);">${escapeHtml(e.action)}</td>
             <td><span class="badge ${e.success ? 'badge-ok' : 'badge-warn'}">${e.success ? 'OK' : 'FALLO'}</span></td>
-            <td style="color:var(--text-muted); font-size:11px;">${e.message || ''}</td>
+            <td style="color:var(--text-muted); font-size:11px;">${escapeHtml(e.message || '')}</td>
           `;
           tbody.appendChild(tr);
         });
@@ -1428,16 +1456,17 @@
         res.data.blockdevices.forEach(d => {
           const tr = document.createElement('tr');
           const devPath = '/dev/' + d.name;
+          const safeDevAttr = escapeJsAttr(devPath);
           tr.innerHTML = `
-            <td style="font-weight:600; color:#fff; font-family:var(--font-mono);">${devPath}</td>
-            <td>${d.size || '--'}</td>
-            <td>${d.type || '--'}</td>
-            <td style="color:var(--text-muted);">${(d.model || '') + ' ' + (d.serial || '')}</td>
+            <td style="font-weight:600; color:#fff; font-family:var(--font-mono);">${escapeHtml(devPath)}</td>
+            <td>${escapeHtml(d.size || '--')}</td>
+            <td>${escapeHtml(d.type || '--')}</td>
+            <td style="color:var(--text-muted);">${escapeHtml((d.model || '') + ' ' + (d.serial || ''))}</td>
             <td>
               <div style="display:flex; gap:6px;">
-                <button class="btn btn-sm btn-primary" onclick="execCmd('storage.smart.test', {device: '${devPath}', type: 'short'})">Test SMART Rápido</button>
-                <button class="btn btn-sm btn-warning" onclick="execCmd('zfs.disk.offline', {device: '${devPath}'})">Poner Fuera de Línea</button>
-                <button class="btn btn-sm btn-success" onclick="execCmd('zfs.disk.online', {device: '${devPath}'})">Reactivar</button>
+                <button class="btn btn-sm btn-primary" onclick="execCmd('storage.smart.test', {device: '${safeDevAttr}', type: 'short'})">Test SMART Rápido</button>
+                <button class="btn btn-sm btn-warning" onclick="execCmd('zfs.disk.offline', {device: '${safeDevAttr}'})">Poner Fuera de Línea</button>
+                <button class="btn btn-sm btn-success" onclick="execCmd('zfs.disk.online', {device: '${safeDevAttr}'})">Reactivar</button>
               </div>
             </td>
           `;
@@ -1457,16 +1486,17 @@
         res.data.datasets.forEach(ds => {
           const tr = document.createElement('tr');
           const isRoot = ds.name === 'tank' || ds.name === 'tank/nas';
+          const safeDsAttr = escapeJsAttr(ds.name);
           tr.innerHTML = `
-            <td style="font-weight:600; color:#fff; font-family:var(--font-mono);">${ds.name}</td>
-            <td>${ds.used}</td>
-            <td>${ds.avail}</td>
-            <td><span class="badge" style="background:#1e3a5f; color:#93c5fd;">${ds.compression}</span></td>
-            <td>${ds.quota}</td>
+            <td style="font-weight:600; color:#fff; font-family:var(--font-mono);">${escapeHtml(ds.name)}</td>
+            <td>${escapeHtml(ds.used)}</td>
+            <td>${escapeHtml(ds.avail)}</td>
+            <td><span class="badge" style="background:#1e3a5f; color:#93c5fd;">${escapeHtml(ds.compression)}</span></td>
+            <td>${escapeHtml(ds.quota)}</td>
             <td>
               <div style="display:flex; gap:6px;">
-                <button class="btn btn-sm btn-primary" onclick="promptQuotaChange('${ds.name}')">Fijar Cuota</button>
-                ${!isRoot ? `<button class="btn btn-sm btn-danger" onclick="confirmDeleteDataset('${ds.name}')">Eliminar</button>` : ''}
+                <button class="btn btn-sm btn-primary" onclick="promptQuotaChange('${safeDsAttr}')">Fijar Cuota</button>
+                ${!isRoot ? `<button class="btn btn-sm btn-danger" onclick="confirmDeleteDataset('${safeDsAttr}')">Eliminar</button>` : ''}
               </div>
             </td>
           `;
@@ -1514,17 +1544,18 @@
         res.data.items.forEach(item => {
           const tr = document.createElement('tr');
           const fullPath = path.replace(/\/$/, '') + '/' + item.name;
+          const safeFullPathAttr = escapeJsAttr(fullPath);
           const sz = item.is_dir ? '--' : (item.size > 1048576 ? (item.size/1048576).toFixed(1) + ' MB' : Math.round(item.size/1024) + ' KB');
           tr.innerHTML = `
             <td style="font-weight:600; color:#fff;">
               ${item.is_dir ? 
-                `<a href="javascript:void(0)" onclick="loadFilesView('${fullPath}')" style="color:#60a5fa; text-decoration:none;">📁 ${item.name}</a>` :
-                `📄 ${item.name}`}
+                `<a href="javascript:void(0)" onclick="loadFilesView('${safeFullPathAttr}')" style="color:#60a5fa; text-decoration:none;">📁 ${escapeHtml(item.name)}</a>` :
+                `📄 ${escapeHtml(item.name)}`}
             </td>
             <td>${item.is_dir ? 'Carpeta' : 'Archivo'}</td>
-            <td>${sz}</td>
+            <td>${escapeHtml(sz)}</td>
             <td>
-              <button class="btn btn-sm btn-danger" onclick="confirmDeleteFile('${fullPath}')">Borrar</button>
+              <button class="btn btn-sm btn-danger" onclick="confirmDeleteFile('${safeFullPathAttr}')">Borrar</button>
             </td>
           `;
           tbody.appendChild(tr);
@@ -1552,17 +1583,18 @@
         res.data.users.forEach(u => {
           const tr = document.createElement('tr');
           const isAdm = u.username === 'admin';
+          const safeUserAttr = escapeJsAttr(u.username);
           tr.innerHTML = `
-            <td style="font-weight:600; color:#fff; font-family:var(--font-mono);">${u.username}</td>
-            <td>${u.display_name}</td>
-            <td><span class="badge" style="background:#1e3a5f; color:#93c5fd;">${u.groups.join(', ') || 'alumnos'}</span></td>
+            <td style="font-weight:600; color:#fff; font-family:var(--font-mono);">${escapeHtml(u.username)}</td>
+            <td>${escapeHtml(u.display_name)}</td>
+            <td><span class="badge" style="background:#1e3a5f; color:#93c5fd;">${escapeHtml((u.groups || []).join(', ') || 'alumnos')}</span></td>
             <td><span class="badge ${u.enabled ? 'badge-ok' : 'badge-warn'}">${u.enabled ? 'Activo' : 'Suspendido'}</span></td>
             <td>
               <div style="display:flex; gap:6px;">
-                <button class="btn btn-sm btn-primary" onclick="promptResetPassword('${u.username}')">Cambiar Clave</button>
+                <button class="btn btn-sm btn-primary" onclick="promptResetPassword('${safeUserAttr}')">Cambiar Clave</button>
                 ${!isAdm ? `
-                  <button class="btn btn-sm ${u.enabled ? 'btn-warning' : 'btn-success'}" onclick="execCmd('users.toggle_status', {username: '${u.username}', enable: ${!u.enabled}}).then(loadUsersView)">${u.enabled ? 'Suspender' : 'Habilitar'}</button>
-                  <button class="btn btn-sm btn-danger" onclick="confirmDeleteUser('${u.username}')">Eliminar</button>
+                  <button class="btn btn-sm ${u.enabled ? 'btn-warning' : 'btn-success'}" onclick="execCmd('users.toggle_status', {username: '${safeUserAttr}', enable: ${!u.enabled}}).then(loadUsersView)">${u.enabled ? 'Suspender' : 'Habilitar'}</button>
+                  <button class="btn btn-sm btn-danger" onclick="confirmDeleteUser('${safeUserAttr}')">Eliminar</button>
                 ` : ''}
               </div>
             </td>
@@ -1618,11 +1650,11 @@
         res.data.shares.forEach(s => {
           const tr = document.createElement('tr');
           tr.innerHTML = `
-            <td style="font-weight:600; color:#fff; font-family:var(--font-mono);">\\\\nas.escuela.local\\${s.name}</td>
-            <td style="color:var(--text-muted); font-size:11px;">${s.path}</td>
+            <td style="font-weight:600; color:#fff; font-family:var(--font-mono);">\\\\nas.escuela.local\\${escapeHtml(s.name)}</td>
+            <td style="color:var(--text-muted); font-size:11px;">${escapeHtml(s.path)}</td>
             <td><span class="badge ${s.readonly ? 'badge-warn' : 'badge-ok'}">${s.readonly ? 'Solo Lectura' : 'Lectura y Escritura'}</span></td>
             <td><span class="badge ${s.recycle ? 'badge-ok' : 'badge-warn'}">${s.recycle ? 'Activada (.Papelera)' : 'Desactivada'}</span></td>
-            <td style="color:var(--text-muted);">${s.desc}</td>
+            <td style="color:var(--text-muted);">${escapeHtml(s.desc)}</td>
           `;
           tbody.appendChild(tr);
         });
@@ -1669,14 +1701,15 @@
         }
         res.data.snapshots.forEach(s => {
           const tr = document.createElement('tr');
+          const safeSnapAttr = escapeJsAttr(s.name);
           tr.innerHTML = `
-            <td style="font-weight:600; color:#fff; font-family:var(--font-mono);">${s.name}</td>
-            <td>${s.used}</td>
-            <td style="color:var(--text-muted); font-size:11px;">${s.creation}</td>
+            <td style="font-weight:600; color:#fff; font-family:var(--font-mono);">${escapeHtml(s.name)}</td>
+            <td>${escapeHtml(s.used)}</td>
+            <td style="color:var(--text-muted); font-size:11px;">${escapeHtml(s.creation)}</td>
             <td>
               <div style="display:flex; gap:6px;">
-                <button class="btn btn-sm btn-warning" onclick="confirmRollback('${s.name}')">Restaurar al Estado</button>
-                <button class="btn btn-sm btn-danger" onclick="confirmDestroySnapshot('${s.name}')">Borrar</button>
+                <button class="btn btn-sm btn-warning" onclick="confirmRollback('${safeSnapAttr}')">Restaurar al Estado</button>
+                <button class="btn btn-sm btn-danger" onclick="confirmDestroySnapshot('${safeSnapAttr}')">Borrar</button>
               </div>
             </td>
           `;
@@ -1722,9 +1755,9 @@
     async function loadUpsView() {
       const res = await execCmd('ups.status', {}, true);
       if (res && res.data) {
-        document.getElementById('ups-status-val').innerText = res.data['ups.status'] || 'En Línea';
-        document.getElementById('ups-charge-val').innerText = res.data['battery.charge'] || '100%';
-        document.getElementById('ups-runtime-val').innerText = res.data['battery.runtime'] || '45 Minutos';
+        document.getElementById('ups-status-val').innerText = res.data['ups.status'] || 'No detectado (sin UPS)';
+        document.getElementById('ups-charge-val').innerText = res.data['battery.charge'] || 'N/A';
+        document.getElementById('ups-runtime-val').innerText = res.data['battery.runtime'] || 'N/A';
       }
     }
 
@@ -1775,13 +1808,15 @@
         tbody.innerHTML = '';
         res.data.cronjobs.forEach(c => {
           const tr = document.createElement('tr');
+          const safeCronName = escapeJsAttr(c.name);
+          const safeCronNs = escapeJsAttr(c.namespace);
           tr.innerHTML = `
-            <td style="font-weight:600; color:#fff;">${c.name}</td>
-            <td style="color:var(--text-muted); font-size:11px;">${c.namespace}</td>
-            <td style="font-family:var(--font-mono); color:#93c5fd;">${c.schedule}</td>
+            <td style="font-weight:600; color:#fff;">${escapeHtml(c.name)}</td>
+            <td style="color:var(--text-muted); font-size:11px;">${escapeHtml(c.namespace)}</td>
+            <td style="font-family:var(--font-mono); color:#93c5fd;">${escapeHtml(c.schedule)}</td>
             <td><span class="badge ${!c.suspend ? 'badge-ok' : 'badge-warn'}">${!c.suspend ? 'Activo' : 'Pausado'}</span></td>
             <td>
-              <button class="btn btn-sm btn-primary" onclick="execCmd('cron.trigger_now', {name: '${c.name}', namespace: '${c.namespace}'})">Ejecutar Ahora</button>
+              <button class="btn btn-sm btn-primary" onclick="execCmd('cron.trigger_now', {name: '${safeCronName}', namespace: '${safeCronNs}'})">Ejecutar Ahora</button>
             </td>
           `;
           tbody.appendChild(tr);

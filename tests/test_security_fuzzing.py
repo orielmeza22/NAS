@@ -253,5 +253,80 @@ class TestNasSecurityArchitecture(unittest.TestCase):
                 self.assertIsNotNone(stdin_payload)
                 self.assertIn(shlex.quote(tricky_pwd), stdin_payload)
 
+    def test_safe_nas_path_rejects_prefix_escape_and_root_delete(self):
+        """Must reject sibling prefix paths (/tank/nas2) and root dataset deletion."""
+        import modules_catalog
+
+        _, valid_prefix_escape = modules_catalog.safe_nas_path("/tank/nas2/secret.txt")
+        self.assertFalse(valid_prefix_escape)
+
+        _, valid_traversal = modules_catalog.safe_nas_path("/tank/nas/alumnos/../../../etc/shadow")
+        self.assertFalse(valid_traversal)
+
+        ok_del_root, res_del_root = modules_catalog.act_files_delete({"path": "/tank/nas"})
+        self.assertFalse(ok_del_root)
+        self.assertIn("raíz", res_del_root["error"])
+
+    def test_services_allowlist_blocks_critical_infrastructure(self):
+        """Must prevent restarting or scaling down critical K3s/security controllers."""
+        import modules_catalog
+
+        for protected_svc in ("coredns", "sealed-secrets-controller", "argocd-server", "ransomware-sentinel"):
+            ok_scale, res_scale = modules_catalog.act_services_scale({
+                "namespace": "kube-system",
+                "service": protected_svc,
+                "replicas": 0,
+            })
+            self.assertFalse(ok_scale, f"Should block scaling {protected_svc}")
+            self.assertIn("lista blanca", res_scale["error"])
+
+        for disallowed_restart in ("coredns", "sealed-secrets-controller", "argocd-server"):
+            ok_restart, res_restart = modules_catalog.act_services_restart({
+                "namespace": "kube-system",
+                "service": disallowed_restart,
+            })
+            self.assertFalse(ok_restart, f"Should block restarting {disallowed_restart}")
+
+    def test_audit_log_redacts_csv_and_session_ip_binding(self):
+        """Must redact bulk CSV passwords in audit logs and bind sessions to client IP."""
+        import portal_state
+
+        raw_params = {
+            "csv": "juan.perez,ClaveSecreta123!,Juan Perez,profesores\n",
+            "password": "PlainPassword",
+            "group": "profesores",
+        }
+        sanitized = portal_state.sanitize_audit_params(raw_params)
+        self.assertNotIn("ClaveSecreta123!", str(sanitized))
+        self.assertNotIn("PlainPassword", str(sanitized))
+        self.assertEqual(sanitized["group"], "profesores")
+
+        portal_state.init_db()
+        token = "test_ip_bound_token_12345"
+        portal_state.create_session(token, "admin", ROLE_SUPERADMIN, "192.168.1.10", ttl_seconds=60)
+        valid_same_ip, _, _ = portal_state.validate_session(token, "192.168.1.10")
+        self.assertTrue(valid_same_ip)
+
+        valid_diff_ip, _, _ = portal_state.validate_session(token, "192.168.1.99")
+        self.assertFalse(valid_diff_ip)
+        portal_state.destroy_session(token)
+
+    def test_ups_status_never_invents_fake_battery_telemetry(self):
+        """Must report N/A instead of fake 100% / 45m when no UPS is attached."""
+        from unittest.mock import patch, MagicMock
+        import modules_catalog
+
+        failed_res = MagicMock()
+        failed_res.returncode = 1
+        failed_res.stdout = ""
+        failed_res.stderr = "Error: Driver not connected"
+
+        with patch.object(modules_catalog, "run_cmd", return_value=failed_res):
+            ok, data = modules_catalog.act_ups_status({})
+            self.assertTrue(ok)
+            self.assertFalse(data["configured"])
+            self.assertEqual(data["battery.charge"], "N/A")
+            self.assertEqual(data["battery.runtime"], "N/A")
+
 if __name__ == "__main__":
     unittest.main()

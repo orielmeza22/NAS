@@ -49,10 +49,16 @@ else
   fail "Pod de NAS Control Center no está en estado Running."
 fi
 
-# 4. Samba con Escudo Veto Files y Reciclaje
-info "4. Verificando servidor Samba con Veto Files y Papelera de Red..."
+# 4. Samba con Escudo Veto Files, VSS y Buzón Sticky Bit
+info "4. Verificando servidor Samba con Veto Files, Shadow Copy VSS y buzón entregas (1777)..."
 if kubectl get pods -l app.kubernetes.io/name=samba --no-headers | grep -q "Running"; then
-  pass "Servidor Samba corriendo con escudo anti-ransomware y vfs_recycle."
+  if kubectl exec deployment/samba -- testparm -s 2>/dev/null | grep -q "veto files" && \
+     kubectl exec deployment/samba -- testparm -s 2>/dev/null | grep -q "shadow_copy2" && \
+     [ "$(stat -c '%a' /tank/nas/alumnos/entregas 2>/dev/null || echo '0')" = "1777" ]; then
+    pass "Servidor Samba activo con veto files, shadow_copy2 y buzón /tank/nas/alumnos/entregas (1777)."
+  else
+    fail "Configuración smb.conf (veto files / shadow_copy2) o permisos 1777 en entregas incompletos."
+  fi
 else
   fail "Servidor Samba no está en estado Running."
 fi
@@ -60,7 +66,8 @@ fi
 # 5. Nextcloud HTTP status
 info "5. Verificando Nextcloud (Pod y HTTP status)..."
 if kubectl get pods -l app.kubernetes.io/name=nextcloud --no-headers | grep -q "Running"; then
-  if curl -s http://localhost/status.php | grep -q '"installed":true'; then
+  if curl -s http://localhost:30080/status.php | grep -q '"installed":true' || \
+     kubectl exec deployment/nextcloud -- curl -s http://localhost/status.php 2>/dev/null | grep -q '"installed":true'; then
     pass "Nextcloud activo, inicializado y respondiendo correctamente."
   else
     warn "Pod Nextcloud corriendo pero /status.php aún no reporta installed:true."
@@ -154,12 +161,14 @@ else
   fail "Script tests/disaster-recovery-drill.sh ausente."
 fi
 
-# 16. Daemon Escudo Anti-Ransomware
-info "16. Verificando Daemon del Escudo Anti-Ransomware (ransomware-sentinel)..."
-if kubectl -n kube-system get pods -l app.kubernetes.io/name=ransomware-sentinel --no-headers | grep -q "Running"; then
-  pass "Centinela Anti-Ransomware 360° en ejecución activa."
+# 16. Daemon Escudo Anti-Ransomware y Heartbeat
+info "16. Verificando Daemon del Escudo Anti-Ransomware (ransomware-sentinel) y heartbeat..."
+if kubectl -n kube-system get pods -l app.kubernetes.io/name=ransomware-sentinel --no-headers | grep -q "Running" && \
+   [ -f "/tmp/nas-tunnel/sentinel_heartbeat_ts" ] && \
+   [ $(( $(date +%s) - $(cat /tmp/nas-tunnel/sentinel_heartbeat_ts) )) -le 30 ]; then
+  pass "Centinela Anti-Ransomware 360° en ejecución activa con heartbeat fresco (<=30s)."
 else
-  fail "Daemon ransomware-sentinel no está en estado Running."
+  fail "Daemon ransomware-sentinel no está en estado Running o su heartbeat expiró."
 fi
 
 # 17. Archivos Canary Honeypot

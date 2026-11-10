@@ -40,14 +40,25 @@ def run_cmd(cmd_list, timeout=20, input_data=None):
         full_cmd = processed_cmd
     return subprocess.run(full_cmd, input=input_data, capture_output=True, text=True, timeout=timeout)
 
-def audit_log(user, action, params, success, message=""):
+def audit_log(user, action, params, success, message="", client_ip=""):
+    try:
+        from portal_state import sanitize_audit_params, log_audit_event
+        safe_params = sanitize_audit_params(params)
+        log_audit_event(user, action, safe_params, success, message, client_ip)
+    except Exception:
+        safe_params = {
+            k: ("********" if any(s in k.lower() for s in ("password", "secret", "token", "key", "csv", "users")) else v)
+            for k, v in (params or {}).items()
+        }
+
     entry = {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "user": user,
         "action": action,
-        "params": {k: (v if "password" not in k.lower() and "secret" not in k.lower() else "********") for k, v in params.items()},
+        "params": safe_params,
         "success": success,
-        "message": message
+        "message": message,
+        "client_ip": client_ip,
     }
     try:
         os.makedirs(os.path.dirname(AUDIT_LOG_PATH), exist_ok=True)
@@ -150,13 +161,14 @@ def dispatch_request(req):
     role = req.get("role", ROLE_SUPERADMIN)
     action = req.get("action", "")
     params = req.get("params", {})
+    client_ip = req.get("client_ip", "")
 
     if action not in ACTION_CATALOG:
-        audit_log(user, action, params, False, "Action not found in catalog")
+        audit_log(user, action, params, False, "Action not found in catalog", client_ip)
         return {"success": False, "error": f"Action '{action}' is not in the safe catalog"}
 
     if not check_permission(role, action):
-        audit_log(user, action, params, False, f"RBAC denied for role '{role}'")
+        audit_log(user, action, params, False, f"RBAC denied for role '{role}'", client_ip)
         return {
             "success": False,
             "forbidden": True,
@@ -166,10 +178,10 @@ def dispatch_request(req):
     handler = ACTION_CATALOG[action]
     try:
         ok, result = handler(params)
-        audit_log(user, action, params, ok, result.get("error", "OK") if isinstance(result, dict) else "OK")
+        audit_log(user, action, params, ok, result.get("error", "OK") if isinstance(result, dict) else "OK", client_ip)
         return {"success": ok, "data": result}
     except Exception as e:
-        audit_log(user, action, params, False, str(e))
+        audit_log(user, action, params, False, str(e), client_ip)
         return {"success": False, "error": f"Internal execution exception: {str(e)}"}
 
 

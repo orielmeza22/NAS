@@ -57,19 +57,31 @@ spec:
               plant_canaries
 
               while true; do
+                date +%s > /tmp/nas-tunnel/sentinel_heartbeat_ts
                 THREAT_FOUND=0
-                # 1. Verificar integridad de Honeypots
+                # 1. Verificar integridad y presencia de Honeypots
                 for dir in $TARGET_DIRS; do
-                  canary="$dir/.canary_honeypot.docx"
-                  if [ -f "$canary" ] && [ -f "${canary}.sha256" ]; then
-                    CURRENT_HASH=$(sha256sum "$canary" 2>/dev/null | awk '{print $1}' || echo "corrupted")
-                    EXPECTED_HASH=$(cat "${canary}.sha256" 2>/dev/null | awk '{print $1}' || echo "expected")
-                    if [ "$CURRENT_HASH" != "$EXPECTED_HASH" ]; then
+                  if [ -d "$dir" ]; then
+                    canary="$dir/.canary_honeypot.docx"
+                    if [ ! -f "$canary" ] || [ ! -f "${canary}.sha256" ]; then
                       THREAT_FOUND=1
-                      echo "[ALERTA SEGURIDAD] Canary alterado en $dir (Posible Ransomware en curso)" >> /tmp/nas-tunnel/ransomware_events.log
-                      # Restaurar Canary
+                      echo "[ALERTA SEGURIDAD] Canary eliminado o renombrado en $dir (Posible Ransomware en curso)" >> /tmp/nas-tunnel/ransomware_events.log
+                      CNT=$(cat /tmp/nas-tunnel/ransomware_threats_blocked 2>/dev/null || echo 0)
+                      echo $((CNT + 1)) > /tmp/nas-tunnel/ransomware_threats_blocked
                       rm -f "$canary" "${canary}.sha256"
                       plant_canaries
+                    else
+                      CURRENT_HASH=$(sha256sum "$canary" 2>/dev/null | awk '{print $1}' || echo "corrupted")
+                      EXPECTED_HASH=$(cat "${canary}.sha256" 2>/dev/null | awk '{print $1}' || echo "expected")
+                      if [ "$CURRENT_HASH" != "$EXPECTED_HASH" ]; then
+                        THREAT_FOUND=1
+                        echo "[ALERTA SEGURIDAD] Canary alterado en $dir (Posible Ransomware en curso)" >> /tmp/nas-tunnel/ransomware_events.log
+                        CNT=$(cat /tmp/nas-tunnel/ransomware_threats_blocked 2>/dev/null || echo 0)
+                        echo $((CNT + 1)) > /tmp/nas-tunnel/ransomware_threats_blocked
+                        # Restaurar Canary
+                        rm -f "$canary" "${canary}.sha256"
+                        plant_canaries
+                      fi
                     fi
                   fi
                 done
@@ -125,6 +137,14 @@ spec:
               done
           securityContext:
             privileged: true
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - "test -f /tmp/nas-tunnel/sentinel_heartbeat_ts && [ $(( $(date +%s) - $(cat /tmp/nas-tunnel/sentinel_heartbeat_ts) )) -le 30 ]"
+            initialDelaySeconds: 15
+            periodSeconds: 15
           volumeMounts:
             - name: tank-storage
               mountPath: /tank-nas

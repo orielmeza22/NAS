@@ -62,25 +62,29 @@ spec:
                     if [ "$TOTAL_ARC" -gt 0 ]; then
                       ARC_RATIO=$(awk "BEGIN {printf \"%.2f\", ($ARC_HITS / $TOTAL_ARC) * 100}")
                     else
-                      ARC_RATIO=100.00
+                      ARC_RATIO=0.00
                     fi
 
                     # 3. Snapshots Total
                     SNAP_COUNT=$(zfs list -t snapshot -H 2>/dev/null | wc -l || echo 0)
 
-                    # 4. Anti-Ransomware Shield
-                    RW_STATUS=1
+                    # 4. Anti-Ransomware Shield (verifica heartbeat fresco <= 30s)
+                    RW_STATUS=0
                     RW_BLOCKED=0
-                    if [ -f /tmp/nas-tunnel/ransomware_status ]; then
-                      RW_STATUS=$(cat /tmp/nas-tunnel/ransomware_status | tr -d "[:space:]")
+                    if [ -f /tmp/nas-tunnel/sentinel_heartbeat_ts ]; then
+                      HB_TS=$(cat /tmp/nas-tunnel/sentinel_heartbeat_ts | tr -d "[:space:]")
+                      NOW_TS=$(date +%s)
+                      if [ $((NOW_TS - ${HB_TS:-0})) -le 30 ] && [ -f /tmp/nas-tunnel/ransomware_status ]; then
+                        RW_STATUS=$(cat /tmp/nas-tunnel/ransomware_status | tr -d "[:space:]")
+                      fi
                     fi
                     if [ -f /tmp/nas-tunnel/ransomware_threats_blocked ]; then
                       RW_BLOCKED=$(cat /tmp/nas-tunnel/ransomware_threats_blocked | tr -d "[:space:]")
                     fi
 
-                    # 5. Samba & Service connections
-                    SMB_SESSIONS=$(smbstatus -b 2>/dev/null | grep -v "PID" | grep -v -- "---" | grep -v "^$" | wc -l || echo 0)
-                    SMB_LOCKED=$(smbstatus -L 2>/dev/null | grep -v "PID" | grep -v -- "---" | grep -v "^$" | wc -l || echo 0)
+                    # 5. Samba & Service connections (consulta contenedor Samba vía K3s)
+                    SMB_SESSIONS=$(KUBECONFIG=/etc/rancher/k3s/k3s.yaml /usr/local/bin/kubectl exec deployment/samba -- smbstatus -b 2>/dev/null | grep -v "PID" | grep -v -- "---" | grep -v "^$" | wc -l || echo 0)
+                    SMB_LOCKED=$(KUBECONFIG=/etc/rancher/k3s/k3s.yaml /usr/local/bin/kubectl exec deployment/samba -- smbstatus -L 2>/dev/null | grep -v "PID" | grep -v -- "---" | grep -v "^$" | wc -l || echo 0)
 
                     TUNNEL_UP=0
                     if [ -f /tmp/nas-tunnel/url.txt ]; then
@@ -161,7 +165,7 @@ spec:
               cpu: "150m"
               memory: "96Mi"
         - name: http-exporter
-          image: nginx:alpine
+          image: nginx:alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
           ports:
             - containerPort: 9134
               name: metrics

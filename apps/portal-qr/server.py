@@ -132,22 +132,33 @@ class NasApiHandler(BaseHTTPRequestHandler):
         auth_hdr = self.headers.get("Authorization", "")
         if auth_hdr.startswith("Bearer "):
             token = auth_hdr.split(" ")[1]
-            valid, username, role = portal_state.validate_session(token)
+            valid, username, role = portal_state.validate_session(token, self.get_client_ip())
             if valid:
                 self.auth_user = username
                 self.auth_role = role
                 return True
         return False
 
+    def _get_allowed_origin(self):
+        origin = self.headers.get("Origin", "").strip()
+        if not origin:
+            return ""
+        allowed_env = os.environ.get("PORTAL_ALLOWED_ORIGIN", "").strip()
+        if allowed_env and origin == allowed_env:
+            return origin
+        host = self.headers.get("Host", "").strip()
+        if host and origin in (f"https://{host}", f"http://{host}"):
+            return origin
+        return ""
+
     def send_json(self, data, status=200):
         body = json.dumps(data).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
-        # Closed CORS: Only reflect requesting host if same origin
-        origin = self.headers.get("Origin")
-        if origin:
-            self.send_header("Access-Control-Allow-Origin", origin)
+        allowed_origin = self._get_allowed_origin()
+        if allowed_origin:
+            self.send_header("Access-Control-Allow-Origin", allowed_origin)
             self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
@@ -156,9 +167,9 @@ class NasApiHandler(BaseHTTPRequestHandler):
 
     def do_OPTIONS(self):
         self.send_response(204)
-        origin = self.headers.get("Origin")
-        if origin:
-            self.send_header("Access-Control-Allow-Origin", origin)
+        allowed_origin = self._get_allowed_origin()
+        if allowed_origin:
+            self.send_header("Access-Control-Allow-Origin", allowed_origin)
             self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
@@ -171,9 +182,6 @@ class NasApiHandler(BaseHTTPRequestHandler):
         if path in ("/", "/index.html"):
             self.serve_frontend()
             return
-        elif path.startswith("/tunnel/url.txt"):
-            self.serve_tunnel_txt()
-            return
         elif path == "/api/public/status":
             self.handle_public_status()
             return
@@ -183,6 +191,10 @@ class NasApiHandler(BaseHTTPRequestHandler):
 
         if not self.is_auth():
             self.send_json({"error": "Unauthorized"}, 401)
+            return
+
+        if path.startswith("/tunnel/url.txt"):
+            self.serve_tunnel_txt()
             return
 
         if path == "/api/tasks":
@@ -241,7 +253,17 @@ class NasApiHandler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
         body = {}
-        content_len = int(self.headers.get("Content-Length", 0))
+        raw_len = self.headers.get("Content-Length", "0")
+        try:
+            content_len = int(raw_len)
+            if content_len < 0:
+                raise ValueError("Negative Content-Length")
+        except ValueError:
+            self.send_json({"success": False, "error": "Cabecera Content-Length inválida."}, 400)
+            return
+        if content_len > 1048576:
+            self.send_json({"success": False, "error": "Payload excede el límite máximo permitido (1 MB)."}, 413)
+            return
         if content_len > 0:
             try:
                 body = json.loads(self.rfile.read(content_len).decode("utf-8"))
@@ -329,7 +351,7 @@ class NasApiHandler(BaseHTTPRequestHandler):
             if "/app-config" not in sys.path:
                 sys.path.insert(0, "/app-config")
             from nas_agentd import send_agent_request
-            req = {"user": user, "role": role, "action": action, "params": params}
+            req = {"user": user, "role": role, "action": action, "params": params, "client_ip": client_ip}
             res = send_agent_request(req)
             status_code = 403 if res.get("forbidden") else (200 if res.get("success") else 400)
             self.send_json(res, status_code)
@@ -438,20 +460,18 @@ class NasApiHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def handle_public_status(self):
-        tpath = "/tmp/nas-tunnel/url.txt"
-        tunnel_url = ""
-        if os.path.exists(tpath):
-            try:
-                with open(tpath, "r") as f:
-                    tunnel_url = f.read().strip()
-            except Exception:
-                pass
         ok, out, _ = run_host_cmd(["zpool", "list", "-H", "-o", "health", "tank"])
         health = out.strip() if ok and out.strip() else "OFFLINE"
+        uptime_sec = 0
+        if os.path.exists("/proc/uptime"):
+            try:
+                with open("/proc/uptime", "r", encoding="utf-8") as f:
+                    uptime_sec = int(float(f.read().split()[0]))
+            except Exception:
+                uptime_sec = 0
         self.send_json({
-            "tunnel_url": tunnel_url,
             "raid_health": health,
-            "uptime_seconds": int(time.time()),
+            "uptime_seconds": uptime_sec,
             "platform": "Enterprise Educational NAS 2026"
         })
 
@@ -565,7 +585,7 @@ class NasApiHandler(BaseHTTPRequestHandler):
             self.send_json({"error": "Nombre de snapshot inválido"}, 400)
             return
 
-        repo_dir = os.environ.get("NAS_REPO_DIR", "/home/oriel/nas-gitops")
+        repo_dir = os.environ.get("NAS_REPO_DIR", "/opt/nas-gitops")
         script = os.path.join(repo_dir, "scripts/nas-recover.sh")
         ok, out, err = run_host_cmd(["bash", script, "rollback-local", snap])
         self.send_json({"success": ok, "output": out or err})
@@ -596,13 +616,13 @@ class NasApiHandler(BaseHTTPRequestHandler):
               'R2_KEY=$(kubectl -n kube-system get secret r2-backup-credentials -o jsonpath="{.data.access-key-id}" 2>/dev/null | base64 -d || true); ' \
               'R2_SEC=$(kubectl -n kube-system get secret r2-backup-credentials -o jsonpath="{.data.secret-access-key}" 2>/dev/null | base64 -d || true); ' \
               'export RCLONE_CONFIG_R2_TYPE=s3 RCLONE_CONFIG_R2_PROVIDER=Cloudflare RCLONE_CONFIG_R2_ACCESS_KEY_ID=$R2_KEY RCLONE_CONFIG_R2_SECRET_ACCESS_KEY=$R2_SEC RCLONE_CONFIG_R2_ENDPOINT="https://${R2_ACC}.r2.cloudflarestorage.com" RCLONE_CONFIG_R2_NO_CHECK_BUCKET=true; ' \
-              'rclone lsf -R -l r2:nas-backup/ 2>/dev/null || true'
+              'rclone lsf -R --format "sp" --separator ";" r2:nas-backup/ 2>/dev/null || true'
         ok, out, _ = run_host_cmd(cmd)
         files = []
         for line in out.splitlines():
-            p = line.split()
-            if len(p) >= 2:
-                files.append({"size": p[0], "name": p[1]})
+            if ";" in line:
+                sz, name = line.split(";", 1)
+                files.append({"size": sz.strip(), "name": name.strip()})
         self.send_json({"r2_objects": files})
 
     def handle_r2_trigger(self, body):
@@ -611,9 +631,9 @@ class NasApiHandler(BaseHTTPRequestHandler):
         self.send_json({"success": ok, "output": out or err})
 
     def handle_r2_restore(self, body):
-        repo_dir = os.environ.get("NAS_REPO_DIR", "/home/oriel/nas-gitops")
-        script = os.path.join(repo_dir, "tests/disaster-recovery-drill.sh")
-        ok, out, err = run_host_cmd(["bash", script])
+        repo_dir = os.environ.get("NAS_REPO_DIR", "/opt/nas-gitops")
+        script = os.path.join(repo_dir, "scripts/nas-recover.sh")
+        ok, out, err = run_host_cmd(["bash", script, "restore-r2"], timeout=300)
         self.send_json({"success": ok, "output": out or err})
 
     def handle_users_list(self):
@@ -736,10 +756,24 @@ class NasApiHandler(BaseHTTPRequestHandler):
         self.send_json({"success": ok, "output": out or err})
 
     def handle_security_status(self):
-        _, st, _ = run_host_cmd("cat /tmp/nas-tunnel/ransomware_status 2>/dev/null || echo 1")
+        _, st, _ = run_host_cmd("cat /tmp/nas-tunnel/ransomware_status 2>/dev/null || echo 0")
         _, cnt, _ = run_host_cmd("cat /tmp/nas-tunnel/ransomware_threats_blocked 2>/dev/null || echo 0")
+        _, hb, _ = run_host_cmd("cat /tmp/nas-tunnel/sentinel_heartbeat_ts 2>/dev/null || echo 0")
         _, logs, _ = run_host_cmd("tail -n 20 /tmp/nas-tunnel/ransomware_events.log 2>/dev/null || echo 'Sin incidentes.'")
-        self.send_json({"status": int(st.strip() or 1), "blocked_threats": int(cnt.strip() or 0), "logs": logs})
+        try:
+            hb_ts = int(hb.strip() or 0)
+        except ValueError:
+            hb_ts = 0
+        sentinel_alive = (int(time.time()) - hb_ts) <= 30 if hb_ts > 0 else False
+        raw_status = int(st.strip() or 0) if st.strip().lstrip("-").isdigit() else 0
+        effective_status = raw_status if sentinel_alive else 0
+        self.send_json({
+            "status": effective_status,
+            "sentinel_alive": sentinel_alive,
+            "last_heartbeat_ts": hb_ts,
+            "blocked_threats": int(cnt.strip() or 0) if cnt.strip().isdigit() else 0,
+            "logs": logs
+        })
 
     def handle_test_canary(self):
         ok, out, err = run_host_cmd("echo 'ransomware-simulation' > /tank/nas/alumnos/.canary_honeypot.docx")
@@ -787,8 +821,7 @@ class NasApiHandler(BaseHTTPRequestHandler):
             run_host_cmd(["rm", "-f", "/tmp/nas-tunnel/url.txt"])
             self.send_json({"status": "offline", "message": "Modo Solo LAN activado. El acceso desde internet ha sido cerrado."})
         else:
-            repo_dir = os.environ.get("NAS_REPO_DIR", "/home/oriel/nas-gitops")
-            run_host_cmd(f"cloudflared tunnel --url http://127.0.0.1:80 > /tmp/nas-tunnel/cloudflared.log 2>&1 &")
+            run_host_cmd("cloudflared tunnel --url http://127.0.0.1:80 > /tmp/nas-tunnel/cloudflared.log 2>&1 &")
             time.sleep(3)
             self.send_json({"status": "online", "message": "Túnel Cloudflare iniciado. El NAS vuelve a estar Online desde internet."})
 
@@ -799,7 +832,7 @@ class NasApiHandler(BaseHTTPRequestHandler):
         self.send_json({"success": True, "output": "Túnel reiniciado."})
 
     def handle_smoke_test(self):
-        repo_dir = os.environ.get("NAS_REPO_DIR", "/home/oriel/nas-gitops")
+        repo_dir = os.environ.get("NAS_REPO_DIR", "/opt/nas-gitops")
         script = os.path.join(repo_dir, "tests/smoke-test.sh")
         ok, out, err = run_host_cmd(["bash", script])
         self.send_json({"success": ok, "log": out or err})
@@ -818,6 +851,7 @@ class NasApiHandler(BaseHTTPRequestHandler):
         shares = [
             {"id": "profesores", "name": "[profesores]", "dataset": "tank/nas/profesores", "access": "Solo Docentes / Directivos"},
             {"id": "alumnos", "name": "[alumnos]", "dataset": "tank/nas/alumnos", "access": "Estudiantes y Laboratorio"},
+            {"id": "entregas", "name": "[entregas]", "dataset": "tank/nas/alumnos/entregas", "access": "Buzón de Entregas (Sticky Bit 1777)"},
             {"id": "publico", "name": "[publico]", "dataset": "tank/nas/publico", "access": "Acceso General Institucional"},
             {"id": "nextcloud", "name": "[nextcloud]", "dataset": "tank/nas/nextcloud", "access": "Almacenamiento Cloud / Web"}
         ]
@@ -867,6 +901,11 @@ class NasApiHandler(BaseHTTPRequestHandler):
             if ":" in line:
                 samba_users.append(line.split(":")[0])
 
+        _, smb_conf, _ = run_host_cmd("kubectl exec deployment/samba -- testparm -s 2>/dev/null || true")
+        has_recycle = "recycle" in smb_conf
+        has_veto = "veto files" in smb_conf
+        has_shadow = "shadow_copy2" in smb_conf
+
         self.send_json({
             "status": pod_st.strip(),
             "version": version_st.strip(),
@@ -874,9 +913,9 @@ class NasApiHandler(BaseHTTPRequestHandler):
             "sessions": sessions,
             "users": samba_users,
             "features": {
-                "recycle_bin": "vfs_recycle (Activo)",
-                "anti_ransomware": "Veto Files (*.locked, *.crypto, *.wannacry)",
-                "apple_compat": "vfs_fruit (macOS nativo)"
+                "recycle_bin": "vfs_recycle (Activo)" if has_recycle else "No detectado en smb.conf",
+                "anti_ransomware": "Veto Files (Activo en smb.conf)" if has_veto else "No detectado en smb.conf",
+                "shadow_copy": "vfs_shadow_copy2 (Activo)" if has_shadow else "No detectado en smb.conf"
             }
         })
 
@@ -1032,8 +1071,13 @@ if __name__ == "__main__":
     key_file = os.path.join(cert_dir, "portal.key")
     
     if not (os.path.exists(cert_file) and os.path.exists(key_file)):
-        cmd = f'openssl req -x509 -newkey rsa:2048 -nodes -keyout "{key_file}" -out "{cert_file}" -days 730 -subj "/CN=nas.escuela.local"'
-        subprocess.run(cmd, shell=True, check=True)
+        cmd = [
+            "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+            "-keyout", key_file, "-out", cert_file, "-days", "730",
+            "-subj", "/CN=nas.escuela.local",
+            "-addext", "subjectAltName=DNS:nas.escuela.local,DNS:localhost,IP:127.0.0.1"
+        ]
+        subprocess.run(cmd, check=True)
         os.chmod(key_file, 0o600)
     
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)

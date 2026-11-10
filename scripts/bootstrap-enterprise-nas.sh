@@ -26,10 +26,10 @@ sudo apt-get install -y -qq zfsutils-linux openssl curl rclone jq smartmontools 
 
 info "2. Configurando pool OpenZFS (tank)..."
 if ! sudo zpool list tank >/dev/null 2>&1; then
-  if [ $# -ge 2 ] && [ "$1" != "--lab-mode" ]; then
-    info "Creando pool de producción con discos físicos reales: $*"
+  if [ $# -ge 3 ] && [ "$1" != "--lab-mode" ] && [ "$1" != "--demo-virtual" ]; then
+    info "Creando pool de producción RAID-Z1 con discos físicos reales: $*"
     sudo zpool create -f -o ashift=12 -O compression=lz4 -O atime=off \
-      -O acltype=posixacl -O xattr=sa tank "$@"
+      -O acltype=posixacl -O xattr=sa tank raidz1 "$@"
   elif [ "${1:-}" = "--lab-mode" ] || [ "${1:-}" = "--demo-virtual" ]; then
     warn "MODO LABORATORIO / VM DETECTADO: Creando pool sobre discos virtuales (/zfs-disks/disk*.img)."
     warn "ADVERTENCIA: Este modo NO provee redundancia física y es únicamente para pruebas/desarrollo."
@@ -44,7 +44,7 @@ if ! sudo zpool list tank >/dev/null 2>&1; then
       /zfs-disks/disk1.img /zfs-disks/disk2.img /zfs-disks/disk3.img
   else
     echo -e "${COLOR_RED}[ERROR FATAL] BLOQUEO DE SEGURIDAD OPERACIONAL:${COLOR_RESET}"
-    echo "No se especificaron discos físicos para el almacenamiento institucional."
+    echo "Se requieren al menos 3 discos físicos dedicados para conformar el arreglo RAID-Z1."
     echo "Para producción en servidor físico ejecute pasando los discos dedicados:"
     echo "  sudo $0 /dev/sdb /dev/sdc /dev/sdd"
     echo ""
@@ -88,9 +88,12 @@ sudo zfs set snapdir=visible tank/nas tank/nas/profesores tank/nas/alumnos tank/
 echo "options zfs zfs_arc_max=2147483648" | sudo tee /etc/modprobe.d/zfs.conf >/dev/null
 echo 2147483648 | sudo tee /sys/module/zfs/parameters/zfs_arc_max >/dev/null 2>&1 || true
 
-sudo mkdir -p /tank/nas/.samba-private /tank/nas/.Papelera /tank/nas/alumnos/entregas
+sudo mkdir -p /var/lib/nas-samba-private /tank/nas/.portal-state /tank/nas/.Papelera /tank/nas/alumnos/entregas
+sudo chmod 0700 /var/lib/nas-samba-private /tank/nas/.portal-state
+sudo chmod 0750 /tank/nas/profesores
+sudo chmod 0755 /tank/nas/alumnos /tank/nas/publico
 sudo chmod 1777 /tank/nas/alumnos/entregas
-pass "Datasets ZFS, buffer COW (50M), snapdir VSS y límite ARC (2GB) aplicados."
+pass "Datasets ZFS, buffer COW (50M), snapdir VSS, permisos por rol y límite ARC (2GB) aplicados."
 
 info "4. Verificando e instalando K3s (Versión fijada v1.31.1+k3s1)..."
 if ! command -v k3s >/dev/null 2>&1; then
@@ -165,6 +168,8 @@ fi
 
 info "7. Aplicando infraestructura GitOps (Root Application)..."
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+kubectl -n argocd rollout status deployment/argocd-server --timeout=120s || warn "ArgoCD Server aún iniciando."
+kubectl -n kube-system rollout status deployment/sealed-secrets-controller --timeout=120s || warn "Sealed Secrets controller aún iniciando."
 kubectl apply -f "${REPO_DIR}/infrastructure/root-application.yaml"
 
 pass "============================================================"

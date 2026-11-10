@@ -61,7 +61,7 @@ spec:
           periodSeconds: 10
         env:
         - name: TZ
-          value: "America/Mexico_City"
+          value: "America/Argentina/Buenos_Aires"
         - name: WORKGROUP
           value: "ESCUELA"
         - name: USER_PROFESORES
@@ -109,25 +109,23 @@ spec:
         - "-g"
         - "shadow:localtime = no"
         - "-s"
-        - "profesores;/samba/profesores;yes;no;no;profesor,@docentes,@directivos,juan.perez,admin,admin.it,orielmeza;admin,admin.it,orielmeza;profesor,@docentes,@directivos,juan.perez,admin,admin.it,orielmeza;Espacio Exclusivo Docente"
+        - "profesores;/samba/profesores;yes;no;no;profesor,@docentes,@directivos,admin;admin;profesor,@docentes,@directivos,admin;Espacio Exclusivo Docente"
         - "-s"
-        - "mi-espacio;/samba/alumnos/%U;yes;no;no;all;admin,admin.it;all;Espacio Privado Individual del Estudiante/Docente"
+        - "mi-espacio;/samba/alumnos/%U;yes;no;no;all;admin;all;Espacio Privado Individual del Estudiante/Docente"
         - "-s"
-        - "entregas;/samba/alumnos/entregas;yes;no;no;alumno,profesor,@alumnos,@docentes,@directivos,maria.gomez,juan.perez,admin,admin.it,orielmeza;admin,admin.it,orielmeza;alumno,profesor,@alumnos,@docentes,@directivos,maria.gomez,juan.perez,admin,admin.it,orielmeza;Buzon de Entregas y Evaluaciones"
+        - "entregas;/samba/alumnos/entregas;yes;no;no;alumno,profesor,@alumnos,@docentes,@directivos,admin;admin;alumno,profesor,@alumnos,@docentes,@directivos,admin;Buzon de Entregas y Evaluaciones"
         - "-s"
-        - "alumnos;/samba/alumnos;yes;yes;no;alumno,profesor,@alumnos,@docentes,@directivos,maria.gomez,juan.perez,admin,admin.it,orielmeza;admin,admin.it,orielmeza;profesor,@docentes,@directivos,juan.perez,admin,admin.it,orielmeza;Recurso General Alumnos (Solo Lectura Alumnos Escritura Docentes)"
+        - "alumnos;/samba/alumnos;yes;no;no;alumno,profesor,@alumnos,@docentes,@directivos,admin;admin;profesor,@docentes,@directivos,admin;Recurso General Alumnos (Solo Lectura Alumnos Escritura Docentes)"
         - "-s"
         - "publico;/samba/publico;yes;no;no;all;none;all;Material Publico Institucional"
         - "-s"
-        - "nextcloud;/samba/nextcloud;yes;no;no;admin,admin.it;admin,admin.it;admin,admin.it;Respaldo Administrativo Nextcloud"
+        - "nextcloud;/samba/nextcloud;yes;no;no;admin,@directivos;admin;admin,@directivos;Respaldo Administrativo Nextcloud"
         - "-u"
         - "$(USER_PROFESORES)"
         - "-u"
         - "$(USER_ALUMNOS)"
         - "-u"
         - "$(USER_ADMIN)"
-        - "-u"
-        - "admin;NasEscuela2026!"
         volumeMounts:
         - name: samba-storage
           mountPath: /samba
@@ -147,5 +145,5 @@ spec:
           claimName: samba-pvc
       - name: samba-private
         hostPath:
-          path: /tank/nas/.samba-private
+          path: /var/lib/nas-samba-private
           type: DirectoryOrCreate
