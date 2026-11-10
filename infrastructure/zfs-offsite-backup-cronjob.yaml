@@ -31,13 +31,11 @@ spec:
               echo "[$(date -Iseconds)] INICIANDO BACKUP OFFSITE 3-2-1 (CLOUDFLARE R2)"
               echo "============================================================"
 
-              # Verificar existencia de credenciales R2 y clave de cifrado
               if [ -z "${R2_ACCOUNT_ID:-}" ] || [ -z "${R2_ACCESS_KEY_ID:-}" ] || [ -z "${BACKUP_ENCRYPTION_KEY:-}" ]; then
                 echo "[ERROR] Credenciales R2 o BACKUP_ENCRYPTION_KEY ausentes en el SealedSecret."
                 exit 1
               fi
 
-              # Configuración dinámica de rclone para Cloudflare R2 (API S3)
               export RCLONE_CONFIG_R2_TYPE="s3"
               export RCLONE_CONFIG_R2_PROVIDER="Cloudflare"
               export RCLONE_CONFIG_R2_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID"
@@ -49,44 +47,66 @@ spec:
               BUCKET="${R2_BUCKET_NAME:-nas-backup}"
               DATE_TAG=$(date +%Y%m%d-%H%M%S)
               DAY_OF_WEEK=$(date +%u)
-              CURR_SNAP="tank/nas@offsite-sync-${DATE_TAG}"
 
-              echo "[INFO] Localizando snapshot base previo para diferencial incremental..."
-              PREV_SNAP=$(nsenter --target 1 --mount --uts --ipc --net --pid -- \
-                zfs list -t snapshot -o name -s creation -H | grep '^tank/nas@offsite-sync-' | tail -n 1 || true)
+              echo "[INFO] Localizando último snapshot FULL semanal base (ordenado por creación)..."
+              BASE_FULL_SNAP=$(nsenter --target 1 --mount --uts --ipc --net --pid -- \
+                zfs list -t snapshot -o name -s creation -H tank/nas 2>/dev/null | grep '^tank/nas@offsite-full-' | tail -n 1 || true)
 
-              echo "[INFO] Creando punto de corte inmutable: ${CURR_SNAP}..."
-              nsenter --target 1 --mount --uts --ipc --net --pid -- zfs snapshot -r "$CURR_SNAP"
+              export BACKUP_ENCRYPTION_KEY
 
-              if [ "$DAY_OF_WEEK" = "7" ] || [ -z "$PREV_SNAP" ]; then
+              if [ "$DAY_OF_WEEK" = "7" ] || [ -z "$BASE_FULL_SNAP" ]; then
+                CURR_SNAP="tank/nas@offsite-full-${DATE_TAG}"
                 REMOTE_OBJECT="r2:${BUCKET}/weekly/tank-full-${DATE_TAG}.zfs.enc"
-                echo "[INFO] Ejecutando FULL BACKUP SEMANAL: ${CURR_SNAP} -> ${REMOTE_OBJECT}"
-                export BACKUP_ENCRYPTION_KEY
-                nsenter --target 1 --mount --uts --ipc --net --pid -- env BACKUP_ENCRYPTION_KEY="$BACKUP_ENCRYPTION_KEY" sh -c \
-                  'zfs send -c -R "$1" | openssl enc -aes-256-cbc -salt -pbkdf2 -pass env:BACKUP_ENCRYPTION_KEY' \
-                  -- "$CURR_SNAP" | \
-                  rclone rcat "$REMOTE_OBJECT"
+                echo "[INFO] Creando snapshot base semanal: ${CURR_SNAP}..."
+                nsenter --target 1 --mount --uts --ipc --net --pid -- zfs snapshot -r "$CURR_SNAP"
+
+                echo "[INFO] Ejecutando FULL BACKUP SEMANAL (PBKDF2 600k iter + HMAC-SHA256): ${CURR_SNAP} -> ${REMOTE_OBJECT}"
+                nsenter --target 1 --mount --uts --ipc --net --pid -- env BACKUP_ENCRYPTION_KEY="$BACKUP_ENCRYPTION_KEY" sh -c '
+                  TMP_ENC="/tmp/nas-tunnel/offsite-stream.zfs.enc"
+                  rm -f "$TMP_ENC" "${TMP_ENC}.hmac"
+                  zfs send -c -R "$1" | openssl enc -aes-256-cbc -salt -pbkdf2 -iter 600000 -pass env:BACKUP_ENCRYPTION_KEY -out "$TMP_ENC"
+                  openssl dgst -sha256 -hmac "$BACKUP_ENCRYPTION_KEY" -r "$TMP_ENC" | awk "{print \$1}" > "${TMP_ENC}.hmac"
+                ' -- "$CURR_SNAP"
+                rclone copyto "/tmp/nas-tunnel/offsite-stream.zfs.enc" "$REMOTE_OBJECT"
+                rclone copyto "/tmp/nas-tunnel/offsite-stream.zfs.enc.hmac" "${REMOTE_OBJECT}.hmac"
+                rm -f "/tmp/nas-tunnel/offsite-stream.zfs.enc" "/tmp/nas-tunnel/offsite-stream.zfs.enc.hmac"
               else
-                REMOTE_OBJECT="r2:${BUCKET}/incremental/tank-inc-${DATE_TAG}.zfs.enc"
-                echo "[INFO] Ejecutando BACKUP INCREMENTAL DIARIO: ${PREV_SNAP} -> ${CURR_SNAP} (${REMOTE_OBJECT})"
-                export BACKUP_ENCRYPTION_KEY
-                nsenter --target 1 --mount --uts --ipc --net --pid -- env BACKUP_ENCRYPTION_KEY="$BACKUP_ENCRYPTION_KEY" sh -c \
-                  'zfs send -c -R -i "$1" "$2" | openssl enc -aes-256-cbc -salt -pbkdf2 -pass env:BACKUP_ENCRYPTION_KEY' \
-                  -- "$PREV_SNAP" "$CURR_SNAP" | \
-                  rclone rcat "$REMOTE_OBJECT"
+                BASE_TAG="${BASE_FULL_SNAP#tank/nas@offsite-full-}"
+                CURR_SNAP="tank/nas@offsite-inc-${DATE_TAG}"
+                REMOTE_OBJECT="r2:${BUCKET}/incremental/tank-diff-from-${BASE_TAG}-to-${DATE_TAG}.zfs.enc"
+                echo "[INFO] Creando snapshot diferencial diario: ${CURR_SNAP} (base: ${BASE_FULL_SNAP})..."
+                nsenter --target 1 --mount --uts --ipc --net --pid -- zfs snapshot -r "$CURR_SNAP"
+
+                echo "[INFO] Ejecutando BACKUP DIFERENCIAL DIARIO (anclado a base semanal ${BASE_FULL_SNAP}) -> ${REMOTE_OBJECT}"
+                nsenter --target 1 --mount --uts --ipc --net --pid -- env BACKUP_ENCRYPTION_KEY="$BACKUP_ENCRYPTION_KEY" sh -c '
+                  TMP_ENC="/tmp/nas-tunnel/offsite-stream.zfs.enc"
+                  rm -f "$TMP_ENC" "${TMP_ENC}.hmac"
+                  zfs send -c -R -i "$1" "$2" | openssl enc -aes-256-cbc -salt -pbkdf2 -iter 600000 -pass env:BACKUP_ENCRYPTION_KEY -out "$TMP_ENC"
+                  openssl dgst -sha256 -hmac "$BACKUP_ENCRYPTION_KEY" -r "$TMP_ENC" | awk "{print \$1}" > "${TMP_ENC}.hmac"
+                ' -- "$BASE_FULL_SNAP" "$CURR_SNAP"
+                rclone copyto "/tmp/nas-tunnel/offsite-stream.zfs.enc" "$REMOTE_OBJECT"
+                rclone copyto "/tmp/nas-tunnel/offsite-stream.zfs.enc.hmac" "${REMOTE_OBJECT}.hmac"
+                rm -f "/tmp/nas-tunnel/offsite-stream.zfs.enc" "/tmp/nas-tunnel/offsite-stream.zfs.enc.hmac"
               fi
 
-              # Registrar timestamp de último backup exitoso para el exportador Prometheus
               nsenter --target 1 --mount --uts --ipc --net --pid -- sh -c \
                 'mkdir -p /tmp/nas-tunnel && date +%s > /tmp/nas-tunnel/last_offsite_backup_ts'
 
-              echo "[INFO] Aplicando política de retención GFS (7 días incrementales, 30 días semanales)..."
-              rclone delete --min-age 7d "r2:$BUCKET/incremental/" 2>/dev/null || true
-              rclone delete --min-age 30d "r2:$BUCKET/weekly/" 2>/dev/null || true
-              rclone delete --min-age 7d "r2:$BUCKET/daily/" 2>/dev/null || true
+              echo "[INFO] Aplicando retención GFS segura (14d diferenciales, 35d semanales completos)..."
+              rclone delete --min-age 14d "r2:$BUCKET/incremental/" 2>/dev/null || true
+              rclone delete --min-age 35d "r2:$BUCKET/weekly/" 2>/dev/null || true
+
+              nsenter --target 1 --mount --uts --ipc --net --pid -- sh -c '
+                zfs list -t snapshot -o name -s creation -H tank/nas 2>/dev/null | grep "^tank/nas@offsite-inc-" | head -n -14 | while read -r s; do
+                  zfs destroy -r "$s" 2>/dev/null || true
+                done
+                zfs list -t snapshot -o name -s creation -H tank/nas 2>/dev/null | grep "^tank/nas@offsite-full-" | head -n -5 | while read -r s; do
+                  zfs destroy -r "$s" 2>/dev/null || true
+                done
+              '
 
               echo "============================================================"
-              echo "[$(date -Iseconds)] BACKUP OFFSITE COMPLETADO Y ROTADO EXITOSAMENTE"
+              echo "[$(date -Iseconds)] BACKUP OFFSITE COMPLETADO Y AUTENTICADO (HMAC-SHA256)"
               echo "============================================================"
             securityContext:
               privileged: true
@@ -122,6 +142,8 @@ spec:
               mountPath: /dev
             - name: zfs-config
               mountPath: /etc/zfs
+            - name: tunnel-volume
+              mountPath: /tmp/nas-tunnel
             resources:
               requests:
                 cpu: "100m"
@@ -137,3 +159,7 @@ spec:
           - name: zfs-config
             hostPath:
               path: /etc/zfs
+          - name: tunnel-volume
+            hostPath:
+              path: /tmp/nas-tunnel
+              type: DirectoryOrCreate

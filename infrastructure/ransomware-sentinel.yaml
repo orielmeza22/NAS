@@ -23,7 +23,10 @@ spec:
       hostPID: true
       containers:
         - name: sentinel
-          image: ubuntu:22.04
+          image: ubuntu:22.04@sha256:09506232a8004baa32c47d68f1e5c307d648fdd59f5e7eaa42aaf87914100db3
+          env:
+            - name: SENTINEL_MODE
+              value: "quarantine_and_alert"
           command: ["/bin/bash", "-c"]
           args:
             - |
@@ -99,9 +102,10 @@ spec:
                   echo "1" > /tmp/nas-tunnel/ransomware_status
                 fi
 
-                # 4. Asegurar Inmutabilidad (zfs hold) en snapshots recientes y liberar los que envejecen
+                # 4. Asegurar Inmutabilidad (zfs hold) ordenada por fecha de creación (-s creation)
+                # Nunca ejecuta zfs rollback automático sin confirmación humana para evitar pérdida de datos por falsos positivos
                 nsenter --target 1 --mount --uts --ipc --net --pid -- sh -c '
-                  LAST_SNAPS=$(zfs list -t snapshot -o name -H 2>/dev/null | tail -n 5)
+                  LAST_SNAPS=$(zfs list -t snapshot -o name -s creation -H tank/nas 2>/dev/null | grep -E "^tank/nas@(GMT-|k8s-auto-)" | tail -n 5)
                   echo "$LAST_SNAPS" | while read -r snap; do
                     [ -n "$snap" ] || continue
                     if ! zfs holds "$snap" 2>/dev/null | grep -q "sentinel-immutable"; then
@@ -109,7 +113,7 @@ spec:
                     fi
                   done
                   # Liberar candado en snapshots antiguos para no bloquear rotación/limpieza
-                  zfs list -t snapshot -o name -H 2>/dev/null | head -n -5 | while read -r oldsnap; do
+                  zfs list -t snapshot -o name -s creation -H tank/nas 2>/dev/null | grep -E "^tank/nas@(GMT-|k8s-auto-)" | head -n -5 | while read -r oldsnap; do
                     [ -n "$oldsnap" ] || continue
                     if zfs holds "$oldsnap" 2>/dev/null | grep -q "sentinel-immutable"; then
                       zfs release sentinel-immutable "$oldsnap" 2>/dev/null || true

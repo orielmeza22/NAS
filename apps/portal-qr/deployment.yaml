@@ -22,31 +22,37 @@ spec:
         app.kubernetes.io/component: web-portal
         app.kubernetes.io/part-of: nas-platform
     spec:
+      automountServiceAccountToken: false
       hostPID: true
       containers:
       - name: control-center
-        image: python:3.11-alpine
-        command: ["/bin/sh", "-c"]
-        args:
-          - |
-            set -u
-            apk add --no-cache util-linux bash curl openssl >/dev/null 2>&1 || true
-            mkdir -p /usr/share/nginx/html /tmp/nas-tunnel
-            cp /app-config/index.html /usr/share/nginx/html/index.html
-            exec python3 /app-config/server.py
+        image: python:3.11-alpine@sha256:c8db9fc7f3437f929b45bfeb7790c11b3b7198ba2633cf0a9b3556d3498f881e
+        command: ["python3", "/app-config/server.py"]
         securityContext:
-          privileged: true
+          privileged: false
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+              - ALL
+            add:
+              - NET_BIND_SERVICE
         ports:
         - containerPort: 80
           name: https
         volumeMounts:
         - name: app-volume
           mountPath: /app-config
+          readOnly: true
+        - name: agent-socket
+          mountPath: /run/nas-agentd
         - name: tunnel-volume
           mountPath: /tmp/nas-tunnel
         - name: tls-volume
           mountPath: /tmp/nas-tls
           readOnly: true
+        - name: tmp-volume
+          mountPath: /tmp/work
         startupProbe:
           httpGet:
             path: /api/public/status
@@ -80,10 +86,39 @@ spec:
           limits:
             cpu: "250m"
             memory: "192Mi"
+      - name: nas-agentd
+        image: python:3.11-alpine@sha256:c8db9fc7f3437f929b45bfeb7790c11b3b7198ba2633cf0a9b3556d3498f881e
+        command: ["python3", "/app-config/nas_agentd.py"]
+        securityContext:
+          privileged: true
+          readOnlyRootFilesystem: true
+        volumeMounts:
+        - name: app-volume
+          mountPath: /app-config
+          readOnly: true
+        - name: agent-socket
+          mountPath: /run/nas-agentd
+        - name: tunnel-volume
+          mountPath: /tmp/nas-tunnel
+        - name: agent-logs
+          mountPath: /var/log
+        resources:
+          requests:
+            cpu: "20m"
+            memory: "32Mi"
+          limits:
+            cpu: "200m"
+            memory: "128Mi"
       volumes:
       - name: app-volume
         configMap:
           name: portal-qr-config
+      - name: agent-socket
+        emptyDir: {}
+      - name: tmp-volume
+        emptyDir: {}
+      - name: agent-logs
+        emptyDir: {}
       - name: tunnel-volume
         hostPath:
           path: /tmp/nas-tunnel

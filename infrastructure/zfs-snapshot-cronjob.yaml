@@ -22,7 +22,7 @@ spec:
           hostPID: true
           containers:
           - name: zfs-snapshot
-            image: ubuntu:22.04
+            image: ubuntu:22.04@sha256:09506232a8004baa32c47d68f1e5c307d648fdd59f5e7eaa42aaf87914100db3
             command: ["/bin/bash", "-c"]
             args:
             - |
@@ -38,9 +38,10 @@ spec:
                 zfs set snapdir=visible tank/nas/publico 2>/dev/null || true
               '
               echo "[$(date -Iseconds)] Snapshot created and snapdir configured successfully."
-              # Cleanup: remove snapshots older than the 30 most recent, releasing sentinel holds first
+              # Cleanup: sort strictly by creation timestamp (-s creation) on root dataset tank/nas
+              # and exclude offsite R2 backup base snapshots (offsite-full-* / offsite-inc-*)
               nsenter --target 1 --mount --uts --ipc --net --pid -- sh -c '
-                zfs list -t snapshot -o name -H 2>/dev/null | grep -E "k8s-auto-|GMT-" | head -n -30 | while read -r snap; do
+                zfs list -t snapshot -o name -s creation -H tank/nas 2>/dev/null | grep -E "^tank/nas@(k8s-auto-|GMT-)" | head -n -30 | while read -r snap; do
                   zfs release sentinel-immutable "$snap" 2>/dev/null || true
                   zfs destroy -r "$snap" 2>/dev/null || true
                 done

@@ -21,17 +21,50 @@ ROLE_PERMISSIONS = {
         "users.*",
         "network.*",
         "backups.*",
+        "backup.*",
         "services.*",
-        "shell.*"
+        "shell.*",
+        "audit.*",
+        "sentinel.*",
+        "files.*",
+        "samba.*",
+        "snapshots.*",
+        "dr.*",
+        "ups.*",
+        "pki.*",
+        "occ.*",
+        "postgres.*",
+        "cron.*",
     },
     ROLE_OPERATOR: {
         "users.list",
         "users.create",
+        "users.sync_nextcloud",
+        "users.import_csv",
         "users.reset_password",
         "zfs.quota.set",
+        "zfs.dataset.list",
+        "zfs.dataset.set_quota",
+        "zfs.pool.status",
         "system.status",
+        "system.top_processes",
+        "storage.disks.list",
         "storage.smart.status",
-        "backups.snapshots.list"
+        "storage.smart.test",
+        "backups.snapshots.list",
+        "snapshots.list",
+        "snapshots.create",
+        "services.list",
+        "services.logs",
+        "samba.shares.list",
+        "samba.sessions",
+        "files.list_all",
+        "files.mkdir",
+        "ups.status",
+        "cron.list",
+        "audit.logs.list",
+        "network.status",
+        "pki.download_ca",
     }
 }
 
@@ -66,21 +99,52 @@ def verify_totp(secret, token, window=1):
 
 def check_permission(user_role, required_action):
     """Validates whether user_role has permission for required_action."""
+    if not user_role or not required_action:
+        return False
     perms = ROLE_PERMISSIONS.get(user_role, set())
-    if "zfs.*" in perms and required_action.startswith("zfs."):
+    if required_action in perms:
         return True
-    if "storage.*" in perms and required_action.startswith("storage."):
-        return True
-    if "system.*" in perms and required_action.startswith("system."):
-        return True
-    if "users.*" in perms and required_action.startswith("users."):
-        return True
-    if "network.*" in perms and required_action.startswith("network."):
-        return True
-    if "backups.*" in perms and required_action.startswith("backups."):
-        return True
-    if "services.*" in perms and required_action.startswith("services."):
-        return True
-    if "shell.*" in perms and required_action.startswith("shell."):
-        return True
-    return required_action in perms
+    prefix = required_action.split(".", 1)[0] + ".*"
+    return prefix in perms
+
+
+def authenticate_portal_user(username, password, totp_code="", admin_pass="", operator_pass="", totp_secret=""):
+    """
+    Validates user credentials against role-specific passwords and optional RFC 6238 TOTP.
+    Returns (authenticated: bool, normalized_user: str, role: str, error_msg: str).
+    """
+    norm_user = (username or "").strip().lower() or "admin"
+    if not password:
+        return False, norm_user, "", "Usuario o contraseña incorrectos."
+
+    role = ""
+    if norm_user in ("admin", "directivo", "root"):
+        if admin_pass and secrets.compare_digest(password, admin_pass):
+            role = ROLE_SUPERADMIN
+    elif norm_user in ("operador", "operator", "soporte", "docente"):
+        effective_op_pass = operator_pass or admin_pass
+        if effective_op_pass and secrets.compare_digest(password, effective_op_pass):
+            role = ROLE_OPERATOR
+
+    if not role:
+        return False, norm_user, "", "Usuario o contraseña incorrectos."
+
+    if totp_secret:
+        if not totp_code or not verify_totp(totp_secret, str(totp_code)):
+            return False, norm_user, "", "Código de segundo factor (2FA TOTP) inválido o ausente."
+
+    return True, norm_user, role, ""
+
+
+def resolve_client_ip(remote_addr, x_forwarded_for="", trusted_proxies=None):
+    """
+    Returns remote_addr unless remote_addr is explicitly listed in trusted_proxies,
+    preventing X-Forwarded-For spoofing to bypass rate-limiting.
+    """
+    peer_ip = (remote_addr or "").strip() or "0.0.0.0"
+    trusted = set(trusted_proxies or ())
+    if peer_ip in trusted and x_forwarded_for:
+        first_hop = x_forwarded_for.split(",")[0].strip()
+        if first_hop:
+            return first_hop
+    return peer_ip

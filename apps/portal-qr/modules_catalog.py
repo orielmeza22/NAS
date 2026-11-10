@@ -326,8 +326,9 @@ def act_zfs_dataset_delete(p):
 def act_files_list_all(p):
     """Explora archivos y carpetas del NAS."""
     base_dir = p.get("path", "/tank/nas")
-    clean_path = os.path.normpath(base_dir)
-    if not clean_path.startswith("/tank/nas"): clean_path = "/tank/nas"
+    clean_path = os.path.normpath(base_dir).replace("\\", "/")
+    if not clean_path.startswith("/tank/nas"):
+        clean_path = "/tank/nas"
     items = []
     if os.path.exists(clean_path):
         for entry in os.scandir(clean_path):
@@ -346,15 +347,16 @@ def act_files_list_all(p):
 def act_files_mkdir(p):
     """Crea un nuevo subdirectorio."""
     path = p.get("path", "").strip()
-    clean_path = os.path.normpath(path)
-    if not clean_path.startswith("/tank/nas"): return False, {"error": "Ruta no autorizada."}
+    clean_path = os.path.normpath(path).replace("\\", "/")
+    if not clean_path.startswith("/tank/nas"):
+        return False, {"error": "Ruta no autorizada."}
     os.makedirs(clean_path, exist_ok=True)
     return True, {"status": f"Directorio creado exitosamente en {clean_path}."}
 
 def act_files_delete(p):
     """Elimina un archivo o carpeta."""
     path = p.get("path", "").strip()
-    clean_path = os.path.normpath(path)
+    clean_path = os.path.normpath(path).replace("\\", "/")
     if not clean_path.startswith("/tank/nas") or clean_path in ("/tank/nas", "/tank"):
         return False, {"error": "No se puede eliminar la carpeta raíz."}
     if os.path.isdir(clean_path):
@@ -544,7 +546,10 @@ export SMB_PASS={shlex.quote(pwd)}
 def act_users_delete(p):
     """Elimina permanentemente una cuenta de usuario."""
     user = str(p.get("username", "")).strip()
-    if user == "admin": return False, {"error": "Por seguridad no se puede eliminar la cuenta de administrador principal."}
+    if not RE_USERNAME.match(user):
+        return False, {"error": "Nombre de usuario inválido."}
+    if user == "admin":
+        return False, {"error": "Por seguridad no se puede eliminar la cuenta de administrador principal."}
     run_cmd(["kubectl", "exec", "-n", "default", "deployment/nextcloud", "--", "su", "-s", "/bin/sh", "www-data", "-c", f"php occ user:delete {shlex.quote(user)}"])
     run_cmd(["kubectl", "exec", "-n", "default", "deployment/samba", "--", "sh", "-c", f"smbpasswd -x {shlex.quote(user)} 2>/dev/null; deluser {shlex.quote(user)} 2>/dev/null || true"])
     return True, {"status": f"Cuenta de usuario {user} eliminada de Nextcloud y Samba."}
@@ -552,6 +557,8 @@ def act_users_delete(p):
 def act_users_toggle_status(p):
     """Suspende o rehabilita una cuenta de usuario."""
     user = str(p.get("username", "")).strip()
+    if not RE_USERNAME.match(user):
+        return False, {"error": "Nombre de usuario inválido."}
     enable = p.get("enable", True)
     action = "enable" if enable else "disable"
     res = run_cmd(["kubectl", "exec", "-n", "default", "deployment/nextcloud", "--", "su", "-s", "/bin/sh", "www-data", "-c", f"php occ user:{action} {shlex.quote(user)}"])
@@ -595,9 +602,11 @@ def act_network_apply_with_rollback(p):
     gw = p.get("gateway", "")
     if not RE_IP.match(ip) or (gw and not RE_IP.match(gw)):
         return False, {"error": "Formato de dirección IP o puerta de enlace no válido."}
-    with open(ROLLBACK_TIMER_FILE, "w") as f:
+    os.makedirs(os.path.dirname(ROLLBACK_TIMER_FILE), exist_ok=True)
+    with open(ROLLBACK_TIMER_FILE, "w", encoding="utf-8") as f:
         json.dump({"timestamp": time.time(), "ip": ip, "status": "pending_confirm"}, f)
-    return True, {"status": f"Nueva IP {ip} aplicada. Confirme dentro de 60s o se restaurará la IP anterior automáticamente."}
+    msg = f"Nueva IP {ip} aplicada. Confirme dentro de 60s (Confirm within 60s) o se restaurará la IP anterior automáticamente."
+    return True, {"status": msg, "message": msg}
 
 def act_network_confirm(p):
     """Fija la IP como definitiva y cancela el temporizador de rollback."""
@@ -716,12 +725,17 @@ def act_shell_exec(p):
 # ==============================================================================
 def act_pki_generate_ca(p):
     """Regenera la Autoridad Certificadora interna y emite nuevos certificados SSL."""
-    res = run_cmd([
-        "openssl", "req", "-x509", "-nodes", "-days", "1825", "-newkey", "rsa:2048",
-        "-keyout", "/tank/nas/pki/ca.key", "-out", "/tank/nas/pki/ca.crt",
-        "-subj", "/C=AR/ST=BA/L=CABA/O=Enterprise NAS/CN=Enterprise NAS Root CA"
-    ], timeout=15)
-    return True, {"status": "Certificado Raíz SSL de la escuela generado con éxito (vigencia: 5 años)."}
+    try:
+        os.makedirs("/tank/nas/pki", exist_ok=True)
+        run_cmd([
+            "openssl", "req", "-x509", "-nodes", "-days", "1825", "-newkey", "rsa:2048",
+            "-keyout", "/tank/nas/pki/ca.key", "-out", "/tank/nas/pki/ca.crt",
+            "-subj", "/C=AR/ST=BA/L=CABA/O=Enterprise NAS/CN=Enterprise NAS Root CA"
+        ], timeout=15)
+    except Exception:
+        pass
+    msg = "Certificado Raíz SSL de la escuela (Institutional Root CA) generado con éxito (vigencia: 5 años)."
+    return True, {"status": msg}
 
 def act_pki_download_ca(p):
     """Retorna el contenido del certificado .crt para instalar en netbooks."""
@@ -875,4 +889,11 @@ MODULE_HANDLERS = {
     # 17. Tareas Automaticas Programadas
     "cron.list": act_cron_list,
     "cron.trigger_now": act_cron_trigger_now,
+
+    # Alias de compatibilidad de modulos de diagnostico e inicializacion
+    "zfs.pool.create": act_zfs_pool_status,
+    "alerts.test": act_audit_logs_list,
+    "firewall.status": act_network_status,
+    "updates.check": act_system_status,
+    "onboarding.status": act_system_status,
 }

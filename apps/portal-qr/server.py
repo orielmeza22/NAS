@@ -20,6 +20,12 @@ from socketserver import ThreadingMixIn
 # Persistent state storage and asynchronous job execution engine
 import portal_state
 from task_engine import GLOBAL_TASK_ENGINE
+from auth_rbac import (
+    authenticate_portal_user,
+    check_permission,
+    resolve_client_ip,
+    ROLE_SUPERADMIN,
+)
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
@@ -28,6 +34,11 @@ PORT = 80
 SESSION_TTL_SECONDS = 28800  # 8 hours
 MAX_FAILED_LOGINS = 5
 LOCKOUT_SECONDS = 900  # 15 minutes
+TRUSTED_PROXIES = [
+    ip.strip()
+    for ip in os.environ.get("PORTAL_TRUSTED_PROXIES", "").split(",")
+    if ip.strip()
+]
 
 # Strict validation regexes
 RE_USERNAME = re.compile(r"^[a-zA-Z0-9._-]{3,32}$")
@@ -58,23 +69,34 @@ def run_host_cmd(cmd_list_or_str, timeout=30):
 
 def get_admin_password():
     """
-    Retrieves the cluster admin password strictly from Kubernetes secrets or environment.
+    Retrieves the portal admin password strictly from dedicated portal secrets or environment.
     Never falls back to hardcoded public credentials.
     """
     env_pass = os.environ.get("PORTAL_ADMIN_PASSWORD", "").strip()
     if env_pass:
         return env_pass
 
-    ok, out, _ = run_host_cmd(["kubectl", "get", "secret", "nextcloud-admin-credentials", "-o", "jsonpath={.data.password}"])
-    if ok and out.strip():
-        try:
-            import base64
-            decoded = base64.b64decode(out.strip()).decode("utf-8").strip()
-            if decoded:
-                return decoded
-        except Exception:
-            pass
+    for secret_name in ("portal-admin-credentials", "nextcloud-admin-credentials"):
+        ok, out, _ = run_host_cmd(["kubectl", "get", "secret", secret_name, "-o", "jsonpath={.data.password}"])
+        if ok and out.strip():
+            try:
+                import base64
+                decoded = base64.b64decode(out.strip()).decode("utf-8").strip()
+                if decoded:
+                    return decoded
+            except Exception:
+                pass
     return ""
+
+
+def get_operator_password():
+    """Retrieves optional dedicated operator password from environment or secret."""
+    return os.environ.get("PORTAL_OPERATOR_PASSWORD", "").strip()
+
+
+def get_totp_secret():
+    """Retrieves optional RFC 6238 TOTP secret for 2FA enforcement."""
+    return os.environ.get("PORTAL_TOTP_SECRET", "").strip()
 
 def sanitize_path(relpath, base="/tank/nas"):
     """
@@ -90,10 +112,11 @@ def sanitize_path(relpath, base="/tank/nas"):
 
 class NasApiHandler(BaseHTTPRequestHandler):
     def get_client_ip(self):
-        forwarded = self.headers.get("X-Forwarded-For")
-        if forwarded:
-            return forwarded.split(",")[0].strip()
-        return self.client_address[0]
+        return resolve_client_ip(
+            self.client_address[0],
+            self.headers.get("X-Forwarded-For", ""),
+            TRUSTED_PROXIES,
+        )
 
     def check_rate_limit(self, ip):
         allowed, remaining = portal_state.check_rate_limit(ip, MAX_FAILED_LOGINS, LOCKOUT_SECONDS)
@@ -235,28 +258,38 @@ class NasApiHandler(BaseHTTPRequestHandler):
 
             username = str(body.get("username", "")).strip().lower()
             password = str(body.get("password", ""))
+            totp_code = str(body.get("totp", "") or body.get("totp_code", "")).strip()
             real_admin_pass = get_admin_password()
+            operator_pass = get_operator_password()
+            totp_secret = get_totp_secret()
             if not real_admin_pass:
                 self.send_json({"success": False, "error": "Servicio de autenticacion no configurado (credencial ausente)."}, 500)
                 return
 
-            if (username in ("admin", "directivo", "root", "") and secrets.compare_digest(password, real_admin_pass)):
+            auth_ok, norm_user, user_role, err_msg = authenticate_portal_user(
+                username,
+                password,
+                totp_code=totp_code,
+                admin_pass=real_admin_pass,
+                operator_pass=operator_pass,
+                totp_secret=totp_secret,
+            )
+            if auth_ok:
                 token = secrets.token_urlsafe(32)
-                user_role = "superadmin"
-                portal_state.create_session(token, username or "admin", user_role, client_ip, SESSION_TTL_SECONDS)
+                portal_state.create_session(token, norm_user, user_role, client_ip, SESSION_TTL_SECONDS)
                 self.reset_failed_logins(client_ip)
-                portal_state.log_audit_event(username or "admin", "auth.login", {}, True, "Inicio de sesión correcto", client_ip)
+                portal_state.log_audit_event(norm_user, "auth.login", {"role": user_role}, True, "Inicio de sesión correcto", client_ip)
                 self.send_json({
                     "success": True,
                     "token": token,
-                    "username": username or "admin",
+                    "username": norm_user,
                     "role": user_role,
                     "expires_in": SESSION_TTL_SECONDS
                 })
             else:
                 self.record_failed_login(client_ip)
-                portal_state.log_audit_event(username or "unknown", "auth.login_failed", {}, False, "Contraseña o usuario incorrecto", client_ip)
-                self.send_json({"success": False, "error": "Usuario o contrasena de administrador incorrectos."}, 401)
+                portal_state.log_audit_event(username or "unknown", "auth.login_failed", {}, False, err_msg or "Credenciales inválidas", client_ip)
+                self.send_json({"success": False, "error": err_msg or "Usuario o contrasena de administrador incorrectos."}, 401)
             return
 
         # STRICT DEVSECOPS: Require valid session token for all actions and APIs
@@ -268,11 +301,20 @@ class NasApiHandler(BaseHTTPRequestHandler):
             action = body.get("action", "")
             params = body.get("params", {})
             user = getattr(self, "auth_user", "admin")
+            role = getattr(self, "auth_role", ROLE_SUPERADMIN)
             client_ip = self.get_client_ip()
+
+            if not check_permission(role, action):
+                portal_state.log_audit_event(user, action, params, False, f"RBAC denegado para rol '{role}'", client_ip)
+                self.send_json({
+                    "success": False,
+                    "error": f"Permiso denegado: el rol '{role}' no tiene autorización para '{action}'."
+                }, 403)
+                return
 
             # Asynchronous execution for long-running operations
             req_async = body.get("async", False) or GLOBAL_TASK_ENGINE.is_action_async(action)
-            print(f"[ACTION ROUTER] action={action}, req_async={req_async}, client_ip={client_ip}", flush=True)
+            print(f"[ACTION ROUTER] action={action}, role={role}, req_async={req_async}, client_ip={client_ip}", flush=True)
             if req_async:
                 task_id = GLOBAL_TASK_ENGINE.submit_task(action, params, user, client_ip)
                 self.send_json({
@@ -284,13 +326,13 @@ class NasApiHandler(BaseHTTPRequestHandler):
                 }, 202)
                 return
 
-            import sys
             if "/app-config" not in sys.path:
                 sys.path.insert(0, "/app-config")
-            from nas_agentd import dispatch_request
-            req = {"user": user, "action": action, "params": params}
-            res = dispatch_request(req)
-            self.send_json(res, 200 if res.get("success") else 400)
+            from nas_agentd import send_agent_request
+            req = {"user": user, "role": role, "action": action, "params": params}
+            res = send_agent_request(req)
+            status_code = 403 if res.get("forbidden") else (200 if res.get("success") else 400)
+            self.send_json(res, status_code)
             return
 
         if path == "/api/tasks/cancel" or (path.startswith("/api/tasks/") and path.endswith("/cancel")):
@@ -585,31 +627,28 @@ class NasApiHandler(BaseHTTPRequestHandler):
             self.send_json({"success": False, "output": "Nombre de usuario o contraseña con formato inválido (solo a-z, 0-9, . _ - de 3 a 32 caracteres)."}, 400)
             return
 
-        quoted_user = shlex.quote(user)
-        quoted_pwd = shlex.quote(pwd)
-
-        nc_cmd = f"kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c 'OC_PASS={quoted_pwd} php /var/www/html/occ user:add --password-from-env {quoted_user}'"
-        ok, out, err = run_host_cmd(nc_cmd)
-
-        smb_cmd = f"kubectl exec deployment/samba -- sh -c 'useradd -M -s /usr/sbin/nologin {quoted_user} 2>/dev/null || true; (echo {quoted_pwd}; echo {quoted_pwd}) | smbpasswd -s -a {quoted_user}'"
-        run_host_cmd(smb_cmd)
-
-        self.send_json({"success": ok, "output": out or err})
+        from modules_catalog import act_users_sync_nextcloud
+        ok, res = act_users_sync_nextcloud({
+            "username": user,
+            "password": pwd,
+            "display_name": body.get("display_name", user),
+            "group": body.get("group", "alumnos"),
+        })
+        self.send_json({"success": ok, "output": res.get("status") or res.get("error", "")}, 200 if ok else 400)
 
     def handle_user_delete(self, body):
+        role = getattr(self, "auth_role", ROLE_SUPERADMIN)
+        if not check_permission(role, "users.delete"):
+            self.send_json({"success": False, "output": "Permiso insuficiente para eliminar cuentas."}, 403)
+            return
         user = body.get("username", "").strip()
         if not RE_USERNAME.match(user) or user == "admin":
             self.send_json({"success": False, "output": "Operación denegada para la cuenta protegida o usuario inválido."}, 400)
             return
 
-        quoted_user = shlex.quote(user)
-        nc_cmd = f"kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c 'php /var/www/html/occ user:delete -n {quoted_user}'"
-        ok, out, err = run_host_cmd(nc_cmd)
-
-        smb_cmd = f"kubectl exec deployment/samba -- smbpasswd -x {quoted_user}"
-        run_host_cmd(smb_cmd)
-
-        self.send_json({"success": ok, "output": out or err})
+        from modules_catalog import act_users_delete
+        ok, res = act_users_delete({"username": user})
+        self.send_json({"success": ok, "output": res.get("status") or res.get("error", "")}, 200 if ok else 400)
 
     def handle_user_password(self, body):
         user = body.get("username", "").strip()
@@ -618,33 +657,15 @@ class NasApiHandler(BaseHTTPRequestHandler):
             self.send_json({"success": False, "output": "Parámetros insuficientes o formato no válido."}, 400)
             return
 
-        quoted_user = shlex.quote(user)
-        quoted_pwd = shlex.quote(pwd)
-
-        nc_cmd = f"kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c 'OC_PASS={quoted_pwd} php /var/www/html/occ user:resetpassword --password-from-env {quoted_user}'"
-        ok, out, err = run_host_cmd(nc_cmd)
-
-        smb_cmd = f"kubectl exec deployment/samba -- sh -c '(echo {quoted_pwd}; echo {quoted_pwd}) | smbpasswd -s {quoted_user}'"
-        run_host_cmd(smb_cmd)
-
-        self.send_json({"success": ok, "output": out or err})
+        from modules_catalog import act_users_reset_password
+        ok, res = act_users_reset_password({"username": user, "password": pwd})
+        self.send_json({"success": ok, "output": res.get("status") or res.get("error", "")}, 200 if ok else 400)
 
     def handle_user_csv(self, body):
         csv_data = body.get("csv", "")
-        created = []
-        for line in csv_data.splitlines():
-            parts = [p.strip() for p in line.split(",") if p.strip()]
-            if len(parts) >= 2:
-                u, p = parts[0], parts[1]
-                if RE_USERNAME.match(u) and p:
-                    qu = shlex.quote(u)
-                    qp = shlex.quote(p)
-                    nc_cmd = f"kubectl exec deployment/nextcloud -- su -s /bin/sh www-data -c 'OC_PASS={qp} php /var/www/html/occ user:add --password-from-env {qu}'"
-                    run_host_cmd(nc_cmd)
-                    smb_cmd = f"kubectl exec deployment/samba -- sh -c 'useradd -M -s /usr/sbin/nologin {qu} 2>/dev/null || true; (echo {qp}; echo {qp}) | smbpasswd -s -a {qu}'"
-                    run_host_cmd(smb_cmd)
-                    created.append(u)
-        self.send_json({"success": True, "created": created})
+        from modules_catalog import act_users_import_csv
+        ok, res = act_users_import_csv({"csv": csv_data})
+        self.send_json({"success": ok, "created": res.get("created", 0), "details": res}, 200 if ok else 400)
 
     def handle_files_list(self, relpath):
         clean_path = sanitize_path(relpath)
@@ -951,17 +972,10 @@ if "%NAS_USER%"=="" (
     goto MENU
 )
 
-set /p NAS_PASS="Contrasena: "
-if "%NAS_PASS%"=="" (
-    echo [ERROR] La contrasena no puede estar vacia.
-    pause
-    goto MENU
-)
-
 echo.
-echo Conectando... por favor espere...
+echo Conectando... ingrese su contrasena cuando Windows lo solicite...
 net use %DRIVE% /delete /yes >nul 2>&1
-net use %DRIVE% "\%SERVER_HOST%\%SHARE%" /user:"%NAS_USER%" "%NAS_PASS%" /persistent:yes >nul 2>&1
+net use %DRIVE% "\\%SERVER_HOST%\%SHARE%" /user:"%NAS_USER%" * /persistent:yes
 
 if %errorlevel% equ 0 (
     echo.

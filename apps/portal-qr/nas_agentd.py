@@ -130,6 +130,7 @@ def action_system_status(params):
     return True, {"loadavg": loadavg, "mem": mem_info}
 
 from modules_catalog import MODULE_HANDLERS
+from auth_rbac import check_permission, ROLE_SUPERADMIN
 
 ACTION_CATALOG = {
     "zfs.pool.status": action_zfs_pool_status,
@@ -146,13 +147,22 @@ ACTION_CATALOG.update(MODULE_HANDLERS)
 
 def dispatch_request(req):
     user = req.get("user", "anonymous")
+    role = req.get("role", ROLE_SUPERADMIN)
     action = req.get("action", "")
     params = req.get("params", {})
-    
+
     if action not in ACTION_CATALOG:
         audit_log(user, action, params, False, "Action not found in catalog")
         return {"success": False, "error": f"Action '{action}' is not in the safe catalog"}
-        
+
+    if not check_permission(role, action):
+        audit_log(user, action, params, False, f"RBAC denied for role '{role}'")
+        return {
+            "success": False,
+            "forbidden": True,
+            "error": f"Permiso denegado: el rol '{role}' no está autorizado para ejecutar '{action}'."
+        }
+
     handler = ACTION_CATALOG[action]
     try:
         ok, result = handler(params)
@@ -162,16 +172,45 @@ def dispatch_request(req):
         audit_log(user, action, params, False, str(e))
         return {"success": False, "error": f"Internal execution exception: {str(e)}"}
 
+
+def send_agent_request(req, socket_path=SOCKET_PATH, timeout=35):
+    """
+    Sends an action request from the unprivileged web container to the privileged
+    nas-agentd daemon over the local UNIX domain socket (/run/nas-agentd/agent.sock).
+    Falls back to in-process dispatch_request only in local test environments where
+    the UNIX socket is not mounted.
+    """
+    if hasattr(socket, "AF_UNIX") and os.path.exists(socket_path):
+        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        client.settimeout(timeout)
+        try:
+            client.connect(socket_path)
+            client.sendall(json.dumps(req).encode("utf-8"))
+            chunks = []
+            while True:
+                chunk = client.recv(65536)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            raw_resp = b"".join(chunks).decode("utf-8")
+            return json.loads(raw_resp) if raw_resp else {"success": False, "error": "Empty response from nas-agentd"}
+        except Exception as e:
+            return {"success": False, "error": f"IPC socket communication failure: {str(e)}"}
+        finally:
+            client.close()
+    return dispatch_request(req)
+
+
 def serve():
     if os.path.exists(SOCKET_PATH):
         os.remove(SOCKET_PATH)
     os.makedirs(os.path.dirname(SOCKET_PATH), exist_ok=True)
-    
+
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     server.bind(SOCKET_PATH)
     os.chmod(SOCKET_PATH, 0o660)
     server.listen(16)
-    
+
     while True:
         conn, _ = server.accept()
         try:

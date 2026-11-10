@@ -103,13 +103,18 @@ class TaskEngine:
             portal_state.update_task_progress(task_id, progress=pct, phase=phase_str, append_log=(log_line + "\n") if log_line else None)
 
         try:
-            # Check if handler accepts progress_cb kwarg
-            import inspect
-            sig = inspect.signature(handler)
-            if "progress_cb" in sig.parameters:
-                ok, result = handler(params, progress_cb=progress_cb)
+            from nas_agentd import SOCKET_PATH, send_agent_request
+            if os.path.exists(SOCKET_PATH):
+                resp = send_agent_request({"user": user, "action": action, "params": params}, timeout=120)
+                ok = bool(resp.get("success"))
+                result = resp.get("data") if ok else {"error": resp.get("error", "Fallo en nas-agentd")}
             else:
-                ok, result = handler(params)
+                import inspect
+                sig = inspect.signature(handler)
+                if "progress_cb" in sig.parameters:
+                    ok, result = handler(params, progress_cb=progress_cb)
+                else:
+                    ok, result = handler(params)
 
             if self.is_cancelled(task_id):
                 return
