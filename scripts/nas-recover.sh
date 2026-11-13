@@ -119,6 +119,7 @@ case "$CMD" in
   restore-cloud)
     TARGET_DS="${2:-tank/nas}"
     REMOTE_FILE="${3:-}"
+    FORCE_FLAG="${4:-}"
     info "Iniciando recuperación Bare-Metal real desde Cloudflare R2 hacia dataset: $TARGET_DS..."
 
     if ! kubectl -n kube-system get secret r2-backup-credentials >/dev/null 2>&1; then
@@ -137,24 +138,64 @@ case "$CMD" in
     export RCLONE_CONFIG_R2_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
     export RCLONE_CONFIG_R2_NO_CHECK_BUCKET="true"
 
+    # Devuelve el objeto cifrado más reciente de un prefijo, ignorando las firmas .hmac
+    pick_latest() {
+      rclone lsf -R --files-only "r2:nas-backup/$1" 2>/dev/null |
+        grep -E '[.]zfs[.]enc$' | sort | tail -n 1
+    }
+
     if [ -z "$REMOTE_FILE" ]; then
-      info "Buscando snapshot más reciente en Cloudflare R2..."
-      REMOTE_FILE=$(rclone lsf -R r2:nas-backup/weekly/ 2>/dev/null | sed 's|^|weekly/|' | tail -n 1 || true)
-      if [ -z "$REMOTE_FILE" ]; then
-        REMOTE_FILE=$(rclone lsf -R r2:nas-backup/incremental/ 2>/dev/null | sed 's|^|incremental/|' | tail -n 1 || true)
-      fi
-      if [ -z "$REMOTE_FILE" ]; then
-        REMOTE_FILE=$(rclone lsf -R r2:nas-backup/daily/ 2>/dev/null | sed 's|^|daily/|' | tail -n 1 || true)
-      fi
+      info "Buscando el backup más reciente en Cloudflare R2..."
+      for prefix in weekly/ incremental/ daily/; do
+        REL_NAME="$(pick_latest "$prefix")"
+        if [ -n "$REL_NAME" ]; then
+          REMOTE_FILE="${prefix}${REL_NAME}"
+          break
+        fi
+      done
     fi
 
     if [ -z "$REMOTE_FILE" ]; then
       fail "No se encontraron copias cifradas en el bucket r2:nas-backup"
     fi
 
-    info "Descargando y descifrando en streaming: r2:nas-backup/${REMOTE_FILE} hacia ${TARGET_DS}..."
+    case "$REMOTE_FILE" in
+      *.zfs.enc) : ;;
+      *) fail "La ruta indicada no es un objeto cifrado (.zfs.enc): ${REMOTE_FILE}" ;;
+    esac
+
+    TARGET_MOUNTED="$(sudo zfs get -H -o value mounted "$TARGET_DS" 2>/dev/null || echo no)"
+    if [ "$TARGET_MOUNTED" = "yes" ] && [ "$FORCE_FLAG" != "--force" ]; then
+      fail "El dataset ${TARGET_DS} está montado y en uso. Detenga los servicios o restaure en otro dataset (por ejemplo tank/dr-verify) y luego repita con --force."
+    fi
+
+    TMP_DIR="$(mktemp -d)"
+    trap 'rm -rf "$TMP_DIR"' EXIT
+    TMP_ENC="${TMP_DIR}/objeto.zfs.enc"
+    TMP_HMAC_FILE="${TMP_DIR}/objeto.hmac"
+
+    info "Descargando r2:nas-backup/${REMOTE_FILE} ..."
+    if ! rclone copyto "r2:nas-backup/${REMOTE_FILE}" "$TMP_ENC"; then
+      fail "No se pudo descargar el objeto ${REMOTE_FILE}."
+    fi
+    [ -s "$TMP_ENC" ] || fail "El objeto descargado está vacío."
+
+    if rclone copyto "r2:nas-backup/${REMOTE_FILE}.hmac" "$TMP_HMAC_FILE" 2>/dev/null && [ -s "$TMP_HMAC_FILE" ]; then
+      EXPECTED_HMAC=$(tr -d -c '0123456789abcdef' < "$TMP_HMAC_FILE")
+      ACTUAL_HMAC=$(openssl dgst -sha256 -hmac "$BACKUP_ENCRYPTION_KEY" -r "$TMP_ENC" | awk '{print $1}')
+      if [ "$EXPECTED_HMAC" != "$ACTUAL_HMAC" ]; then
+        fail "La firma HMAC-SHA256 no coincide: el objeto está corrupto o fue alterado. Restauración cancelada sin escribir datos."
+      fi
+      info "Firma HMAC-SHA256 verificada."
+    else
+      warn "El objeto no tiene firma .hmac asociada: se continúa sin verificación de integridad."
+    fi
+
+    info "Descifrando y enviando a ${TARGET_DS} ..."
     export BACKUP_ENCRYPTION_KEY
-    rclone cat "r2:nas-backup/${REMOTE_FILE}" |       openssl enc -d -aes-256-cbc -salt -pbkdf2 -pass env:BACKUP_ENCRYPTION_KEY |       sudo zfs receive -F "$TARGET_DS"
+    if ! openssl enc -d -aes-256-cbc -salt -pbkdf2 -iter 600000 -pass env:BACKUP_ENCRYPTION_KEY < "$TMP_ENC" | sudo zfs receive -F "$TARGET_DS"; then
+      fail "La restauración sobre ${TARGET_DS} falló (descifrado o zfs receive)."
+    fi
 
     pass "Dataset ZFS restaurado exitosamente desde la nube."
     sudo zfs list "$TARGET_DS"
