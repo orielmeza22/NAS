@@ -27,6 +27,8 @@ spec:
             args:
             - |
               set -euo pipefail
+              trap 'rm -f /backup-tmp/offsite-stream.zfs.enc /backup-tmp/offsite-stream.zfs.enc.hmac 2>/dev/null || true' EXIT
+
               echo "============================================================"
               echo "[$(date -Iseconds)] INICIANDO BACKUP OFFSITE 3-2-1 (CLOUDFLARE R2)"
               echo "============================================================"
@@ -54,6 +56,15 @@ spec:
 
               export BACKUP_ENCRYPTION_KEY
 
+              # El stream cifrado se materializa temporalmente: si no hay espacio en el
+              # pool, es preferible abortar antes que llenar el disco del sistema.
+              mkdir -p /backup-tmp
+              AVAIL_KB=$(df -Pk /backup-tmp | awk 'NR==2 {print $4}')
+              if [ "${AVAIL_KB:-0}" -lt 1048576 ]; then
+                echo "[ERROR] Menos de 1 GB libre en /backup-tmp (${AVAIL_KB} KB). Backup cancelado."
+                exit 1
+              fi
+
               if [ "$DAY_OF_WEEK" = "7" ] || [ -z "$BASE_FULL_SNAP" ]; then
                 CURR_SNAP="tank/nas@offsite-full-${DATE_TAG}"
                 REMOTE_OBJECT="r2:${BUCKET}/weekly/tank-full-${DATE_TAG}.zfs.enc"
@@ -62,14 +73,14 @@ spec:
 
                 echo "[INFO] Ejecutando FULL BACKUP SEMANAL (PBKDF2 600k iter + HMAC-SHA256): ${CURR_SNAP} -> ${REMOTE_OBJECT}"
                 nsenter --target 1 --mount --uts --ipc --net --pid -- env BACKUP_ENCRYPTION_KEY="$BACKUP_ENCRYPTION_KEY" sh -c '
-                  TMP_ENC="/tmp/nas-tunnel/offsite-stream.zfs.enc"
+                  TMP_ENC="/backup-tmp/offsite-stream.zfs.enc"
                   rm -f "$TMP_ENC" "${TMP_ENC}.hmac"
                   zfs send -c -R "$1" | openssl enc -aes-256-cbc -salt -pbkdf2 -iter 600000 -pass env:BACKUP_ENCRYPTION_KEY -out "$TMP_ENC"
                   openssl dgst -sha256 -hmac "$BACKUP_ENCRYPTION_KEY" -r "$TMP_ENC" | awk "{print \$1}" > "${TMP_ENC}.hmac"
                 ' -- "$CURR_SNAP"
-                rclone copyto "/tmp/nas-tunnel/offsite-stream.zfs.enc" "$REMOTE_OBJECT"
-                rclone copyto "/tmp/nas-tunnel/offsite-stream.zfs.enc.hmac" "${REMOTE_OBJECT}.hmac"
-                rm -f "/tmp/nas-tunnel/offsite-stream.zfs.enc" "/tmp/nas-tunnel/offsite-stream.zfs.enc.hmac"
+                rclone copyto "/backup-tmp/offsite-stream.zfs.enc" "$REMOTE_OBJECT"
+                rclone copyto "/backup-tmp/offsite-stream.zfs.enc.hmac" "${REMOTE_OBJECT}.hmac"
+                rm -f "/backup-tmp/offsite-stream.zfs.enc" "/backup-tmp/offsite-stream.zfs.enc.hmac"
               else
                 BASE_TAG="${BASE_FULL_SNAP#tank/nas@offsite-full-}"
                 CURR_SNAP="tank/nas@offsite-inc-${DATE_TAG}"
@@ -79,14 +90,14 @@ spec:
 
                 echo "[INFO] Ejecutando BACKUP DIFERENCIAL DIARIO (anclado a base semanal ${BASE_FULL_SNAP}) -> ${REMOTE_OBJECT}"
                 nsenter --target 1 --mount --uts --ipc --net --pid -- env BACKUP_ENCRYPTION_KEY="$BACKUP_ENCRYPTION_KEY" sh -c '
-                  TMP_ENC="/tmp/nas-tunnel/offsite-stream.zfs.enc"
+                  TMP_ENC="/backup-tmp/offsite-stream.zfs.enc"
                   rm -f "$TMP_ENC" "${TMP_ENC}.hmac"
                   zfs send -c -R -i "$1" "$2" | openssl enc -aes-256-cbc -salt -pbkdf2 -iter 600000 -pass env:BACKUP_ENCRYPTION_KEY -out "$TMP_ENC"
                   openssl dgst -sha256 -hmac "$BACKUP_ENCRYPTION_KEY" -r "$TMP_ENC" | awk "{print \$1}" > "${TMP_ENC}.hmac"
                 ' -- "$BASE_FULL_SNAP" "$CURR_SNAP"
-                rclone copyto "/tmp/nas-tunnel/offsite-stream.zfs.enc" "$REMOTE_OBJECT"
-                rclone copyto "/tmp/nas-tunnel/offsite-stream.zfs.enc.hmac" "${REMOTE_OBJECT}.hmac"
-                rm -f "/tmp/nas-tunnel/offsite-stream.zfs.enc" "/tmp/nas-tunnel/offsite-stream.zfs.enc.hmac"
+                rclone copyto "/backup-tmp/offsite-stream.zfs.enc" "$REMOTE_OBJECT"
+                rclone copyto "/backup-tmp/offsite-stream.zfs.enc.hmac" "${REMOTE_OBJECT}.hmac"
+                rm -f "/backup-tmp/offsite-stream.zfs.enc" "/backup-tmp/offsite-stream.zfs.enc.hmac"
               fi
 
               nsenter --target 1 --mount --uts --ipc --net --pid -- sh -c \
@@ -148,6 +159,8 @@ spec:
               mountPath: /etc/zfs
             - name: tunnel-volume
               mountPath: /tmp/nas-tunnel
+            - name: backup-tmp
+              mountPath: /backup-tmp
             resources:
               requests:
                 cpu: "100m"
