@@ -72,6 +72,10 @@ jobs:
             echo "Error: Tracked .pyc or __pycache__ files detected in repository."
             exit 1
           fi
+      - name: Install test dependencies
+        run: pip install pyyaml
+      - name: ConfigMap matches repository code
+        run: python3 tools/check_configmap.py
       - name: Run unit and security fuzzing test suite
         run: |
           python3 -B -m unittest discover -s tests -p "test_*.py" -v
