@@ -75,3 +75,17 @@ jobs:
       - name: Run unit and security fuzzing test suite
         run: |
           python3 -B -m unittest discover -s tests -p "test_*.py" -v
+
+  shell-tests:
+    name: Shell Script & Backup Roundtrip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check bash syntax
+        run: |
+          for f in scripts/*.sh tests/*.sh; do
+            echo "bash -n $f"
+            bash -n "$f"
+          done
+      - name: Backup encrypt/decrypt roundtrip and HMAC verification
+        run: bash tests/test_backup_roundtrip.sh

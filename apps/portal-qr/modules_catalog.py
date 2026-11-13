@@ -927,7 +927,8 @@ def act_dr_run_drill(p):
     repo_dir = os.environ.get("NAS_REPO_DIR", "/opt/nas-gitops")
     drill_script = os.path.join(repo_dir, "tests", "disaster-recovery-drill.sh")
     start = time.time()
-    res = run_cmd(["bash", drill_script], timeout=180)
+    # El script espera hasta 600s el Job; el wrapper debe superarlo o lo mata a mitad
+    res = run_cmd(["bash", drill_script], timeout=900)
     rto_seconds = round(time.time() - start, 2)
     passed = (res.returncode == 0)
     status_msg = (

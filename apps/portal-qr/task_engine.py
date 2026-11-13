@@ -16,6 +16,14 @@ import traceback
 import portal_state
 
 # Identify heavy or long-running operations that should be handled asynchronously
+# Acciones que necesitan más tiempo que el valor por defecto del motor
+ACTION_TIMEOUTS = {
+    "dr.run_drill": 960,
+    "backup.r2.trigger": 600,
+    "zfs.scrub": 7200,
+    "users.import_csv": 600,
+}
+
 ASYNC_ACTIONS = {
     "zfs.pool.scrub_start",
     "occ.files_scan",
@@ -100,7 +108,7 @@ class TaskEngine:
             from nas_agentd import send_agent_request
             resp = send_agent_request(
                 {"user": user, "role": role, "action": action, "params": params, "client_ip": client_ip},
-                timeout=180
+                timeout=ACTION_TIMEOUTS.get(action, 180)
             )
             ok = bool(resp.get("success"))
             result = resp.get("data") if ok else {"error": resp.get("error", "Fallo en nas-agentd")}
