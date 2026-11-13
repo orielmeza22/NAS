@@ -14,7 +14,7 @@ import shlex
 import threading
 import tempfile
 
-AUDIT_LOG_PATH = "/var/log/nas-agentd-audit.log"
+AUDIT_LOG_PATH = "/var/log/nas-agentd/audit.log"
 ROLLBACK_TIMER_FILE = "/tmp/nas-tunnel/nas-net-rollback.json" if os.path.exists("/tmp/nas-tunnel") else os.path.join(tempfile.gettempdir(), "nas-net-rollback.json")
 
 # Expresiones regulares de validacion estricta

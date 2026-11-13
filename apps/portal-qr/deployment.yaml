@@ -147,7 +147,9 @@ spec:
       - name: tmp-volume
         emptyDir: {}
       - name: agent-logs
-        emptyDir: {}
+        hostPath:
+          path: /var/log/nas-agentd
+          type: DirectoryOrCreate
       - name: portal-state
         hostPath:
           path: /var/lib/nas-portal-state

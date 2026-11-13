@@ -380,5 +380,38 @@ class TestNasSecurityArchitecture(unittest.TestCase):
         ok_sh, _ = modules_catalog.act_shell_exec({"command": "df -h /etc/shadow"})
         self.assertFalse(ok_sh)
 
+    def test_health_probe_is_not_audited(self):
+        """El sondeo de salud no debe escribir en el registro de auditoria."""
+        import tempfile
+        import modules_catalog
+        import nas_agentd
+
+        with tempfile.TemporaryDirectory() as tmp:
+            destino = os.path.join(tmp, "audit.log")
+            original_mc = modules_catalog.AUDIT_LOG_PATH
+            modules_catalog.AUDIT_LOG_PATH = destino
+            try:
+                llamadas = []
+                original = nas_agentd.audit_log
+                nas_agentd.audit_log = lambda *a, **k: llamadas.append(a)
+
+                resp = nas_agentd.dispatch_request({
+                    "user": "healthcheck", "role": "operator",
+                    "action": "zfs.pool.status", "params": {}, "no_audit": True,
+                })
+                self.assertIn("success", resp)
+                self.assertEqual(llamadas, [], "el sondeo no debe auditarse")
+                self.assertFalse(os.path.exists(destino), "no debe crear el archivo de auditoria")
+
+                nas_agentd.dispatch_request({
+                    "user": "operador", "role": "operator",
+                    "action": "zfs.pool.status", "params": {},
+                })
+                self.assertEqual(len(llamadas), 1, "una accion normal si debe auditarse")
+            finally:
+                modules_catalog.AUDIT_LOG_PATH = original_mc
+                nas_agentd.audit_log = original
+
+
 if __name__ == "__main__":
     unittest.main()

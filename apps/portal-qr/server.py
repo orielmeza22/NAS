@@ -334,7 +334,8 @@ class NasApiHandler(BaseHTTPRequestHandler):
                 sys.path.insert(0, "/app-config")
             from nas_agentd import send_agent_request
             res = send_agent_request(
-                {"user": "healthcheck", "role": "operator", "action": "zfs.pool.status", "params": {}},
+                {"user": "healthcheck", "role": "operator", "action": "zfs.pool.status",
+                 "params": {}, "no_audit": True},
                 timeout=5,
             )
             if res.get("success") and isinstance(res.get("data"), dict):

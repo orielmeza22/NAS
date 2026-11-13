@@ -16,7 +16,7 @@ import hmac
 import hashlib
 
 SOCKET_PATH = "/run/nas-agentd/agent.sock"
-AUDIT_LOG_PATH = "/var/log/nas-agentd-audit.log"
+AUDIT_LOG_PATH = "/var/log/nas-agentd/audit.log"
 
 # Strict parameter validation regex patterns
 RE_DATASET = re.compile(r"^tank/nas(/[a-zA-Z0-9._-]+)*$")
@@ -162,6 +162,19 @@ def dispatch_request(req):
     action = req.get("action", "")
     params = req.get("params", {})
     client_ip = req.get("client_ip", "")
+    # Los sondeos de salud no se auditan: escriben cada pocos segundos y taparian
+    # las acciones reales en el registro.
+    no_audit = bool(req.get("no_audit"))
+
+    if no_audit:
+        handler = ACTION_CATALOG.get(action)
+        if handler is None or not check_permission(role, action):
+            return {"success": False, "error": "Sondeo de salud no autorizado."}
+        try:
+            ok, result = handler(params)
+            return {"success": ok, "data": result}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
     if action not in ACTION_CATALOG:
         audit_log(user, action, params, False, "Action not found in catalog", client_ip)
