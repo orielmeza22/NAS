@@ -36,25 +36,80 @@ spec:
                 - sh
                 - -c
                 - |
-                  set -eu
+                  set -u
                   echo "[INFO] Aplicando gobernanza empresarial de datasets y cuotas OpenZFS..."
+
+                  cuenta_archivos() {
+                    find "$1" -type f 2>/dev/null | wc -l
+                  }
+
+                  migrate_dir_to_dataset() {
+                    ds="$1"; quota_val="$2"; rec_size="${3:-128K}"
+                    mnt="/$ds"
+
+                    # Ante una migración anterior incompleta no se toca nada.
+                    if [ -d "${mnt}.mig" ] || [ -d "${mnt}.orig" ]; then
+                      echo "[CRITICO] Existen restos de una migración anterior (${mnt}.mig o ${mnt}.orig)."
+                      echo "[CRITICO] Revise y ordene esos directorios a mano antes de reintentar. No se modificó nada."
+                      return 1
+                    fi
+
+                    if [ ! -d "$mnt" ]; then
+                      echo "[INFO] $mnt no existe; se crea el dataset vacío $ds."
+                      zfs create -o compression=lz4 -o atime=off -o acltype=posixacl -o xattr=sa \
+                        -o "recordsize=${rec_size}" -o "quota=${quota_val}" "$ds"
+                      return $?
+                    fi
+
+                    echo "[INFO] Migrando $mnt al dataset $ds (se conserva una copia en todo momento)..."
+                    if ! cp -a "$mnt" "${mnt}.mig"; then
+                      echo "[ERROR] Falló la copia de trabajo ${mnt}.mig. El directorio original no se tocó."
+                      return 1
+                    fi
+
+                    original=$(cuenta_archivos "$mnt")
+                    copia=$(cuenta_archivos "${mnt}.mig")
+                    if [ "$original" != "$copia" ]; then
+                      echo "[ERROR] La copia tiene $copia archivos y el original $original. No se tocó el original."
+                      return 1
+                    fi
+
+                    if ! zfs create -o compression=lz4 -o atime=off -o acltype=posixacl -o xattr=sa \
+                         -o "recordsize=${rec_size}" -o "quota=${quota_val}" "$ds"; then
+                      echo "[ERROR] No se pudo crear el dataset $ds. El original sigue en $mnt."
+                      return 1
+                    fi
+
+                    # El directorio original se aparta (renombre instantáneo, mismo sistema de archivos)
+                    mv "$mnt" "${mnt}.orig"
+
+                    if ! cp -a "${mnt}.mig/." "$mnt/"; then
+                      echo "[ERROR] Falló la copia al dataset. Se restaura el directorio original."
+                      zfs destroy -r "$ds" 2>/dev/null || true
+                      mv "${mnt}.orig" "$mnt"
+                      return 1
+                    fi
+
+                    en_dataset=$(cuenta_archivos "$mnt")
+                    if [ "$en_dataset" != "$original" ]; then
+                      echo "[ERROR] El dataset tiene $en_dataset archivos y el original $original. Se restaura el original."
+                      zfs destroy -r "$ds" 2>/dev/null || true
+                      mv "${mnt}.orig" "$mnt"
+                      return 1
+                    fi
+
+                    rm -rf "${mnt}.mig"
+                    echo "[OK] Migración de $ds completada ($en_dataset archivos)."
+                    echo "[INFO] El directorio original se conserva en ${mnt}.orig; elimínelo cuando verifique el funcionamiento."
+                    return 0
+                  }
 
                   ensure_dataset_with_quota() {
                     ds="$1"
-                    mnt="/$1"
                     quota_val="$2"
                     rec_size="${3:-128K}"
                     if ! zfs list -H "$ds" >/dev/null 2>&1; then
-                      echo "[INFO] Migrando directorio $mnt a dataset ZFS dedicado $ds..."
-                      if [ -d "$mnt" ]; then
-                        rm -rf "${mnt}.mig"
-                        mv "$mnt" "${mnt}.mig"
-                      fi
-                      zfs create -o compression=lz4 -o atime=off -o acltype=posixacl -o xattr=sa -o "recordsize=${rec_size}" -o "quota=${quota_val}" "$ds"
-                      if [ -d "${mnt}.mig" ]; then
-                        cp -a "${mnt}.mig/." "$mnt/"
-                        rm -rf "${mnt}.mig"
-                      fi
+                      migrate_dir_to_dataset "$ds" "$quota_val" "$rec_size" || return 1
                     else
                       current_quota=$(zfs get -H -o value quota "$ds" 2>/dev/null || echo "none")
                       if [ "$current_quota" = "none" ] || [ -z "$current_quota" ]; then
